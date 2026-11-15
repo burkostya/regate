@@ -2,7 +2,7 @@
 
 **Target scope (user-approved):** full first release includes HTTP-only MCP client/server, editable virtual tools/resources/prompts, HCL2 declarative config, typed transformations/CEL, DAG branches and compositions, HTTP/MCP hooks including agents/PII/Decision API, policies, revisioned management MCP and skills, SvelteKit+Svelte Flow visual editor, async tasks, diagnostics, security and tests. **Do not silently split or drop these features.**
 
-**Current deliverable:** a Go engineering prototype with HCL2/CEL typed IR and JSON Schema port contracts (PRs #11 and #12), official-SDK upstream HTTP client (#13) and an inbound SDK migration under review (#15), plus SvelteKit frontend source. NOT complete v1. This distinction is important when planning installation or deployment.
+**Current deliverable:** a Go engineering prototype with HCL2/CEL typed IR and JSON Schema port contracts (PRs #11 and #12), official-SDK upstream HTTP client (#13) and an incoming SDK migration (#15), plus SvelteKit frontend source. NOT complete v1. This distinction is important when planning installation or deployment.
 
 ## Implemented and locally verified
 
@@ -16,7 +16,7 @@
 | HCL2 parsing/cty, CEL, closed block schemas and typed IR | Implemented subset in PR #11; Go GitHub CI passed | `internal/config`, `internal/expr` and negative/source-preservation tests |
 | DAG conditional edges/parallel waves/join | Basic implementation | Code path; incomplete formal/race coverage |
 | Prompt/resource publishing and proxy resource read | Partial implementation | Server method path |
-| Management MCP and REST endpoints | Implemented subset, official SDK inbound migration under review (#15) | Auth + draft/activate/conflict/rollback, SDK client interoperability and skills tests |
+| Management MCP and REST endpoints | Implemented subset, official SDK inbound implementation (#15; conformance pending) | Auth + draft/activate/conflict/rollback, SDK client interoperability and skills tests |
 | Immutable revision history + drafts | File-backed implementation | Integration tests |
 | Dry-run with explicit mocks | Partial implementation | REST API path |
 | Effect journal (`dispatching`, `confirmed`, `unknown`) | Partial implementation | Go executor |
