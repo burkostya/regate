@@ -95,16 +95,26 @@ func (m *inboundMCP) handle(s *Service, w http.ResponseWriter, r *http.Request, 
 
     // The SDK doesn't expose a task-start result type. Keep precisely this
     // extension's existing wire contract until SDK support is available.
-    if !admin && r.Method == http.MethodPost && r.Header.Get("Mcp-Protocol-Version") == "2026-07-28" {
+    // Regate's pre-SDK HTTP clients used server/discover without advertising
+    // the new protocol. Keep only this legacy handshake on the old dispatcher.
+    // Versioned discovery, standard methods and subscriptions are SDK-owned.
+    version := r.Header.Get("Mcp-Protocol-Version")
+    if r.Method == http.MethodPost && (version == "" || version == "2026-07-28") {
         body, err := io.ReadAll(io.LimitReader(r.Body, (4<<20)+1))
         if err != nil { http.Error(w, "invalid MCP request body", http.StatusBadRequest); return }
         _ = r.Body.Close()
         if len(body) > 4<<20 { http.Error(w, "MCP request exceeds 4 MiB", http.StatusRequestEntityTooLarge); return }
         r.Body = io.NopCloser(bytes.NewReader(body))
         var q request
-        if json.Unmarshal(body, &q) == nil && q.Method == "tools/call" && supportsTasks(q.Params) {
-            s.mcp(w, r, surface, false)
-            return
+        if json.Unmarshal(body, &q) == nil {
+            if version == "" && q.Method == "server/discover" {
+                s.mcp(w, r, surface, admin)
+                return
+            }
+            if version == "2026-07-28" && !admin && q.Method == "tools/call" && supportsTasks(q.Params) {
+                s.mcp(w, r, surface, false)
+                return
+            }
         }
     }
 
