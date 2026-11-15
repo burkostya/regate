@@ -2,7 +2,7 @@
 
 **Regate** is an experimental, HTTP-only **MCP gateway and virtual-tool composition engine** written in Go, with a declarative HCL2 configuration, programmable HTTP/MCP hooks, a management MCP endpoint and a SvelteKit + Svelte Flow console.
 
-> **Release status: engineering prototype (v0.1), not production-ready and not the complete agreed v1.** The compiler now parses **HCL2/cty** and compiles bounded **CEL** into a typed IR, but **cross-port JSON Schema verification is still incomplete**. MCP transport remains a hand-written subset (not the official Go SDK), and persistence is file-backed (not SQLite). SvelteKit type checking/build passes GitHub CI; browser end-to-end testing remains outstanding. See [Implemented and missing](docs/release-status.md) before any deployment.
+> **Release status: engineering prototype (v0.1), not production-ready and not the complete agreed v1.** The compiler now parses **HCL2/cty** and compiles bounded **CEL** into a typed IR, but **cross-port JSON Schema verification is still incomplete**. Upstream MCP HTTP calls now use the official Go SDK, while inbound public/admin MCP transports are still a hand-written subset, and persistence is file-backed (not SQLite). SvelteKit type checking/build passes GitHub CI; browser end-to-end testing remains outstanding. See [Implemented and missing](docs/release-status.md) before any deployment.
 
 ## What you can experiment with now
 

@@ -2,14 +2,14 @@
 
 **Target scope (user-approved):** full first release includes HTTP-only MCP client/server, editable virtual tools/resources/prompts, HCL2 declarative config, typed transformations/CEL, DAG branches and compositions, HTTP/MCP hooks including agents/PII/Decision API, policies, revisioned management MCP and skills, SvelteKit+Svelte Flow visual editor, async tasks, diagnostics, security and tests. **Do not silently split or drop these features.**
 
-**Current deliverable:** a Go engineering prototype with an HCL2/CEL typed-IR compilation layer in PR #11, plus SvelteKit frontend source. NOT complete v1. This distinction is important when planning installation or deployment.
+**Current deliverable:** a Go engineering prototype with an HCL2/CEL typed IR and JSON Schema port contracts (PRs #11 and #12), plus SvelteKit frontend source. NOT complete v1. This distinction is important when planning installation or deployment.
 
 ## Implemented and locally verified
 
 | Area | Status | Evidence |
 |---|---|---|
 | Go CLI + local HTTP server | Implemented | `go build`, smoke test |
-| Upstream MCP HTTP discovery and tool calls | Partial implementation | Mock HTTP MCP integration tests |
+| Upstream HTTP MCP client via official Go SDK v1.8.0 | Partial implementation: HTTP only; per-operation sessions and SDK protocol negotiation; no production OAuth | Official SDK modern/legacy test servers and integration tests |
 | Public tools with direct source and DAG pipeline | Implemented subset | `TestEndToEndMCP`, `TestMCPDirectProxyPreservesContent` |
 | HTTP Decision API / PII transform / MCP agent hook | Implemented subset | `TestEndToEndMCP`, deny test |
 | `on_request`, `before_call`, `after_call`, `before_response`, `on_error` hooks | Partial implementation | Go code and integration paths |
@@ -29,8 +29,8 @@
 
 ## Unfinished functionality required for full v1
 
-1. Complete HCL2/CEL/typed-IR acceptance (#3): add full cross-port JSON Schema typing, runtime contract refinement and more flexible opaque/source-safe semantic patch operations.
-2. Replace hand-written MCP wire subset with official `modelcontextprotocol/go-sdk`; cover protocol conformance, OAuth, all supported transports/versions within HTTP, task/skill extensions and subscription semantics.
+1. Finish HCL2/CEL/typed-IR acceptance (#3): basic cross-port JSON Schema typing and runtime validation now exist, but full schema subsumption, opaque source-safe patching and browser round trips remain open.
+2. Migrate incoming public/admin MCP server endpoints to official `modelcontextprotocol/go-sdk`, then verify protocol conformance and extensions end-to-end. The upstream client has migrated to SDK v1.8.0; OAuth, long-lived subscriptions, task/skill interoperability and robust upstream/session reuse remain open.
 3. Full JSON Schema input/output validation, compatibility checks and source-map/opaque-safe bidirectional editing of arbitrary HCL2 fragments.
 4. Full composition semantics (`pipeline.call`, map, controlled retries, named ports, safe joins with effects), robust task and MRTR resume, and property-based execution tests.
 5. Production-grade effect reconciliation/idempotency/compensation, backpressure and durable scheduling (no blind retries after uncertain writes).
@@ -66,3 +66,10 @@
   and blocks; structural deletion removes the deleted element's own contents.
 - Remote JSON Schema loading is explicitly forbidden to prevent SSRF at
   compilation. Contract schemas are embedded within HCL.
+
+#### Official SDK upstream milestone
+
+- Upstream tools/list pagination, tools/call and resources/read go through the official MCP Go SDK; legacy initialize and modern server/discover are delegated to the SDK. No stdio transport is supported.
+- Each upstream operation has an independent SDK session. This is intentionally conservative: session initialization per operation is slower, but stale connections and hidden write retries are avoided; production connection pooling remains open.
+- Outbound DNS-pinned egress and redirect blocking are preserved; token-env credentials attach only through the guarded HTTP client. This does not implement OAuth.
+- Incoming Regate MCP endpoints remain custom and are **not** yet SDK-backed, so full MCP compliance is still unverified.
