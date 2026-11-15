@@ -399,7 +399,7 @@ func (s *Service) dispatchMCP(ctx context.Context, surface string, admin bool, m
 					return nil, fmt.Errorf("invalid resource source")
 				}
 				u := cfg.Upstreams[upstream]
-				return s.Engine.ReadResource(ctx, u, uri)
+				return s.Engine.ReadResource(ctx, cfg, u, uri)
 			}
 			return map[string]any{"contents": []any{map[string]any{"uri": uri, "mimeType": rs.MimeType, "text": rs.Text}}}, nil
 		}
