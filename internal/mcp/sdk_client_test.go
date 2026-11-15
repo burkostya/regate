@@ -43,6 +43,14 @@ func sdkFixture(t *testing.T, versions []string) (*httptest.Server, *atomic.Int6
 		func(context.Context, *sdk.ReadResourceRequest) (*sdk.ReadResourceResult, error) {
 			return &sdk.ReadResourceResult{Contents: []*sdk.ResourceContents{{URI: "test://hello", MIMEType: "text/plain", Text: "world"}}}, nil
 		})
+    server.AddResourceTemplate(&sdk.ResourceTemplate{URITemplate:"test://objects/{id}",Name:"dynamic-object",MIMEType:"text/plain"},
+        func(ctx context.Context,req *sdk.ReadResourceRequest)(*sdk.ReadResourceResult,error) {
+            return &sdk.ReadResourceResult{Contents:[]*sdk.ResourceContents{{URI:req.Params.URI,Text:"dynamic"}}},nil
+        })
+    server.AddPrompt(&sdk.Prompt{Name:"inspect", Description:"Inspect data"},
+        func(context.Context,*sdk.GetPromptRequest)(*sdk.GetPromptResult,error) {
+            return &sdk.GetPromptResult{Messages:[]*sdk.PromptMessage{{Role:"user",Content:&sdk.TextContent{Text:"inspect data"}}}},nil
+        })
 	return httptest.NewServer(sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server },
 		&sdk.StreamableHTTPOptions{Stateless: len(versions) == 0, JSONResponse: true})), calls
 }
@@ -147,4 +155,46 @@ func TestOfficialSDKRejectsNonAllowlistedHTTP(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected outbound security rejection")
 	}
+}
+
+func TestOfficialSDKFullPaginatedUpstreamCatalog(t *testing.T) {
+    upstream, _ := sdkFixture(t,nil)
+    defer upstream.Close()
+    conn:=NewConn(upstream.URL,"",5*time.Second)
+    catalog,err:=conn.DiscoverCatalog(context.Background())
+    if err!=nil {t.Fatal(err)}
+    if len(catalog.Tools)!=2 || len(catalog.Resources)!=1 || len(catalog.ResourceTemplates)!=1 || len(catalog.Prompts)!=1 {
+        t.Fatalf("missing paginated MCP collections: %#v",catalog)
+    }
+    if catalog.Prompts[0]["name"]!="inspect" || catalog.Resources[0]["uri"]!="test://hello" ||
+       catalog.ResourceTemplates[0]["uriTemplate"]!="test://objects/{id}" {
+        t.Fatalf("incorrect MCP catalog metadata: %#v",catalog)
+    }
+    // Normal resource and prompt calls must still work after discovery closed
+    // its one-shot SDK session, rather than leaking stale session IDs.
+    resource,err:=conn.Call(context.Background(),"resources/read",map[string]any{"uri":"test://hello"})
+    if err!=nil || !strings.Contains(string(resource),"world") {
+        t.Fatalf("resource read after discovery: %v %s",err,resource)
+    }
+    prompt,err:=conn.Call(context.Background(),"prompts/get",map[string]any{"name":"inspect"})
+    if err!=nil || !strings.Contains(string(prompt),"inspect data") {
+        t.Fatalf("prompt fetch after discovery: %v %s",err,prompt)
+    }
+}
+
+func TestCollectCatalogFailsClosedOnPaginationAbuse(t *testing.T) {
+    count:=0
+    _,err:=collectCatalog("resources/list",func(cursor string)([]string,string,error) {
+        count++
+        return []string{"x"},"same",nil
+    })
+    if err==nil || !strings.Contains(err.Error(),"repeated cursor") || count!=2 {
+        t.Fatalf("cursor loop not rejected: %v (pages=%d)",err,count)
+    }
+    _,err=collectCatalog("prompts/list",func(string)([]string,string,error) {
+        return make([]string,maxCatalogItems+1),"",nil
+    })
+    if err==nil || !strings.Contains(err.Error(),"exceeds") {
+        t.Fatalf("unbounded catalog accepted: %v",err)
+    }
 }
