@@ -313,21 +313,23 @@ func TestSubscriptionsNotifyOnActivate(t *testing.T) {
 	}
 	reader := bufio.NewReader(res.Body)
 	readLine := func() map[string]any {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			t.Fatal(err)
+		// Official SDK emits "event: message" and optional event IDs before
+		// data. Parse the SSE frame, rather than assuming data is its first line.
+		var payload strings.Builder
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil { t.Fatal(err) }
+			line = strings.TrimRight(line, "\r\n")
+			if strings.HasPrefix(line, "data: ") {
+				if payload.Len() > 0 { payload.WriteByte('\n') }
+				payload.WriteString(strings.TrimPrefix(line, "data: "))
+			}
+			if line != "" { continue }
+			if payload.Len() == 0 { continue }
+			var v map[string]any
+			if err := json.Unmarshal([]byte(payload.String()), &v); err != nil { t.Fatal(err) }
+			return v
 		}
-		if !strings.HasPrefix(line, "data: ") {
-			t.Fatalf("SSE data expected: %q", line)
-		}
-		var v map[string]any
-		if err := json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data: "))), &v); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := reader.ReadString('\n'); err != nil {
-			t.Fatal(err)
-		}
-		return v
 	}
 	ack := readLine()
 	if ack["method"] != "notifications/subscriptions/acknowledged" {
