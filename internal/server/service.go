@@ -23,6 +23,7 @@ type Service struct {
 	catalog       map[string]catalogEntry
 	tasksMu       sync.Mutex
 	subscriptions subscriptionBus
+	inbound       *inboundMCP
 }
 type catalogEntry struct {
 	Items []map[string]any `json:"items"`
@@ -46,7 +47,10 @@ func New(stateDir, source string) (*Service, error) {
 	if e != nil {
 		return nil, fmt.Errorf("persisted active config: %w", e)
 	}
-	return &Service{Store: store, Engine: engine.New(store), cfg: cfg, rev: rev, catalog: map[string]catalogEntry{}}, nil
+	svc := &Service{Store: store, Engine: engine.New(store), cfg: cfg, rev: rev, catalog: map[string]catalogEntry{}}
+    svc.inbound, e = newInboundMCP(svc, cfg, rev.ID)
+    if e != nil { return nil, fmt.Errorf("initialize MCP server: %w", e) }
+    return svc, nil
 }
 func (s *Service) Current() (*config.Config, storage.Revision) {
 	s.mu.RLock()
@@ -63,15 +67,19 @@ func (s *Service) Activate(id string) (storage.Revision, error) {
 	if e != nil {
 		return storage.Revision{}, e
 	}
-	s.mu.Lock()
-	rev, e := s.Store.Activate(id)
+	next, revision, e := s.inbound.prepare(s, cfg)
+    if e != nil { return storage.Revision{}, fmt.Errorf("prepare MCP catalog: %w", e) }
+    s.mu.Lock()
+    rev, e := s.Store.Activate(id)
 	if e != nil {
 		s.mu.Unlock()
 		return rev, e
 	}
-	s.cfg = cfg
-	s.rev = rev
-	s.mu.Unlock()
+	*revision = rev.ID
+    s.inbound.publish(next)
+    s.cfg = cfg
+    s.rev = rev
+    s.mu.Unlock()
 	s.subscriptions.emit("notifications/tools/list_changed")
 	s.subscriptions.emit("notifications/resources/list_changed")
 	s.subscriptions.emit("notifications/prompts/list_changed")
@@ -86,15 +94,19 @@ func (s *Service) Rollback(target string) (storage.Revision, error) {
 	if e != nil {
 		return storage.Revision{}, e
 	}
-	s.mu.Lock()
-	rev, e := s.Store.Rollback(target)
+	next, revision, e := s.inbound.prepare(s, cfg)
+    if e != nil { return storage.Revision{}, fmt.Errorf("prepare MCP catalog: %w", e) }
+    s.mu.Lock()
+    rev, e := s.Store.Rollback(target)
 	if e != nil {
 		s.mu.Unlock()
 		return rev, e
 	}
-	s.cfg = cfg
-	s.rev = rev
-	s.mu.Unlock()
+	*revision = rev.ID
+    s.inbound.publish(next)
+    s.cfg = cfg
+    s.rev = rev
+    s.mu.Unlock()
 	s.subscriptions.emit("notifications/tools/list_changed")
 	s.subscriptions.emit("notifications/resources/list_changed")
 	s.subscriptions.emit("notifications/prompts/list_changed")
