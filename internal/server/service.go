@@ -26,9 +26,13 @@ type Service struct {
 	inbound       *inboundMCP
 }
 type catalogEntry struct {
+    // Items retains the original management API tools-only contract.
 	Items []map[string]any `json:"items"`
-	At    time.Time        `json:"at"`
-	Error string           `json:"error,omitempty"`
+    Resources []map[string]any `json:"resources"`
+    ResourceTemplates []map[string]any `json:"resourceTemplates"`
+    Prompts []map[string]any `json:"prompts"`
+	At time.Time `json:"at"`
+	Error string `json:"error,omitempty"`
 }
 
 func New(stateDir, source string) (*Service, error) {
@@ -120,8 +124,12 @@ func (s *Service) Discover(ctx context.Context, name string, refresh bool) (cata
 		return e, nil
 	}
 	cfg, _ := s.Current()
-	items, err := s.Engine.Discover(ctx, cfg, name)
-	e = catalogEntry{Items: items, At: time.Now().UTC()}
+	items, err := s.Engine.DiscoverCatalog(ctx, cfg, name)
+	e = catalogEntry{
+        Items:items.Tools, Resources:items.Resources,
+        ResourceTemplates:items.ResourceTemplates, Prompts:items.Prompts,
+        At:time.Now().UTC(),
+    }
 	if err != nil {
 		e.Error = err.Error()
 	}
