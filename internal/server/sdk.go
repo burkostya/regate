@@ -284,7 +284,7 @@ func newInboundEndpoint(s *Service, cfg *config.Config, revision *string, surfac
             ep.notifyPrompts = func() { srv.AddPrompt(descriptor, handler) }
         }
     }
-    if err := registerTaskMethods(srv, s); err != nil { return nil, err }
+    if err := registerTaskMethods(srv, s, surface, admin); err != nil { return nil, err }
     ep.handler = sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return srv },
         &sdk.StreamableHTTPOptions{Stateless:true, JSONResponse:true, MaxRequestBodyBytes:4<<20, PropagateRequestCancellation:true})
     return ep, nil
@@ -392,7 +392,7 @@ func registerSkills(srv *sdk.Server, s *Service) error {
         return &res,nil
     })
 }
-func registerTaskMethods(srv *sdk.Server, s *Service) error {
+func registerTaskMethods(srv *sdk.Server, s *Service, surface string, admin bool) error {
     methods:=[]struct{name string; fn func(string,string,map[string]any)(map[string]any,error)}{
         {"tasks/get",func(id,owner string,_ map[string]any)(map[string]any,error){return s.TaskGet(id,owner)}},
         {"tasks/update",func(id,owner string,r map[string]any)(map[string]any,error){return s.TaskUpdate(id,owner,r)}},
@@ -402,6 +402,14 @@ func registerTaskMethods(srv *sdk.Server, s *Service) error {
         fn:=method.fn
         if err:=sdk.AddReceivingCustomMethod(srv,method.name,func(ctx context.Context, _ *sdk.ServerSession,p *extensionParams)(*taskExtensionResult,error){
             owner,_:=ctx.Value(sdkOwnerKey{}).(string)
+            // Every task lookup is bound to both the original public surface
+            // and its immutable creation-time scopes, not merely the bearer
+            // string. A later scope revocation must fail closed.
+            if !admin {
+                record,err:=s.Store.TaskGet(p.TaskID)
+                if err!=nil || record.Surface!=surface {return nil,fmt.Errorf("task not found")}
+                if err:=identity.RequireScopes(ctx,record.RequiredScopes);err!=nil {return nil,err}
+            }
             v,err:=fn(p.TaskID,owner,p.InputResponses)
             if err!=nil {return nil,err}
             var result taskExtensionResult
