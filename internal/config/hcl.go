@@ -115,7 +115,7 @@ func ctyToGo(v cty.Value) (any, error) {
 		if i, accuracy := f.Int64(); accuracy == big.Exact {
 			return i, nil
 		}
-		float, accuracy := f.Float64()
+		float, _ := f.Float64()
 		if !math.IsInf(float, 0) && !math.IsNaN(float) {
 			return float, nil
 		}

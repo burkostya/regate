@@ -12,13 +12,8 @@ jobs:
           go-version-file: go.mod
       - name: Resolve and verify module dependencies
         run: go mod tidy
-      - name: Module lock for compiler migration
-        run: |
-          echo "=== REGATE GO.MOD ==="
-          cat go.mod
-          echo "=== REGATE GO.SUM ==="
-          cat go.sum
-          echo "=== END REGATE LOCK ==="
+      - name: Check module files are tidy
+        run: git diff --exit-code -- go.mod go.sum
       - run: go vet ./...
       - run: go test -race ./...
       - run: go build ./cmd/regate ./cmd/regate-demo
