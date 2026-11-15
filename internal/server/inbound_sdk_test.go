@@ -5,12 +5,18 @@ import (
     "encoding/json"
     "io"
     "net/http"
+    "net/http/httptest"
     "strings"
     "testing"
 )
 
 func TestIncomingSDKCatalogChangesAfterActivation(t *testing.T) {
     svc, server, _ := fixture(t)
+    // Hold the previous endpoint as an in-flight session would: switching
+    // revisions must not mutate its published tool descriptors.
+    svc.inbound.mu.RLock()
+    previous := svc.inbound.public["support"]
+    svc.inbound.mu.RUnlock()
     draft, err := svc.Store.DraftCreate()
     if err != nil { t.Fatal(err) }
     active, _ := svc.Current()
@@ -18,6 +24,21 @@ func TestIncomingSDKCatalogChangesAfterActivation(t *testing.T) {
     if source == active.Source { t.Fatal("test fixture has no source tool to rename") }
     if _, err := svc.Store.DraftUpdate(draft.ID, source); err != nil { t.Fatal(err) }
     if _, err := svc.Activate(draft.ID); err != nil { t.Fatal(err) }
+    oldRequest := httptest.NewRequest(http.MethodPost,"http://localhost/mcp/support",
+        strings.NewReader(`{"jsonrpc":"2.0","id":10,"method":"tools/list","params":{}}`))
+    oldRequest.Header.Set("Content-Type","application/json")
+    oldRequest.Header.Set("Accept","application/json, text/event-stream")
+    oldResponse := httptest.NewRecorder()
+    previous.handler.ServeHTTP(oldResponse,oldRequest)
+    if oldResponse.Code != http.StatusOK { t.Fatalf("in-flight revision unavailable: HTTP %d: %s",oldResponse.Code,oldResponse.Body.String()) }
+    var snapshot map[string]any
+    if err := json.Unmarshal(oldResponse.Body.Bytes(),&snapshot); err != nil { t.Fatal(err) }
+    retained := false
+    for _, entry := range snapshot["result"].(map[string]any)["tools"].([]any) {
+        if entry.(map[string]any)["name"]=="get_customer_direct" { retained = true }
+    }
+    if !retained { t.Fatalf("activation mutated an in-flight SDK catalog: %v",snapshot) }
+
     data := decode(t, jsonPost(t, server.URL+"/mcp/support", "", map[string]any{
         "jsonrpc":"2.0", "id":11, "method":"tools/list", "params":map[string]any{},
     }))
