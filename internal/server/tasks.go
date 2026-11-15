@@ -58,6 +58,9 @@ func (s *Service) createTaskFor(ctx context.Context,cfg *config.Config,revision 
         if _,verified:=identity.FromContext(ctx);!verified {return nil,identity.ErrInvalidToken}
     }
     if err:=identity.RequireScopes(ctx,selected.RequiredScopes);err!=nil {return nil,err}
+    if engine.ToolNeedsDelegation(cfg,surface,*selected) {
+        return nil,fmt.Errorf("async task needs durable delegated grant; raw subject token cannot be persisted")
+    }
     if err:=cfg.ToolContracts[surface][tool].Input.Validate(args);err!=nil {
         return nil,fmt.Errorf("invalid tool arguments")
     }
