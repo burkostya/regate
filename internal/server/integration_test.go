@@ -20,6 +20,8 @@ type mockWorld struct {
 	agentInput map[string]any
 	calls      []string
 	failWrites bool
+    failResponse string
+    lastAuth string
 }
 
 func (m *mockWorld) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -57,7 +59,13 @@ func (m *mockWorld) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		m.mu.Lock()
 		m.calls = append(m.calls, v.Method)
+        if v.Method=="tools/call" {m.lastAuth=r.Header.Get("Authorization")}
+        failure:=m.failResponse
 		m.mu.Unlock()
+        if v.Method=="tools/call" && failure!="" {
+            json.NewEncoder(w).Encode(map[string]any{"jsonrpc":"2.0","id":v.ID,"error":map[string]any{"code":-32000,"message":failure}})
+            return
+        }
 		result := map[string]any{}
 		switch v.Method {
 		case "server/discover":
