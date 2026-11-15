@@ -51,6 +51,15 @@ func (r *Runtime) Discover(ctx context.Context, cfg *config.Config, upstream str
 	}
 	return r.conn(u).ListTools(ctx)
 }
+
+// DiscoverCatalog retrieves the full advertised MCP catalog under one SDK
+// session. Its results are untrusted diagnostics and are never auto-exposed.
+func (r *Runtime) DiscoverCatalog(ctx context.Context, cfg *config.Config, upstream string) (mcp.Catalog,error) {
+    u,ok:=cfg.Upstreams[upstream]
+    if !ok {return mcp.Catalog{},fmt.Errorf("unknown upstream %s",upstream)}
+    if err:=checkOutbound(u.URL);err!=nil {return mcp.Catalog{},err}
+    return r.conn(u).DiscoverCatalog(ctx)
+}
 func checkOutbound(raw string) error { return netguard.ValidateURL(raw) }
 
 func httpClient(timeout time.Duration) *http.Client { return netguard.Client(timeout) }

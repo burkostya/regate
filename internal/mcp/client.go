@@ -147,33 +147,9 @@ func withSession[T any](c *Conn, ctx context.Context, invoke func(*sdk.ClientSes
 // unexpectedly large page sequences are rejected to avoid infinite loops when
 // an upstream violates pagination rules.
 func (c *Conn) ListTools(ctx context.Context) ([]map[string]any, error) {
-	return withSession(c, ctx, func(session *sdk.ClientSession) ([]map[string]any, error) {
-		var tools []map[string]any
-		var cursor string
-		seen := map[string]bool{}
-		for page := 0; page < maxToolPages; page++ {
-			result, err := session.ListTools(ctx, &sdk.ListToolsParams{Cursor: cursor})
-			if err != nil {
-				return nil, err
-			}
-			for _, tool := range result.Tools {
-				var item map[string]any
-				if err := remarshal(tool, &item); err != nil {
-					return nil, err
-				}
-				tools = append(tools, item)
-			}
-			if result.NextCursor == "" {
-				return tools, nil
-			}
-			if seen[result.NextCursor] {
-				return nil, fmt.Errorf("upstream tools/list repeated cursor %q", result.NextCursor)
-			}
-			seen[result.NextCursor] = true
-			cursor = result.NextCursor
-		}
-		return nil, fmt.Errorf("upstream tools/list exceeded %d pages", maxToolPages)
-	})
+    return withSession(c, ctx, func(session *sdk.ClientSession) ([]map[string]any,error) {
+        return allTools(ctx,session)
+    })
 }
 
 func remarshal(value any, out any) error {
