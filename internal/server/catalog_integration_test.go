@@ -55,4 +55,25 @@ func TestAdminUpstreamRefreshIncludesFullMCPDiscovery(t *testing.T) {
     cached,err:=svc.Discover(ctx,"crm",false)
     if err!=nil {t.Fatal(err)}
     if len(cached.Prompts)!=1 {t.Fatalf("cached discovery lost prompts: %#v",cached)}
+    if cached.Revision=="" || cached.Revision!=snapshot.Revision {
+        t.Fatalf("discovery is not bound to active revision: %#v",cached)
+    }
+
+    // Activating a different upstream URL must evict its catalog. Reusing old
+    // tools/prompts across a changed authority would leak trust assumptions.
+    draft,err:=svc.Store.DraftCreate()
+    if err!=nil {t.Fatal(err)}
+    invalidEndpoint:=strings.Replace(draft.Source, endpoint.URL, "http://10.1.2.3/mcp",1)
+    if invalidEndpoint==draft.Source {t.Fatal("upstream URL missing from draft")}
+    if _,err:=svc.Store.DraftUpdate(draft.ID,invalidEndpoint);err!=nil {t.Fatal(err)}
+    rev,err:=svc.Activate(draft.ID)
+    if err!=nil {t.Fatal(err)}
+    next,err:=svc.Discover(ctx,"crm",false)
+    if err==nil || next.Revision!=rev.ID || len(next.Items)!=0 || next.Error=="" {
+        t.Fatalf("stale upstream catalog leaked after activation: %#v %v",next,err)
+    }
+    again,err:=svc.Discover(ctx,"crm",false)
+    if err==nil || again.Revision!=rev.ID || again.Error=="" {
+        t.Fatalf("cached discovery failure was incorrectly reported as success: %#v %v",again,err)
+    }
 }
