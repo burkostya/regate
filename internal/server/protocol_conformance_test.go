@@ -119,16 +119,22 @@ func TestInboundCancelledRequestStopsBeforeProtectedEffects(t *testing.T) {
     t.Setenv("REGATE_ADMIN_TOKEN","test-secret")
     world:=&mockWorld{}
     entered:=make(chan struct{})
+    release:=make(chan struct{})
     var once sync.Once
     upstream:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request) {
         if r.URL.Path=="/decision" {
             once.Do(func(){close(entered)})
-            <-r.Context().Done()
+            select {
+            case <-r.Context().Done():
+            case <-release:
+            }
             return
         }
         world.ServeHTTP(w,r)
     }))
-    defer upstream.Close()
+    // A malformed cancellation implementation must fail a test rather than
+    // hanging httptest.Server.Close until the full Go test timeout.
+    defer func(){close(release);upstream.Close()}()
     source,err:=os.ReadFile("../../examples/regate.hcl")
     if err!=nil {t.Fatal(err)}
     cfg:=strings.ReplaceAll(string(source),"http://127.0.0.1:9091",upstream.URL)
