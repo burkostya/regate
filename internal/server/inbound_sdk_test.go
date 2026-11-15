@@ -33,10 +33,10 @@ func TestIncomingSDKCatalogChangesAfterActivation(t *testing.T) {
     response := latestCall(t, server.URL+"/mcp/support","", "tools/call",12,
         map[string]any{"name":"get_customer_direct","arguments":map[string]any{}})
     defer response.Body.Close()
-    data, err := io.ReadAll(response.Body)
+    responseBody, err := io.ReadAll(response.Body)
     if err != nil { t.Fatal(err) }
-    if response.StatusCode < 400 || !bytes.Contains(data, []byte(`"error"`)) {
-        t.Fatalf("obsolete tool remained callable: status=%d body=%s", response.StatusCode, data)
+    if response.StatusCode < 400 || !bytes.Contains(responseBody, []byte(`"error"`)) {
+        t.Fatalf("obsolete tool remained callable: status=%d body=%s", response.StatusCode, responseBody)
     }
 }
 
