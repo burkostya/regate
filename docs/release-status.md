@@ -103,3 +103,10 @@
 - By default OAuth responses (including successful asynchronous results, resources, prompts and error paths) use PII/credential masking, with an explicit scoped unmasked tool contract. Traces record only generic OAuth execution errors.
 - Tasks bind creation-time scopes, redaction and original immutable config revision; renewed OAuth access tokens retain ownership by verified issuer+audience+subject, while other users and downgraded scopes cannot access them.
 - Still required: dedicated data-taint/evidence policies across every pipeline/agent boundary, delegated token exchange and real OAuth providers before #5 can be closed.
+
+#### Delegation and conservative trust boundaries (PR #19)
+
+- RFC8693 token exchange produces a fresh target-audience access token after verifying the incoming Regate principal. Issued credentials are re-verified for issuer, target audience, subject and scopes, and never cached/forwarded as an incoming Regate bearer.
+- OAuth pipeline/interceptor graphs are fail-closed before dispatch if any MCP/HTTP/agent effect lacks an explicit Restricted trust boundary; this includes conditional branches and resume paths.
+- Invalid exchanges are rejected before journaling a dispatching effect. Async jobs needing transient delegated user tokens are explicitly rejected until durable grants exist in #6.
+- Tested both positive MCP exchange and negative wrong-audience/subject/scope routes. Remaining #5 work includes attested taint/declassification, real IdP verification and durable delegated grants.
