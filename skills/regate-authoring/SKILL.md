@@ -19,7 +19,7 @@ For `mcp.call`, specify `upstream`, `tool`, an `arguments` object containing exp
 
 `condition` evaluates a boolean `test`. Edge `when` is `"true"`, `"false"`, or omitted for always. Parallelizable nodes execute concurrently when their dependencies are satisfied; `join` may wait for all, any, or a quorum. Avoid early joins around irreversible writes.
 
-The expression language in this build is a deliberately limited safe subset (dotted property references, boolean operators, comparisons, arithmetic and a few pure builtins). It is **not** full CEL; consult the contract.
+Pipeline node expressions are compiled CEL programs with runtime cost limits and typed checking; static configuration uses HCL2/cty. `input`/`nodes` are dynamically typed at runtime, so verify external JSON Schemas and trust boundaries separately. See `docs/contracts/hcl.md`.
 
 ## Hook guidelines
 
@@ -33,4 +33,4 @@ The expression language in this build is a deliberately limited safe subset (dot
 
 Inspect → draft → graph/HCL change → validate → effect/policy impact review → dry-run with mocks → operator review → activate → verify.
 
-For reusable behavior, define a named pipeline instead of duplicating a long series of nodes. Use `regate_graph_patch` to preserve other top-level blocks. Avoid assuming the visual editor can losslessly rewrite every arbitrary HCL construct.
+For reusable behavior, define a named pipeline instead of duplicating a long series of nodes. Prefer `regate_attribute_patch` for local attribute edits; `regate_graph_patch` preserves unrelated top-level blocks; for structurally unchanged graphs it also preserves nested comments, while structural graph edits may replace the whole target block. Avoid assuming the visual editor can losslessly rewrite every arbitrary HCL construct.

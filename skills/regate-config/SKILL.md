@@ -22,7 +22,7 @@ Regate is an HTTP-only MCP gateway controlled using a separate authenticated man
 1. Call `regate_status`, `regate_config_get`, `regate_upstreams`, and `regate_inspect` as relevant.
 2. For an existing upstream, use `regate_upstream_refresh` and inspect its schemas before writing mappings.
 3. Call `regate_draft_create`; keep the returned `draft_id` and `base` revision.
-4. Change only the relevant HCL fragment. Use `regate_graph_patch` to replace one pipeline without rewriting unrelated top-level blocks; otherwise use `regate_draft_patch` with the complete source.
+4. Change only the relevant HCL2 fragment. Prefer `regate_attribute_patch` for an existing attribute (`path`, `attribute`, `expression`) to preserve all other bytes; use `regate_graph_patch` for replacing a whole pipeline or `regate_draft_patch` for complete source.
 5. Call `regate_validate` and `regate_impact_analyze`. Review new tool exposures, policy changes, secret references, and possible PII transfers.
 6. Call `regate_test` with mocks for external actions. Tests must not create external resources.
 7. Explain the semantic diff and obtain appropriate operator authorization when scope, authority, or effectful behavior widens.
@@ -37,7 +37,7 @@ Regate is an HTTP-only MCP gateway controlled using a separate authenticated man
 - Do not remove PII obligations or trust boundary checks by reordering a pipeline.
 - Do not blindly retry a write after a network failure. The side effect may already have happened.
 - Do not share the management token with hooks or MCP upstreams.
-- HCL syntax in the current dependency-free build is a restricted subset, not complete HashiCorp HCL2; see `docs/contracts/hcl.md`.
+- The compiler uses HCL2/cty for static config and bounded CEL expressions inside pipeline node attributes; see `docs/contracts/hcl.md`. All executable attributes are closed-schema validated.
 - When a tool or operation is unsupported, report the exact limitation instead of inventing an outcome.
 
 ## Basic management tools

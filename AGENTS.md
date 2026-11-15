@@ -15,7 +15,7 @@ Regate is an HTTP-only MCP gateway. The user-approved **v1 scope is not a reduce
 
 ## Key locations
 
-- `internal/config`: current restricted parser (replace with HCL2/cty)
+- `internal/config`: HCL2/cty parser, closed schemas and typed IR migration
 - `internal/engine`: pipeline runtime and hooks
 - `internal/server`: MCP and management HTTP handling
 - `internal/storage`: current file-backed store (replace with SQLite)

@@ -1,275 +1,159 @@
-// Package config provides a deliberately bounded, dependency-free HCL-like
-// parser. Unsupported HCL2 expressions are rejected, not silently ignored.
-// Replace this parser with hashicorp/hcl/v2 before claiming full HCL2 support.
+// Package config parses Regate's executable configuration using the official
+// HCL2 syntax tree. Source positions are byte offsets into the original file:
+// graph and MCP edits never round-trip unrelated blocks through a formatter.
 package config
 
 import (
-	"encoding/json"
 	"fmt"
+	"math"
+	"math/big"
 	"os"
-	"strconv"
-	"strings"
-	"unicode"
-	"unicode/utf8"
+	"sort"
+
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/zclconf/go-cty/cty"
 )
 
 type Block struct {
-	Type     string         `json:"type"`
-	Labels   []string       `json:"labels,omitempty"`
-	Attrs    map[string]any `json:"attrs,omitempty"`
-	Children []*Block       `json:"children,omitempty"`
-	Start    int            `json:"start"`
-	End      int            `json:"end"`
+	Type       string                 `json:"type"`
+	Labels     []string               `json:"labels,omitempty"`
+	Attrs      map[string]any         `json:"attrs,omitempty"`
+	Children   []*Block               `json:"children,omitempty"`
+	Start      int                    `json:"start"`
+	End        int                    `json:"end"`
+	Line       int                    `json:"line"`
+	AttrRanges map[string]SourceRange `json:"attr_ranges,omitempty"`
 }
 
-type token struct {
-	k, v string
-	pos  int
-}
-type lexer struct {
-	s string
-	i int
+type SourceRange struct {
+	Start  int `json:"start"`
+	End    int `json:"end"`
+	Line   int `json:"line"`
+	Column int `json:"column"`
 }
 
-func (l *lexer) next() (token, error) {
-	for l.i < len(l.s) {
-		p := l.i
-		r, n := utf8.DecodeRuneInString(l.s[l.i:])
-		if unicode.IsSpace(r) {
-			l.i += n
-			continue
-		}
-		if r == '#' || strings.HasPrefix(l.s[l.i:], "//") {
-			for l.i < len(l.s) && l.s[l.i] != '\n' {
-				l.i++
-			}
-			continue
-		}
-		if strings.HasPrefix(l.s[l.i:], "/*") {
-			j := strings.Index(l.s[l.i+2:], "*/")
-			if j < 0 {
-				return token{}, fmt.Errorf("unclosed comment at %d", p)
-			}
-			l.i += j + 4
-			continue
-		}
-		if r == '"' {
-			l.i += n
-			escaped := false
-			for l.i < len(l.s) {
-				c := l.s[l.i]
-				l.i++
-				if escaped {
-					escaped = false
-					continue
-				}
-				if c == '\\' {
-					escaped = true
-					continue
-				}
-				if c == '"' {
-					var value string
-					if err := json.Unmarshal([]byte(l.s[p:l.i]), &value); err != nil {
-						return token{}, err
-					}
-					return token{"str", value, p}, nil
-				}
-			}
-			return token{}, fmt.Errorf("unclosed string at %d", p)
-		}
-		if strings.ContainsRune("{}[]=,:()", r) {
-			l.i += n
-			return token{string(r), string(r), p}, nil
-		}
-		if unicode.IsLetter(r) || r == '_' || r == '-' || unicode.IsDigit(r) {
-			l.i += n
-			for l.i < len(l.s) {
-				rr, nn := utf8.DecodeRuneInString(l.s[l.i:])
-				if unicode.IsLetter(rr) || unicode.IsDigit(rr) || rr == '_' || rr == '-' || rr == '.' {
-					l.i += nn
-				} else {
-					break
-				}
-			}
-			v := l.s[p:l.i]
-			return token{"word", v, p}, nil
-		}
-		return token{}, fmt.Errorf("unexpected character %q at offset %d", r, p)
+func Parse(source string) ([]*Block, error) {
+	file, diags := hclsyntax.ParseConfig([]byte(source), "regate.hcl", hcl.Pos{Line: 1, Column: 1})
+	if diags.HasErrors() {
+		return nil, fmt.Errorf("HCL2: %s", diags.Error())
 	}
-	return token{"eof", "", len(l.s)}, nil
+	body, ok := file.Body.(*hclsyntax.Body)
+	if !ok {
+		return nil, fmt.Errorf("unexpected HCL2 body type %T", file.Body)
+	}
+	blocks := make([]*Block, 0, len(body.Blocks))
+	for _, node := range body.Blocks {
+		block, err := readBlock(node)
+		if err != nil {
+			return nil, err
+		}
+		blocks = append(blocks, block)
+	}
+	if len(body.Attributes) > 0 {
+		return nil, fmt.Errorf("HCL2: top-level attributes are not supported; use named blocks")
+	}
+	return blocks, nil
 }
 
-type parser struct {
-	tokens []token
-	at     int
-	source string
-}
-
-func (p *parser) peek() token { return p.tokens[p.at] }
-func (p *parser) pop() token {
-	t := p.peek()
-	if p.at < len(p.tokens)-1 {
-		p.at++
+func readBlock(node *hclsyntax.Block) (*Block, error) {
+	r := node.Range()
+	b := &Block{Type: node.Type, Labels: append([]string(nil), node.Labels...), Attrs: map[string]any{}, Start: r.Start.Byte, End: r.End.Byte, Line: r.Start.Line, AttrRanges: map[string]SourceRange{}}
+	names := make([]string, 0, len(node.Body.Attributes))
+	for name := range node.Body.Attributes {
+		names = append(names, name)
 	}
-	return t
-}
-func (p *parser) want(k string) (token, error) {
-	t := p.pop()
-	if t.k != k {
-		return t, fmt.Errorf("expected %s at %d, found %q", k, t.pos, t.v)
+	sort.Strings(names)
+	for _, name := range names {
+		a := node.Body.Attributes[name]
+		val, diags := a.Expr.Value(nil)
+		if diags.HasErrors() {
+			return nil, fmt.Errorf("%s[%s] attribute %s at %s: %s", b.Type, joinLabels(b.Labels), name, a.Expr.Range().String(), diags.Error())
+		}
+		result, err := ctyToGo(val)
+		if err != nil {
+			return nil, fmt.Errorf("%s[%s] attribute %s: %w", b.Type, joinLabels(b.Labels), name, err)
+		}
+		b.Attrs[name] = result
+		ar := a.Expr.Range()
+		b.AttrRanges[name] = SourceRange{Start: ar.Start.Byte, End: ar.End.Byte, Line: ar.Start.Line, Column: ar.Start.Column}
 	}
-	return t, nil
-}
-func (p *parser) value() (any, error) {
-	t := p.pop()
-	switch t.k {
-	case "str":
-		return t.v, nil
-	case "word":
-		switch t.v {
-		case "true":
-			return true, nil
-		case "false":
-			return false, nil
-		case "null":
-			return nil, nil
+	for _, child := range node.Body.Blocks {
+		parsed, err := readBlock(child)
+		if err != nil {
+			return nil, err
 		}
-		if i, e := strconv.ParseInt(t.v, 10, 64); e == nil {
-			return i, nil
-		}
-		if f, e := strconv.ParseFloat(t.v, 64); e == nil {
-			return f, nil
-		}
-		return nil, fmt.Errorf("unsupported HCL expression %q at %d; use quoted literal or supported map/list", t.v, t.pos)
-	case "[":
-		a := []any{}
-		for p.peek().k != "]" {
-			if p.peek().k == "eof" {
-				return nil, fmt.Errorf("unterminated list at %d", t.pos)
-			}
-			v, e := p.value()
-			if e != nil {
-				return nil, e
-			}
-			a = append(a, v)
-			if p.peek().k == "," {
-				p.pop()
-			}
-		}
-		p.pop()
-		return a, nil
-	case "{":
-		m := map[string]any{}
-		for p.peek().k != "}" {
-			if p.peek().k == "eof" {
-				return nil, fmt.Errorf("unterminated object at %d", t.pos)
-			}
-			key := p.pop()
-			if key.k != "word" && key.k != "str" {
-				return nil, fmt.Errorf("invalid object key at %d", key.pos)
-			}
-			if p.peek().k != "=" && p.peek().k != ":" {
-				return nil, fmt.Errorf("object expects = at %d", p.peek().pos)
-			}
-			p.pop()
-			val, e := p.value()
-			if e != nil {
-				return nil, e
-			}
-			if _, ok := m[key.v]; ok {
-				return nil, fmt.Errorf("duplicate key %s", key.v)
-			}
-			m[key.v] = val
-			if p.peek().k == "," {
-				p.pop()
-			}
-		}
-		p.pop()
-		return m, nil
-	default:
-		return nil, fmt.Errorf("invalid value %q at %d", t.v, t.pos)
+		b.Children = append(b.Children, parsed)
 	}
-}
-func (p *parser) body(kind string, labels []string, start int) (*Block, error) {
-	b := &Block{Type: kind, Labels: labels, Attrs: map[string]any{}, Start: start}
-	for p.peek().k != "}" {
-		if p.peek().k == "eof" {
-			return nil, fmt.Errorf("unterminated block %s", kind)
-		}
-		name := p.pop()
-		if name.k != "word" {
-			return nil, fmt.Errorf("expected identifier at %d, found %s", name.pos, name.v)
-		}
-		if p.peek().k == "=" {
-			p.pop()
-			v, e := p.value()
-			if e != nil {
-				return nil, e
-			}
-			if _, has := b.Attrs[name.v]; has {
-				return nil, fmt.Errorf("duplicate attribute %s in %s", name.v, kind)
-			}
-			b.Attrs[name.v] = v
-		} else {
-			lbl := []string{}
-			for p.peek().k == "str" || p.peek().k == "word" {
-				lbl = append(lbl, p.pop().v)
-			}
-			if _, e := p.want("{"); e != nil {
-				return nil, e
-			}
-			child, e := p.body(name.v, lbl, name.pos)
-			if e != nil {
-				return nil, e
-			}
-			b.Children = append(b.Children, child)
-		}
-	}
-	close := p.pop()
-	b.End = close.pos + 1
 	return b, nil
 }
-func Parse(src string) ([]*Block, error) {
-	l := lexer{s: src}
-	ts := []token{}
-	for {
-		t, e := l.next()
-		if e != nil {
-			return nil, e
-		}
-		ts = append(ts, t)
-		if t.k == "eof" {
-			break
-		}
+func joinLabels(labels []string) string {
+	if len(labels) == 0 {
+		return ""
 	}
-	p := parser{tokens: ts, source: src}
-	ret := []*Block{}
-	for p.peek().k != "eof" {
-		t := p.pop()
-		if t.k != "word" {
-			return nil, fmt.Errorf("expected HCL block at %d", t.pos)
-		}
-		labels := []string{}
-		for p.peek().k == "str" || p.peek().k == "word" {
-			labels = append(labels, p.pop().v)
-		}
-		if _, e := p.want("{"); e != nil {
-			return nil, e
-		}
-		b, e := p.body(t.v, labels, t.pos)
-		if e != nil {
-			return nil, e
-		}
-		ret = append(ret, b)
+	return fmt.Sprint(labels)
+}
+
+// ctyToGo is intentionally lossless for JSON-compatible HCL values: integer
+// values stay int64, nonintegral numbers become float64, and dynamic/unknown
+// values are refused before publication. Values with larger than int64 integer
+// precision are rejected rather than rounded into a different configuration.
+func ctyToGo(v cty.Value) (any, error) {
+	if !v.IsKnown() {
+		return nil, fmt.Errorf("unknown HCL value is not executable")
 	}
-	return ret, nil
+	if v.IsNull() {
+		return nil, nil
+	}
+	switch {
+	case v.Type() == cty.String:
+		return v.AsString(), nil
+	case v.Type() == cty.Bool:
+		return v.True(), nil
+	case v.Type() == cty.Number:
+		f := v.AsBigFloat()
+		if i, accuracy := f.Int64(); accuracy == big.Exact {
+			return i, nil
+		}
+		float, _ := f.Float64()
+		if !math.IsInf(float, 0) && !math.IsNaN(float) {
+			return float, nil
+		}
+		return nil, fmt.Errorf("number is outside float64 range")
+	case v.Type().IsObjectType(), v.Type().IsMapType():
+		m := map[string]any{}
+		iter := v.ElementIterator()
+		for iter.Next() {
+			k, val := iter.Element()
+			item, err := ctyToGo(val)
+			if err != nil {
+				return nil, err
+			}
+			m[k.AsString()] = item
+		}
+		return m, nil
+	case v.Type().IsTupleType(), v.Type().IsListType(), v.Type().IsSetType():
+		a := make([]any, 0, v.LengthInt())
+		it := v.ElementIterator()
+		for it.Next() {
+			_, val := it.Element()
+			item, err := ctyToGo(val)
+			if err != nil {
+				return nil, err
+			}
+			a = append(a, item)
+		}
+		return a, nil
+	default:
+		return nil, fmt.Errorf("unsupported HCL value type %s", v.Type().FriendlyName())
+	}
 }
 func ParseFile(path string) ([]*Block, error) {
-	b, e := os.ReadFile(path)
-	if e != nil {
-		return nil, e
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
 	}
-	return Parse(string(b))
+	return Parse(string(src))
 }
 func (b *Block) Label() (string, error) {
 	if len(b.Labels) != 1 {
@@ -277,10 +161,10 @@ func (b *Block) Label() (string, error) {
 	}
 	return b.Labels[0], nil
 }
-func (b *Block) String(k string) string { v, _ := b.Attrs[k].(string); return v }
+func (b *Block) String(k string) string { s, _ := b.Attrs[k].(string); return s }
 func (b *Block) Int(k string, def int) int {
-	if v, ok := b.Attrs[k].(int64); ok {
-		return int(v)
+	if i, ok := b.Attrs[k].(int64); ok {
+		return int(i)
 	}
 	return def
 }
@@ -291,21 +175,11 @@ func (b *Block) Bool(k string, def bool) bool {
 	return def
 }
 func (b *Block) Child(kind string) []*Block {
-	res := []*Block{}
-	for _, x := range b.Children {
-		if x.Type == kind {
-			res = append(res, x)
+	a := []*Block{}
+	for _, b2 := range b.Children {
+		if b2.Type == kind {
+			a = append(a, b2)
 		}
 	}
-	return res
-}
-func (b *Block) Strings(k string) []string {
-	a, _ := b.Attrs[k].([]any)
-	r := []string{}
-	for _, x := range a {
-		if s, ok := x.(string); ok {
-			r = append(r, s)
-		}
-	}
-	return r
+	return a
 }

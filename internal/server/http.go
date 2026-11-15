@@ -188,7 +188,7 @@ func (s *Service) api(w http.ResponseWriter, r *http.Request) {
 			errorJSON(w, 400, e)
 			return
 		}
-		adminName := map[string]string{"drafts": "regate_draft_create", "draft-update": "regate_draft_patch", "validate": "regate_validate", "diff": "regate_diff", "impact": "regate_impact_analyze", "activate": "regate_activate", "rollback": "regate_rollback", "test": "regate_test", "simulate": "regate_simulate", "run": "regate_run", "discover": "regate_upstream_refresh", "resume": "regate_resume", "graph-patch": "regate_graph_patch"}[p]
+		adminName := map[string]string{"drafts": "regate_draft_create", "draft-update": "regate_draft_patch", "validate": "regate_validate", "diff": "regate_diff", "impact": "regate_impact_analyze", "activate": "regate_activate", "rollback": "regate_rollback", "test": "regate_test", "simulate": "regate_simulate", "run": "regate_run", "discover": "regate_upstream_refresh", "resume": "regate_resume", "graph-patch": "regate_graph_patch", "attribute-patch": "regate_attribute_patch"}[p]
 		if adminName != "" {
 			result, e := s.Admin(r.Context(), adminName, v)
 			if e != nil {

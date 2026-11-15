@@ -8,14 +8,15 @@ import (
 )
 
 type Config struct {
-	Listen       string              `json:"listen"`
-	Upstreams    map[string]Upstream `json:"upstreams"`
-	Hooks        map[string]Hook     `json:"hooks"`
-	Policies     map[string]Policy   `json:"policies"`
-	Pipelines    map[string]Pipeline `json:"pipelines"`
-	Surfaces     map[string]Surface  `json:"surfaces"`
-	Interceptors []Interceptor       `json:"interceptors"`
-	Source       string              `json:"-"`
+	Listen       string                 `json:"listen"`
+	Upstreams    map[string]Upstream    `json:"upstreams"`
+	Hooks        map[string]Hook        `json:"hooks"`
+	Policies     map[string]Policy      `json:"policies"`
+	Pipelines    map[string]Pipeline    `json:"pipelines"`
+	Surfaces     map[string]Surface     `json:"surfaces"`
+	Interceptors []Interceptor          `json:"interceptors"`
+	Source       string                 `json:"-"`
+	Plans        map[string]*PipelineIR `json:"-"`
 }
 type Upstream struct {
 	Name      string `json:"name"`
@@ -79,6 +80,7 @@ type Node struct {
 	Name  string         `json:"name"`
 	Kind  string         `json:"kind"`
 	Attrs map[string]any `json:"attrs"`
+	Span  SourceRange    `json:"-"`
 }
 type Edge struct {
 	From string `json:"from"`
@@ -97,6 +99,9 @@ type Interceptor struct {
 func Decode(src string) (*Config, error) {
 	blocks, err := Parse(src)
 	if err != nil {
+		return nil, err
+	}
+	if err = ValidateBlockSchema(blocks); err != nil {
 		return nil, err
 	}
 	c := &Config{Listen: "127.0.0.1:8080", Upstreams: map[string]Upstream{}, Hooks: map[string]Hook{}, Policies: map[string]Policy{}, Pipelines: map[string]Pipeline{}, Surfaces: map[string]Surface{}, Source: src}
@@ -142,7 +147,7 @@ func Decode(src string) (*Config, error) {
 					if _, ok := p.Nodes[n]; ok {
 						return nil, fmt.Errorf("duplicate node %s", n)
 					}
-					p.Nodes[n] = Node{Name: n, Kind: ch.String("kind"), Attrs: ch.Attrs}
+					p.Nodes[n] = Node{Name: n, Kind: ch.String("kind"), Attrs: ch.Attrs, Span: SourceRange{Start: ch.Start, End: ch.End, Line: ch.Line, Column: 1}}
 				case "edge":
 					p.Edges = append(p.Edges, Edge{From: ch.String("from"), To: ch.String("to"), When: ch.String("when")})
 				default:
@@ -178,6 +183,9 @@ func Decode(src string) (*Config, error) {
 		}
 	}
 	if err := c.Validate(); err != nil {
+		return nil, err
+	}
+	if err := c.Compile(); err != nil {
 		return nil, err
 	}
 	return c, nil

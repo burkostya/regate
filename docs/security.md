@@ -21,7 +21,7 @@
 3. Security-audit and extend DNS/IP egress rules (including internal-service exception policies and less-common reserved ranges), verify redirects, proxy behavior and all transports. Enforce outgoing request size, data volume and content policies.
 4. Complete trusted PII detection, classification, labels, provenance, declassification proofs, consent/retention and no-leak invariants.
 5. Implement EffectContract verification, remote idempotency support, read-back reconciliation and compensation mechanisms for unclear write results.
-6. Add complete HCL2+CEL typed validation, JSON Schema validation, compilation against the observed upstream schema and semantic impact analysis.
+6. Extend HCL2/CEL typed compilation with runtime JSON Schema validation, compilation against observed upstream schemas and security-aware impact analysis.
 7. Strengthen the persistent state with transactional database semantics, file encryption/access controls, key rotation, safe migrations and leader election if multi-process.
 8. Audit every hook, identity, policy decision and changed configuration, with reliable tamper-aware records and redacted observability.
 9. Establish rate limiting, concurrency fairness, resource budgets, body and SSE limits, task quotas and robust shutdown.

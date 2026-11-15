@@ -77,10 +77,22 @@ pipeline "customer_summary" {
     value = "nodes.summarize.value"
   }
 
-  edge {from = "authorize" to = "fetch"}
-  edge {from = "fetch" to = "mask"}
-  edge {from = "mask" to = "summarize"}
-  edge {from = "summarize" to = "finish"}
+  edge {
+    from = "authorize"
+    to   = "fetch"
+  }
+  edge {
+    from = "fetch"
+    to   = "mask"
+  }
+  edge {
+    from = "mask"
+    to   = "summarize"
+  }
+  edge {
+    from = "summarize"
+    to   = "finish"
+  }
 }
 
 surface "support" {
