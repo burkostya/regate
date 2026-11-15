@@ -116,7 +116,8 @@ func (m *inboundMCP) handle(s *Service, w http.ResponseWriter, r *http.Request, 
                 http.Error(w,"insufficient scope",http.StatusForbidden)
                 return
             }
-            r=r.WithContext(identity.WithPrincipal(r.Context(),p))
+            verified:=identity.WithPrincipal(r.Context(),p)
+            r=r.WithContext(identity.WithSubjectToken(verified,bearer(r)))
         } else if !s.authorize(r,false) {
             w.Header().Set("WWW-Authenticate", "Bearer")
             http.Error(w,"unauthorized",http.StatusUnauthorized)
