@@ -18,7 +18,7 @@ flowchart TB
   Surface --> Runtime
   Runtime --> Decisions[Decision API]
   Runtime --> PII[PII masking HTTP service]
-  Runtime --> Upstream[MCP upstream tools]
+  Runtime --> Upstream[Official Go SDK HTTP MCP upstream tools]
   Runtime --> Agent[Agent MCP tool]
   Runtime --> Journal[Effects, traces, suspended state, tasks]
 ```
@@ -79,3 +79,7 @@ The task handler persists progress and checkpoints. After a crash, unfinished `w
 - Remote MCP hook: invokes a configured upstream tool with the input object (or `{ "input": ... }` for non-object).
 
 See `docs/contracts/hcl.md` and `docs/contracts/hooks.md`.
+
+## Upstream MCP transport (SDK milestone)
+
+The upstream connector delegates transport negotiation, modern `server/discover`, legacy `initialize`, JSON-RPC and HTTP/SSE framing to `github.com/modelcontextprotocol/go-sdk/mcp` v1.8.0. This milestone does not replace the custom **inbound** public/admin MCP handler. The connector disables standalone SSE on its short-lived per-operation sessions and does not silently retry writes. The outbound HTTP transport remains DNS-pinned and credential injection is limited to one explicitly configured upstream; OAuth and persistent subscriptions require dedicated future work.
