@@ -24,7 +24,7 @@ func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { reply(w, 200, map[string]any{"ok": true}) })
 	mux.Handle("/api/", s.requireAdmin(http.HandlerFunc(s.api)))
-	mux.Handle("/mcp/admin", s.requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.mcp(w, r, "", true) })))
+	mux.Handle("/mcp/admin", s.requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.inbound.handle(s, w, r, "", true) })))
 	mux.HandleFunc("/mcp/", func(w http.ResponseWriter, r *http.Request) {
 		if !s.authorize(r, false) {
 			http.Error(w, "unauthorized", 401)
@@ -42,7 +42,7 @@ func (s *Service) Handler() http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		s.mcp(w, r, surface, false)
+		s.inbound.handle(s, w, r, surface, false)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
