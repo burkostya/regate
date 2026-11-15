@@ -53,3 +53,16 @@
 - Updated upstream schemas are detected, breaking changes isolated; in-flight calls retain their original immutable revision.
 - Tasks survive restart, subscription notifications work, concurrency/authorization invariants pass formal and load tests.
 - Standard MCP conformance, browser integration, race/security and production acceptance suites all pass.
+
+#### Compiler milestone: port schemas and source-safe graph edits
+
+- JSON Schema 2020-12 input/output contracts are compiled before activation.
+- Surface and node contracts are checked at the external effect boundary;
+  dynamic remote data is refined at runtime.
+- Basic static producer/consumer incompatibilities are rejected; full JSON
+  Schema subsumption, arbitrary CEL access paths and remote schema provenance
+  cannot be statically proven and remain runtime/policy responsibilities.
+- Structural graph patching preserves untouched nested comments, attributes
+  and blocks; structural deletion removes the deleted element's own contents.
+- Remote JSON Schema loading is explicitly forbidden to prevent SSRF at
+  compilation. Contract schemas are embedded within HCL.

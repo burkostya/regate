@@ -469,3 +469,22 @@ func TestUnknownEffectJournalAndTraceRestart(t *testing.T) {
 		t.Fatal("effect journal not restored after restart")
 	}
 }
+
+func TestSurfaceInputSchemaRejectsBeforeExternalEffect(t *testing.T) {
+	_, server, world := fixture(t)
+	for _, bad := range []map[string]any{{}, {"customer_id": 12}} {
+		payload := map[string]any{"jsonrpc": "2.0", "id": 99, "method": "tools/call", "params": map[string]any{"name": "summarize_customer", "arguments": bad}}
+		result := decode(t, jsonPost(t, server.URL+"/mcp/support", "", payload))
+		if result["error"] == nil {
+			content, ok := result["result"].(map[string]any)
+			if !ok || content["isError"] != true {
+				t.Fatalf("accepted invalid arguments: %#v", result)
+			}
+		}
+	}
+	world.mu.Lock()
+	defer world.mu.Unlock()
+	if len(world.calls) != 0 {
+		t.Fatalf("external side effect reached despite invalid input: %v", world.calls)
+	}
+}

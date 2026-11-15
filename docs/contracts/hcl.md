@@ -113,3 +113,38 @@ verified remote contract resolution, explicit pure data dependency edges,
 source-preserving *insertion/removal* of nested blocks and attributes, and
 arbitrary opaque block editing in the visual editor. Dynamic CEL subscripts
 and paths through conditional branches need runtime validation.
+
+### Declared JSON Schema contracts (compiler extension)
+
+Surface tools use `input_schema` and `output_schema`. Every pipeline `node`
+may also declare `input_schema` and `output_schema` as inline HCL objects. All
+schemas are compiled with JSON Schema Draft 2020-12 before the revision can be
+activated. Local `$defs`/`$ref` are supported; remote schema downloads are
+forbidden during compilation. Unknown external schemas cannot silently
+introduce new network dependencies.
+
+The `input_schema` of an `mcp.call` node constrains the effective `arguments`
+object immediately before dispatch, *after* `before_call` interceptors. The
+input schema of `hook.call` and `http.call` similarly constrains the value sent
+outside. A declared node `output_schema` constrains the resulting value before
+it enters another node. Surface input/output schemas are enforced at the MCP
+boundary, both before and after interceptors.
+
+The compiler rejects obvious incompatibilities (disjoint JSON types and
+required properties that a closed producer can never provide), but does not
+claim that arbitrary JSON Schema subsumption is decidable. Dynamic/unproven
+links are checked against the consumer schema at runtime. This is essential
+for untrusted remote MCP payloads and conditional CEL expressions. A running
+revision retains its compiled schemas.
+
+### Structural HCL edits
+
+`regate_graph_patch` performs a source-range merge rather than replacing the
+entire pipeline. It matches named blocks and `edge` blocks by endpoints and
+condition, updates only changed expressions, and handles additions/removals
+without rewriting siblings. Edits are rejected if they target ambiguous block
+identities or produce an invalid executable configuration. Comments immediately
+outside changed ranges are preserved. Deleted elements cannot preserve content
+*inside* their own deleted range; for this reason a visual editor should warn
+when deleting a node with hand-written documentation. `AddAttribute` provides
+a targeted insertion operation in the underlying configuration package.

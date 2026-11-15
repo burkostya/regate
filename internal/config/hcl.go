@@ -16,14 +16,15 @@ import (
 )
 
 type Block struct {
-	Type       string                 `json:"type"`
-	Labels     []string               `json:"labels,omitempty"`
-	Attrs      map[string]any         `json:"attrs,omitempty"`
-	Children   []*Block               `json:"children,omitempty"`
-	Start      int                    `json:"start"`
-	End        int                    `json:"end"`
-	Line       int                    `json:"line"`
-	AttrRanges map[string]SourceRange `json:"attr_ranges,omitempty"`
+	Type           string                 `json:"type"`
+	Labels         []string               `json:"labels,omitempty"`
+	Attrs          map[string]any         `json:"attrs,omitempty"`
+	Children       []*Block               `json:"children,omitempty"`
+	Start          int                    `json:"start"`
+	End            int                    `json:"end"`
+	Line           int                    `json:"line"`
+	AttrRanges     map[string]SourceRange `json:"attr_ranges,omitempty"`
+	AttrFullRanges map[string]SourceRange `json:"-"`
 }
 
 type SourceRange struct {
@@ -58,7 +59,7 @@ func Parse(source string) ([]*Block, error) {
 
 func readBlock(node *hclsyntax.Block) (*Block, error) {
 	r := node.Range()
-	b := &Block{Type: node.Type, Labels: append([]string(nil), node.Labels...), Attrs: map[string]any{}, Start: r.Start.Byte, End: r.End.Byte, Line: r.Start.Line, AttrRanges: map[string]SourceRange{}}
+	b := &Block{Type: node.Type, Labels: append([]string(nil), node.Labels...), Attrs: map[string]any{}, Start: r.Start.Byte, End: r.End.Byte, Line: r.Start.Line, AttrRanges: map[string]SourceRange{}, AttrFullRanges: map[string]SourceRange{}}
 	names := make([]string, 0, len(node.Body.Attributes))
 	for name := range node.Body.Attributes {
 		names = append(names, name)
@@ -77,6 +78,8 @@ func readBlock(node *hclsyntax.Block) (*Block, error) {
 		b.Attrs[name] = result
 		ar := a.Expr.Range()
 		b.AttrRanges[name] = SourceRange{Start: ar.Start.Byte, End: ar.End.Byte, Line: ar.Start.Line, Column: ar.Start.Column}
+		fr := a.Range()
+		b.AttrFullRanges[name] = SourceRange{Start: fr.Start.Byte, End: fr.End.Byte, Line: fr.Start.Line, Column: fr.Start.Column}
 	}
 	for _, child := range node.Body.Blocks {
 		parsed, err := readBlock(child)

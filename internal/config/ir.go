@@ -28,7 +28,14 @@ type NodeIR struct {
 	Output       PortType
 	Expressions  map[string]*expr.Value
 	Dependencies []string
+	InputSchema  *SchemaContract
+	OutputSchema *SchemaContract
 }
+type ToolContract struct {
+	Input  *SchemaContract
+	Output *SchemaContract
+}
+
 type PipelineIR struct {
 	Name  string
 	Entry string
@@ -40,6 +47,22 @@ var nodeRef = regexp.MustCompile(`\bnodes\.([a-zA-Z_][a-zA-Z0-9_]*)`)
 
 func (c *Config) Compile() error {
 	plans := map[string]*PipelineIR{}
+	toolContracts := map[string]map[string]ToolContract{}
+	for surfaceName, surface := range c.Surfaces {
+		toolContracts[surfaceName] = map[string]ToolContract{}
+		for _, tool := range surface.Tools {
+			input, err := compileSchema(tool.InputSchema)
+			if err != nil {
+				return fmt.Errorf("surface %s tool %s input_schema: %w", surfaceName, tool.Name, err)
+			}
+			output, err := compileSchema(tool.OutputSchema)
+			if err != nil {
+				return fmt.Errorf("surface %s tool %s output_schema: %w", surfaceName, tool.Name, err)
+			}
+			toolContracts[surfaceName][tool.Name] = ToolContract{Input: input, Output: output}
+		}
+	}
+
 	for name, p := range c.Pipelines {
 		plan := &PipelineIR{Name: name, Entry: p.Entry, Nodes: map[string]*NodeIR{}}
 		forward := map[string][]string{}
@@ -82,6 +105,30 @@ func (c *Config) Compile() error {
 				resultType = PortObject
 			}
 			compiled := &NodeIR{Name: id, Kind: n.Kind, Span: n.Span, Output: resultType, Expressions: map[string]*expr.Value{}}
+			if raw, ok := n.Attrs["input_schema"].(map[string]any); ok {
+				schema, err := compileSchema(raw)
+				if err != nil {
+					return fmt.Errorf("pipeline %s node %s input_schema: %w", name, id, err)
+				}
+				compiled.InputSchema = schema
+			}
+			if raw, ok := n.Attrs["output_schema"].(map[string]any); ok {
+				schema, err := compileSchema(raw)
+				if err != nil {
+					return fmt.Errorf("pipeline %s node %s output_schema: %w", name, id, err)
+				}
+				compiled.OutputSchema = schema
+			}
+			if compiled.OutputSchema != nil {
+				if types := compiled.OutputSchema.Types(); len(types) == 1 {
+					switch types[0] {
+					case "object":
+						compiled.Output = PortObject
+					case "boolean":
+						compiled.Output = PortBool
+					}
+				}
+			}
 			for _, attr := range []string{"value", "mapping", "arguments", "test"} {
 				raw, ok := n.Attrs[attr]
 				if !ok {
@@ -114,9 +161,52 @@ func (c *Config) Compile() error {
 			compiled.Dependencies = uniqueStrings(compiled.Dependencies)
 			plan.Nodes[id] = compiled
 		}
+		// If a node directly consumes a declared predecessor's output,
+		// reject provably incompatible types. Uncertain paths are refined
+		// at execution time before any external side effect.
+		for _, id := range plan.Order {
+			node := p.Nodes[id]
+			consumer := plan.Nodes[id]
+			if consumer.InputSchema == nil {
+				continue
+			}
+			attr := "value"
+			if node.Kind == "mcp.call" {
+				attr = "arguments"
+			}
+			if text, ok := node.Attrs[attr].(string); ok {
+				if parent, ok := schemaRefFromExpression(text); ok {
+					source := plan.Nodes[parent]
+					if source != nil {
+						if err := CheckKnownCompatibility(source.OutputSchema, consumer.InputSchema); err != nil {
+							return fmt.Errorf("pipeline %s %s -> %s: %w", name, parent, id, err)
+						}
+					}
+				}
+			}
+		}
 		plans[name] = plan
 	}
+	// Compare each tool's published output contract with declared outputs.
+	for surfaceName, surface := range c.Surfaces {
+		for _, tool := range surface.Tools {
+			published := toolContracts[surfaceName][tool.Name].Output
+			if tool.Pipeline == "" || published == nil {
+				continue
+			}
+			p := c.Pipelines[tool.Pipeline]
+			for _, node := range p.Nodes {
+				if node.Kind != "output" {
+					continue
+				}
+				if err := CheckKnownCompatibility(plans[p.Name].Nodes[node.Name].OutputSchema, published); err != nil {
+					return fmt.Errorf("surface %s tool %s output %s: %w", surfaceName, tool.Name, node.Name, err)
+				}
+			}
+		}
+	}
 	c.Plans = plans
+	c.ToolContracts = toolContracts
 	return nil
 }
 func extractRefs(value any) []string {

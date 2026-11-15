@@ -224,3 +224,143 @@ func TestGraphPatchPreservesNestedCommentsWhenOnlyAttributesChange(t *testing.T)
 		t.Fatal(err)
 	}
 }
+
+func TestStructuralPatchPreservesOpaqueNestedText(t *testing.T) {
+	source := strings.Replace(example(t), `    tool      = "get_customer"`, `    # kept only in the original nested block
+    tool      = "get_customer"`, 1)
+	original := mustPipelineSource(t, source, "customer_summary")
+	// The replacement comes from a visual editor that knows nothing about the
+	// operator comment, and restructures the graph by adding a node and an edge.
+	desired := strings.Replace(original, `  node "summarize" {`, `  node "audit" {
+    kind = "transform"
+    value = "nodes.mask.value"
+  }
+
+  node "summarize" {`, 1)
+	desired = strings.Replace(desired, `from = "mask"
+    to   = "summarize"`, `from = "mask"
+    to   = "audit"`, 1)
+	desired = strings.Replace(desired, `  edge {
+    from = "summarize"`, `  edge {
+    from = "audit"
+    to   = "summarize"
+  }
+  edge {
+    from = "summarize"`, 1)
+	updated, err := ReplaceBlock(source, "pipeline", "customer_summary", desired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(updated, "# kept only in the original nested block") {
+		t.Fatal("lost original nested comment")
+	}
+	if !strings.Contains(updated, `node "audit"`) {
+		t.Fatal("missing added node")
+	}
+	if !strings.Contains(updated, `to   = "audit"`) {
+		t.Fatal("missing changed route")
+	}
+	if _, err = Decode(updated); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Replace(updated, `    # kept only in the original nested block\n`, "", 1) == source {
+		t.Fatal("expected the graph to change")
+	}
+	restored, err := ReplaceBlock(updated, "pipeline", "customer_summary", original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(restored, "# kept only in the original nested block") {
+		t.Fatal("structural removal lost preserved comment")
+	}
+	if strings.Contains(restored, `node "audit"`) {
+		t.Fatal("failed to remove new node")
+	}
+	if _, err = Decode(restored); err != nil {
+		t.Fatal(err)
+	}
+}
+func mustPipelineSource(t *testing.T, source, name string) string {
+	t.Helper()
+	blocks, err := Parse(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range blocks {
+		if b.Type == "pipeline" && len(b.Labels) == 1 && b.Labels[0] == name {
+			return source[b.Start:b.End]
+		}
+	}
+	t.Fatal("missing pipeline")
+	return ""
+}
+func TestSourcePreservingAttributeInsertion(t *testing.T) {
+	source := strings.Replace(example(t), `    tool      = "get_customer"`, `    # operator note
+    tool      = "get_customer"`, 1)
+	path := []BlockSelector{{Type: "pipeline", Label: "customer_summary"}, {Type: "node", Label: "fetch"}}
+	next, err := AddAttribute(source, path, "input_schema", `{type="object",required=["customer_id"],properties={customer_id={type="string"}}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(next, "# operator note") {
+		t.Fatal("operator note lost")
+	}
+	if _, err = Decode(next); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = AddAttribute(next, path, "input_schema", `{type="object"}`); err == nil {
+		t.Fatal("duplicate accepted")
+	}
+	if _, err = AddAttribute(source, path, "invalid_name", `1+`); err == nil {
+		t.Fatal("invalid expression accepted")
+	}
+}
+func TestSchemaPreflightRejectsProvablePortMismatch(t *testing.T) {
+	src := example(t)
+	src = strings.Replace(src, `    mock      = {customer_id = "C123", name = "Alice", email = "alice@example.com"}`, `    mock      = {customer_id = "C123", name = "Alice", email = "alice@example.com"}
+    output_schema = {type="object",required=["customer_id"],properties={customer_id={type="string"}, email={type="string"}}}`, 1)
+	src = strings.Replace(src, `    hook  = "mask_pii"`, `    hook  = "mask_pii"
+    input_schema = {type="string"}`, 1)
+	if _, err := Decode(src); err == nil || !strings.Contains(err.Error(), "incompatible port types") {
+		t.Fatalf("expected static type mismatch, got %v", err)
+	}
+}
+func TestJSONSchemaFullDraftAndOfflineRefs(t *testing.T) {
+	schema := map[string]any{
+		"type":                 "object",
+		"$defs":                map[string]any{"identifier": map[string]any{"type": "string", "pattern": "^[A-Z]{2}[0-9]+$"}},
+		"properties":           map[string]any{"id": map[string]any{"$ref": "#/$defs/identifier"}},
+		"required":             []any{"id"},
+		"additionalProperties": false,
+	}
+	compiled, err := compileSchema(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = compiled.Validate(map[string]any{"id": "AB12"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range []any{map[string]any{"id": "bad"}, map[string]any{"id": "AB12", "extra": true}, map[string]any{}} {
+		if err = compiled.Validate(v); err == nil {
+			t.Errorf("invalid value accepted: %#v", v)
+		}
+	}
+	if _, err = compileSchema(map[string]any{"$ref": "https://example.org/schema.json"}); err == nil || !strings.Contains(err.Error(), "forbidden") {
+		t.Fatalf("remote schema ref not rejected: %v", err)
+	}
+}
+func TestDynamicRefinementOnUnknownPort(t *testing.T) {
+	src := strings.Replace(example(t), `    hook  = "mask_pii"`, `    hook  = "mask_pii"
+    input_schema = {type="object",properties={email={type="string"}},required=["email"]}`, 1)
+	cfg, err := Decode(src)
+	if err != nil {
+		t.Fatalf("dynamic connection should compile for runtime checking: %v", err)
+	}
+	compiled := cfg.Plans["customer_summary"].Nodes["mask"].InputSchema
+	if compiled == nil {
+		t.Fatal("missing runtime schema")
+	}
+	if err = compiled.Validate(map[string]any{"email": 3}); err == nil {
+		t.Fatal("failed to reject mismatched dynamic result")
+	}
+}

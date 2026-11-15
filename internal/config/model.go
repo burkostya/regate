@@ -8,15 +8,16 @@ import (
 )
 
 type Config struct {
-	Listen       string                 `json:"listen"`
-	Upstreams    map[string]Upstream    `json:"upstreams"`
-	Hooks        map[string]Hook        `json:"hooks"`
-	Policies     map[string]Policy      `json:"policies"`
-	Pipelines    map[string]Pipeline    `json:"pipelines"`
-	Surfaces     map[string]Surface     `json:"surfaces"`
-	Interceptors []Interceptor          `json:"interceptors"`
-	Source       string                 `json:"-"`
-	Plans        map[string]*PipelineIR `json:"-"`
+	Listen        string                             `json:"listen"`
+	Upstreams     map[string]Upstream                `json:"upstreams"`
+	Hooks         map[string]Hook                    `json:"hooks"`
+	Policies      map[string]Policy                  `json:"policies"`
+	Pipelines     map[string]Pipeline                `json:"pipelines"`
+	Surfaces      map[string]Surface                 `json:"surfaces"`
+	Interceptors  []Interceptor                      `json:"interceptors"`
+	Source        string                             `json:"-"`
+	Plans         map[string]*PipelineIR             `json:"-"`
+	ToolContracts map[string]map[string]ToolContract `json:"-"`
 }
 type Upstream struct {
 	Name      string `json:"name"`

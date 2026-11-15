@@ -82,6 +82,15 @@ func validateBlock(b *Block, parent string, top bool) error {
 		}
 		var present bool
 		attrSpec, present = nodeAttributes[kind]
+		// Node contracts describe the effective data entering and leaving this step.
+		// The schemas are compiled before activation and checked at runtime.
+		merged := make(map[string]string, len(attrSpec)+2)
+		for name, typ := range attrSpec {
+			merged[name] = typ
+		}
+		merged["input_schema"] = "object"
+		merged["output_schema"] = "object"
+		attrSpec = merged
 		if !present {
 			return fmt.Errorf("%s: unsupported kind %q", where, kind)
 		}
