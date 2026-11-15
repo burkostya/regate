@@ -12,9 +12,9 @@ import (
 // patch operations, but must not be activated until the compiler understands it.
 var blockAttributes = map[string]map[string]string{
 	"regate":      {"listen": "string"},
-    "oauth":        {"issuer": "string", "audience": "string", "jwks_url": "string", "introspection_url": "string", "client_id_env": "string", "client_secret_env": "string"},
-	"upstream":    {"url": "string", "auth_env": "string", "timeout_ms": "positive-int"},
-	"hook":        {"transport": "string", "url": "string", "upstream": "string", "tool": "string", "auth_env": "string", "contract": "string", "on_error": "string", "timeout_ms": "positive-int"},
+    "oauth":        {"issuer": "string", "audience": "string", "jwks_url": "string", "introspection_url": "string", "client_id_env": "string", "client_secret_env": "string", "token_endpoint": "string", "exchange_client_id_env": "string", "exchange_client_secret_env": "string"},
+	"upstream":    {"url": "string", "auth_env": "string", "timeout_ms": "positive-int", "trust_level": "string", "oauth_exchange": "string", "oauth_audience": "string", "oauth_scopes": "string-list"},
+	"hook":        {"transport": "string", "url": "string", "upstream": "string", "tool": "string", "auth_env": "string", "contract": "string", "on_error": "string", "timeout_ms": "positive-int", "trust_level": "string", "oauth_exchange": "string", "oauth_audience": "string", "oauth_scopes": "string-list"},
 	"policy":      {"decision_hook": "string", "scope": "string"},
 	"pipeline":    {"entry": "string", "timeout_ms": "positive-int", "concurrency": "positive-int"},
 	"surface":     {"path": "string", "oauth": "string", "required_scopes": "string-list"},
@@ -35,7 +35,7 @@ var nodeAttributes = map[string]map[string]string{
 	"join":         {"kind": "string", "mode": "string", "quorum": "positive-int", "value": "expression", "mapping": "expression"},
 	"mcp.call":     {"kind": "string", "upstream": "string", "tool": "string", "effect": "string", "arguments": "object-or-expression", "mock": "any"},
 	"hook.call":    {"kind": "string", "hook": "string", "value": "expression"},
-	"http.call":    {"kind": "string", "url": "string", "auth_env": "string", "timeout_ms": "positive-int", "value": "expression"},
+	"http.call":    {"kind": "string", "url": "string", "auth_env": "string", "timeout_ms": "positive-int", "value": "expression", "trust_level": "string"},
 	"policy.check": {"kind": "string", "policy": "string", "value": "expression"},
 	"suspend":      {"kind": "string"},
 	"mask.pii":     {"kind": "string", "value": "expression"},
