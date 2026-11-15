@@ -439,6 +439,7 @@ func registerTaskMethods(srv *sdk.Server, s *Service, surface string, admin bool
         fn:=method.fn
         if err:=sdk.AddReceivingCustomMethod(srv,method.name,func(ctx context.Context, _ *sdk.ServerSession,p *extensionParams)(*taskExtensionResult,error){
             owner,_:=ctx.Value(sdkOwnerKey{}).(string)
+            owner=ownerIdentity(ctx,owner)
             // Every task lookup is bound to both the original public surface
             // and its immutable creation-time scopes, not merely the bearer
             // string. A later scope revocation must fail closed.
