@@ -214,8 +214,13 @@ func TestOAuthTaskCannotBypassToolScopeAndMasking(t *testing.T) {
     }
     // A token with the same identity but a different signed JWT is not a
     // sufficient task owner; secrets are bound to the specific client token.
-    other:=signedTestJWT(t,private,"https://issuer.test","https://regate.test/mcp/support","surface:read crm:read")
-    if other==broad {t.Fatal("unexpected identical test JWT")}
+    other:=signedTestJWT(t,private,"https://issuer.test","https://regate.test/mcp/support","surface:read crm:read other:scope")
+    response:=latestCall(t,srv.URL+"/mcp/support",other,"tasks/get",24,map[string]any{"taskId":id})
+    defer response.Body.Close()
+    data,_:=io.ReadAll(response.Body)
+    if response.StatusCode<400 || !bytes.Contains(data,[]byte(`"error"`)) {
+        t.Fatalf("task available to distinct bearer: HTTP %d %s",response.StatusCode,data)
+    }
 }
 
 func TestOAuthConcurrentDiscoveryAuthorization(t *testing.T) {
