@@ -267,6 +267,17 @@ func nativeValue(v ref.Val) (any, error) {
 	return v.Value(), nil
 }
 
+var authorizationValue = regexp.MustCompile(`(?i)\bBearer[ \t]+[A-Z0-9._~+/=-]+`)
+var secretAssignment = regexp.MustCompile(`(?i)\b(?:access_token|refresh_token|id_token|api[_-]?key|authorization|password|client_secret|secret)[ \t]*[:=][ \t]*(?:"[^"]*"|'[^']*'|[^,; \r\n]+)`)
+// Diagnostic accepts untrusted failures from upstream systems; it is deliberately
+// conservative. OAuth-protected executions log only a fixed generic message.
+func RedactDiagnostic(value string) string {
+    if len(value)>4096 {value=value[:4096]}
+    value=authorizationValue.ReplaceAllString(value,"Bearer [REDACTED]")
+    value=secretAssignment.ReplaceAllString(value,"[CREDENTIAL_REDACTED]")
+    return MaskPII(value).(string)
+}
+
 var email = regexp.MustCompile(`(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b`)
 
 func MaskPII(v any) any {
