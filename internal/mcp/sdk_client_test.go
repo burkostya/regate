@@ -184,15 +184,15 @@ func TestOfficialSDKFullPaginatedUpstreamCatalog(t *testing.T) {
 
 func TestCollectCatalogFailsClosedOnPaginationAbuse(t *testing.T) {
     count:=0
-    _,err:=collectCatalog("resources/list",func(cursor string)([]string,string,error) {
+    _,err:=collectCatalog("resources/list",func(cursor string)([]map[string]any,string,error) {
         count++
-        return []string{"x"},"same",nil
+        return []map[string]any{{"name":"x"}},"same",nil
     })
     if err==nil || !strings.Contains(err.Error(),"repeated cursor") || count!=2 {
         t.Fatalf("cursor loop not rejected: %v (pages=%d)",err,count)
     }
-    _,err=collectCatalog("prompts/list",func(string)([]string,string,error) {
-        return make([]string,maxCatalogItems+1),"",nil
+    _,err=collectCatalog("prompts/list",func(string)([]map[string]any,string,error) {
+        return make([]map[string]any,maxCatalogItems+1),"",nil
     })
     if err==nil || !strings.Contains(err.Error(),"exceeds") {
         t.Fatalf("unbounded catalog accepted: %v",err)
