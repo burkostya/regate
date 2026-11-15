@@ -273,6 +273,11 @@ func latestCall(t *testing.T, url, token, method string, id int, extra map[strin
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Mcp-Protocol-Version", "2026-07-28")
 	req.Header.Set("Mcp-Method", method)
+	if method == "tools/call" || method == "prompts/get" || method == "resources/read" {
+		name, _ := params["name"].(string)
+		if method == "resources/read" { name, _ = params["uri"].(string) }
+		if name != "" { req.Header.Set("Mcp-Name", name) }
+	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -297,6 +302,7 @@ func TestSubscriptionsNotifyOnActivate(t *testing.T) {
 	request, _ := http.NewRequestWithContext(ctx, "POST", server.URL+"/mcp/support", bytes.NewReader(raw))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Mcp-Protocol-Version", "2026-07-28")
+	request.Header.Set("Mcp-Method", "subscriptions/listen")
 	res, err := http.DefaultClient.Do(request)
 	if err != nil {
 		t.Fatal(err)
@@ -307,21 +313,23 @@ func TestSubscriptionsNotifyOnActivate(t *testing.T) {
 	}
 	reader := bufio.NewReader(res.Body)
 	readLine := func() map[string]any {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			t.Fatal(err)
+		// Official SDK emits "event: message" and optional event IDs before
+		// data. Parse the SSE frame, rather than assuming data is its first line.
+		var payload strings.Builder
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil { t.Fatal(err) }
+			line = strings.TrimRight(line, "\r\n")
+			if strings.HasPrefix(line, "data: ") {
+				if payload.Len() > 0 { payload.WriteByte('\n') }
+				payload.WriteString(strings.TrimPrefix(line, "data: "))
+			}
+			if line != "" { continue }
+			if payload.Len() == 0 { continue }
+			var v map[string]any
+			if err := json.Unmarshal([]byte(payload.String()), &v); err != nil { t.Fatal(err) }
+			return v
 		}
-		if !strings.HasPrefix(line, "data: ") {
-			t.Fatalf("SSE data expected: %q", line)
-		}
-		var v map[string]any
-		if err := json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data: "))), &v); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := reader.ReadString('\n'); err != nil {
-			t.Fatal(err)
-		}
-		return v
 	}
 	ack := readLine()
 	if ack["method"] != "notifications/subscriptions/acknowledged" {
