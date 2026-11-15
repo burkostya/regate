@@ -2,7 +2,7 @@
 
 **Target scope (user-approved):** full first release includes HTTP-only MCP client/server, editable virtual tools/resources/prompts, HCL2 declarative config, typed transformations/CEL, DAG branches and compositions, HTTP/MCP hooks including agents/PII/Decision API, policies, revisioned management MCP and skills, SvelteKit+Svelte Flow visual editor, async tasks, diagnostics, security and tests. **Do not silently split or drop these features.**
 
-**Current deliverable:** a Go engineering prototype with an HCL2/CEL typed IR and JSON Schema port contracts (PRs #11 and #12), plus SvelteKit frontend source. NOT complete v1. This distinction is important when planning installation or deployment.
+**Current deliverable:** a Go engineering prototype with HCL2/CEL typed IR and JSON Schema port contracts (PRs #11 and #12), official-SDK upstream HTTP client (#13) and an inbound SDK migration under review (#15), plus SvelteKit frontend source. NOT complete v1. This distinction is important when planning installation or deployment.
 
 ## Implemented and locally verified
 
@@ -16,7 +16,7 @@
 | HCL2 parsing/cty, CEL, closed block schemas and typed IR | Implemented subset in PR #11; Go GitHub CI passed | `internal/config`, `internal/expr` and negative/source-preservation tests |
 | DAG conditional edges/parallel waves/join | Basic implementation | Code path; incomplete formal/race coverage |
 | Prompt/resource publishing and proxy resource read | Partial implementation | Server method path |
-| Management MCP and REST endpoints | Implemented subset | Auth + draft/activate/conflict/rollback tests |
+| Management MCP and REST endpoints | Implemented subset, official SDK inbound migration under review (#15) | Auth + draft/activate/conflict/rollback, SDK client interoperability and skills tests |
 | Immutable revision history + drafts | File-backed implementation | Integration tests |
 | Dry-run with explicit mocks | Partial implementation | REST API path |
 | Effect journal (`dispatching`, `confirmed`, `unknown`) | Partial implementation | Go executor |
@@ -30,7 +30,7 @@
 ## Unfinished functionality required for full v1
 
 1. Finish HCL2/CEL/typed-IR acceptance (#3): basic cross-port JSON Schema typing and runtime validation now exist, but full schema subsumption, opaque source-safe patching and browser round trips remain open.
-2. Migrate incoming public/admin MCP server endpoints to official `modelcontextprotocol/go-sdk`, then verify protocol conformance and extensions end-to-end. The upstream client has migrated to SDK v1.8.0; OAuth, long-lived subscriptions, task/skill interoperability and robust upstream/session reuse remain open.
+2. Verify end-to-end protocol conformance and extensions against real servers and clients. Incoming public/admin standard MCP requests use the official SDK in PR #15; only versionless `server/discover` and task-start `resultType: task` remain narrow compatibility bridges. OAuth, long-lived upstream subscriptions, cross-process task/skill interoperability and robust upstream/session reuse remain open.
 3. Full JSON Schema input/output validation, compatibility checks and source-map/opaque-safe bidirectional editing of arbitrary HCL2 fragments.
 4. Full composition semantics (`pipeline.call`, map, controlled retries, named ports, safe joins with effects), robust task and MRTR resume, and property-based execution tests.
 5. Production-grade effect reconciliation/idempotency/compensation, backpressure and durable scheduling (no blind retries after uncertain writes).
@@ -72,4 +72,12 @@
 - Upstream tools/list pagination, tools/call and resources/read go through the official MCP Go SDK; legacy initialize and modern server/discover are delegated to the SDK. No stdio transport is supported.
 - Each upstream operation has an independent SDK session. This is intentionally conservative: session initialization per operation is slower, but stale connections and hidden write retries are avoided; production connection pooling remains open.
 - Outbound DNS-pinned egress and redirect blocking are preserved; token-env credentials attach only through the guarded HTTP client. This does not implement OAuth.
-- Incoming Regate MCP endpoints remain custom and are **not** yet SDK-backed, so full MCP compliance is still unverified.
+- Incoming standard public/admin MCP methods are SDK-backed in PR #15; custom methods for skills and task management are SDK-registered. A narrow existing wire fallback is kept for versionless Regate discovery and task-start responses (`resultType: task`) until the SDK models that extension. This does **not** prove full MCP conformance or production-readiness.
+
+#### Official SDK inbound milestone (PR #15)
+
+- Public/admin HTTP endpoints use official Go MCP SDK streamable HTTP with stateless requests and JSON responses, plus SDK-managed SSE `subscriptions/listen` streams.
+- Tools, resources, prompts and admin skills are registered with the SDK; custom `skills/*` and `tasks/*` methods remain typed SDK extension handlers. Strict modern `Mcp-Method`/`Mcp-Name` requirements remain enforced, and admin authorization stays outside the protocol handler.
+- Activation/rollback builds a new SDK catalog before committing the revision. A catalog switch leaves the old revision intact for in-flight handlers and notifies existing subscriptions through non-destructive descriptor re-registration.
+- Existing Regate HTTP clients that omit `Accept` remain compatible; versionless `server/discover` retains a compatibility handler. The SDK does not currently have a typed `resultType: task` response, so task-start is still narrowly bridged through the previous dispatcher.
+- Remaining limitations: no full independent protocol conformance suite, browser/runtime e2e, persistent resume of SSE sessions, production OAuth, SQLite effect durability, or tested cross-instance subscription fan-out.
