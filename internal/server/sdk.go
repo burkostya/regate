@@ -30,6 +30,7 @@ type inboundEndpoint struct {
     verifier *identity.Verifier
     requiredScopes []string
     toolScopes map[string][]string
+    resourceMetadata string
     handler http.Handler
     // Re-registering an unchanged descriptor triggers SDK list_changed without
     // deleting the old immutable catalog, including while requests are in flight.
@@ -103,12 +104,12 @@ func (m *inboundMCP) handle(s *Service, w http.ResponseWriter, r *http.Request, 
         if ep.verifier!=nil {
             p,err:=ep.verifier.Verify(r.Context(),bearer(r))
             if err!=nil {
-                w.Header().Set("WWW-Authenticate",`Bearer error="invalid_token"`)
+                w.Header().Set("WWW-Authenticate",wwwAuthenticate(ep.resourceMetadata,"invalid_token"))
                 http.Error(w,"invalid access token",http.StatusUnauthorized)
                 return
             }
             if !p.HasAll(ep.requiredScopes) {
-                w.Header().Set("WWW-Authenticate",`Bearer error="insufficient_scope"`)
+                w.Header().Set("WWW-Authenticate",wwwAuthenticate(ep.resourceMetadata,"insufficient_scope"))
                 http.Error(w,"insufficient scope",http.StatusForbidden)
                 return
             }
@@ -187,7 +188,9 @@ func newInboundEndpoint(s *Service, cfg *config.Config, revision *string, surfac
         ep.toolScopes=make(map[string][]string,len(surf.Tools))
         for _,tool:=range surf.Tools {ep.toolScopes[tool.Name]=tool.RequiredScopes}
         if surf.OAuth!="" {
-            ep.verifier=identity.NewVerifier(cfg.OAuth[surf.OAuth])
+            provider:=cfg.OAuth[surf.OAuth]
+            ep.verifier=identity.NewVerifier(provider)
+            ep.resourceMetadata=resourceMetadataURL(provider,surf)
         }
         registerVisibilityMiddleware(srv,surf)
     }
