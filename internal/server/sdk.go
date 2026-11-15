@@ -21,6 +21,7 @@ import (
     "github.com/burkostya/regate/internal/identity"
     "github.com/burkostya/regate/internal/expr"
     sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+    "github.com/modelcontextprotocol/go-sdk/jsonrpc"
 )
 
 type sdkOwnerKey struct{}
@@ -410,11 +411,11 @@ func registerTaskMethods(srv *sdk.Server, s *Service, surface string, admin bool
             // string. A later scope revocation must fail closed.
             if !admin {
                 record,err:=s.Store.TaskGet(p.TaskID)
-                if err!=nil || record.Surface!=surface {return nil,fmt.Errorf("task not found")}
-                if err:=identity.RequireScopes(ctx,record.RequiredScopes);err!=nil {return nil,err}
+                if err!=nil || record.Surface!=surface {return nil,&jsonrpc.Error{Code:-32602,Message:"task not found"}}
+                if err:=identity.RequireScopes(ctx,record.RequiredScopes);err!=nil {return nil,&jsonrpc.Error{Code:-32001,Message:"insufficient task scope"}}
             }
             v,err:=fn(p.TaskID,owner,p.InputResponses)
-            if err!=nil {return nil,err}
+            if err!=nil {return nil,&jsonrpc.Error{Code:-32602,Message:"task not found"}}
             var result taskExtensionResult
             if err:=remarshalSDK(v,&result); err!=nil {return nil,err}
             result.ResultType = "complete"
