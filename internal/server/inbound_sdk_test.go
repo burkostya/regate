@@ -79,3 +79,42 @@ func TestIncomingSDKAdminRequiresAuthorization(t *testing.T) {
     defer response.Body.Close()
     if response.StatusCode != http.StatusUnauthorized { t.Fatalf("got HTTP %d, expected 401",response.StatusCode) }
 }
+
+func TestIncomingSDKTaskStartRequiresModernHeaders(t *testing.T) {
+    _, server, world := fixture(t)
+    payload := map[string]any{
+        "jsonrpc":"2.0", "id":64, "method":"tools/call",
+        "params":map[string]any{
+            "name":"summarize_customer",
+            "arguments":map[string]any{"customer_id":"C123"},
+            "_meta":map[string]any{
+                "io.modelcontextprotocol/protocolVersion":"2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities":map[string]any{
+                    "extensions":map[string]any{"io.modelcontextprotocol/tasks":map[string]any{}},
+                },
+            },
+        },
+    }
+    body, err := json.Marshal(payload)
+    if err != nil { t.Fatal(err) }
+    for _, name := range []string{"", "different_tool"} {
+        t.Run("name="+name,func(t *testing.T) {
+            req, err := http.NewRequest(http.MethodPost, server.URL+"/mcp/support", bytes.NewReader(body))
+            if err != nil { t.Fatal(err) }
+            req.Header.Set("Content-Type","application/json")
+            req.Header.Set("Accept","application/json, text/event-stream")
+            req.Header.Set("Mcp-Protocol-Version","2026-07-28")
+            req.Header.Set("Mcp-Method","tools/call")
+            if name != "" { req.Header.Set("Mcp-Name",name) }
+            response, err := http.DefaultClient.Do(req)
+            if err != nil { t.Fatal(err) }
+            defer response.Body.Close()
+            if response.StatusCode != http.StatusBadRequest {
+                t.Fatalf("invalid task-start headers: HTTP %d, expected 400",response.StatusCode)
+            }
+        })
+    }
+    world.mu.Lock()
+    defer world.mu.Unlock()
+    if len(world.calls) != 0 { t.Fatalf("MCP tool ran with invalid headers: %v",world.calls) }
+}
