@@ -63,7 +63,9 @@ type BlockSelector struct {
 // editor that does not understand their semantics.
 func knownEditableAttr(b *Block, name string) bool {
     if b.Type == "node" {
-        if name == "input_schema" || name == "output_schema" { return true }
+        // Operators must be able to repair an unresolved/unknown kind in an
+        // incomplete draft without switching to the full-source editor.
+        if name == "kind" || name == "input_schema" || name == "output_schema" { return true }
         _, ok := nodeAttributes[b.String("kind")][name]
         return ok
     }
