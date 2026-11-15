@@ -95,11 +95,13 @@ and label, e.g. `pipeline/customer_summary/node/fetch`, plus `attribute` and
 syntax errors and any change that makes the whole configuration invalid.
 
 The source retains comments, whitespace and opaque content outside the edit.
-A **structural** graph replacement (adding/removing/reordering nodes, edges
-or attributes) falls back to replacing the entire named block: comments
-inside that block are not guaranteed to survive. Introducing new attributes
-currently also requires block replacement. These limits are visible and
-remain in scope for full v1 acceptance.
+A **structural** graph replacement is now merged by stable block identities:
+additions/removals alter only the affected source ranges and preserve operator
+comments on unrelated nodes and edges. The content *within* a deliberately
+removed block is deleted as part of that operation. Adding a field does not
+require a whole-block replacement; use `regate_attribute_add` or REST
+`POST /api/attribute-add`. Explicitly unsupported/unknown executable HCL is
+still refused by the compiler; retaining its source does not make it runnable.
 
 `regate_diff` and `regate_impact_analyze` provide structural summaries and
 `semantic_changes` with stable paths for added/removed/changed executable
@@ -113,3 +115,38 @@ verified remote contract resolution, explicit pure data dependency edges,
 source-preserving *insertion/removal* of nested blocks and attributes, and
 arbitrary opaque block editing in the visual editor. Dynamic CEL subscripts
 and paths through conditional branches need runtime validation.
+
+### Declared JSON Schema contracts (compiler extension)
+
+Surface tools use `input_schema` and `output_schema`. Every pipeline `node`
+may also declare `input_schema` and `output_schema` as inline HCL objects. All
+schemas are compiled with JSON Schema Draft 2020-12 before the revision can be
+activated. Local `$defs`/`$ref` are supported; remote schema downloads are
+forbidden during compilation. Unknown external schemas cannot silently
+introduce new network dependencies.
+
+The `input_schema` of an `mcp.call` node constrains the effective `arguments`
+object immediately before dispatch, *after* `before_call` interceptors. The
+input schema of `hook.call` and `http.call` similarly constrains the value sent
+outside. A declared node `output_schema` constrains the resulting value before
+it enters another node. Surface input/output schemas are enforced at the MCP
+boundary, both before and after interceptors.
+
+The compiler rejects obvious incompatibilities (disjoint JSON types and
+required properties that a closed producer can never provide), but does not
+claim that arbitrary JSON Schema subsumption is decidable. Dynamic/unproven
+links are checked against the consumer schema at runtime. This is essential
+for untrusted remote MCP payloads and conditional CEL expressions. A running
+revision retains its compiled schemas.
+
+### Structural HCL edits
+
+`regate_graph_patch` performs a source-range merge rather than replacing the
+entire pipeline. It matches named blocks and `edge` blocks by endpoints and
+condition, updates only changed expressions, and handles additions/removals
+without rewriting siblings. Edits are rejected if they target ambiguous block
+identities or produce an invalid executable configuration. Comments immediately
+outside changed ranges are preserved. Deleted elements cannot preserve content
+*inside* their own deleted range; for this reason a visual editor should warn
+when deleting a node with hand-written documentation. `AddAttribute` provides
+a targeted insertion operation in the underlying configuration package.

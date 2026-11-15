@@ -469,3 +469,55 @@ func TestUnknownEffectJournalAndTraceRestart(t *testing.T) {
 		t.Fatal("effect journal not restored after restart")
 	}
 }
+
+func TestSurfaceInputSchemaRejectsBeforeExternalEffect(t *testing.T) {
+	_, server, world := fixture(t)
+	for _, bad := range []map[string]any{{}, {"customer_id": 12}} {
+		payload := map[string]any{"jsonrpc": "2.0", "id": 99, "method": "tools/call", "params": map[string]any{"name": "summarize_customer", "arguments": bad}}
+		result := decode(t, jsonPost(t, server.URL+"/mcp/support", "", payload))
+		if result["error"] == nil {
+			content, ok := result["result"].(map[string]any)
+			if !ok || content["isError"] != true {
+				t.Fatalf("accepted invalid arguments: %#v", result)
+			}
+		}
+	}
+	world.mu.Lock()
+	defer world.mu.Unlock()
+	if len(world.calls) != 0 {
+		t.Fatalf("external side effect reached despite invalid input: %v", world.calls)
+	}
+}
+
+func TestManagementAttributeAddPreservesExistingGraph(t *testing.T) {
+	svc, server, _ := fixture(t)
+	created := decode(t, jsonPost(t, server.URL+"/api/drafts", "test-secret", map[string]any{}))
+	id := created["id"].(string)
+	result := decode(t, jsonPost(t, server.URL+"/api/attribute-add", "test-secret", map[string]any{
+		"draft_id":   id,
+		"path":       "pipeline/customer_summary/node/fetch",
+		"attribute":  "input_schema",
+		"expression": `{type="object",required=["customer_id"],properties={customer_id={type="string"}}}`,
+	}))
+	updated, ok := result["source"].(string)
+	if !ok || !strings.Contains(updated, "input_schema") {
+		t.Fatalf("new attribute missing from draft: %#v", result)
+	}
+	if !strings.Contains(updated, `node "summarize"`) {
+		t.Fatal("existing graph lost")
+	}
+	draft, err := svc.Store.DraftGet(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.Validate(draft.Source); err != nil {
+		t.Fatal(err)
+	}
+	second := jsonPost(t, server.URL+"/api/attribute-add", "test-secret", map[string]any{
+		"draft_id": id, "path": "pipeline/customer_summary/node/fetch", "attribute": "input_schema", "expression": `{type="object"}`,
+	})
+	defer second.Body.Close()
+	if second.StatusCode != 400 {
+		t.Fatalf("duplicate attribute unexpectedly accepted: HTTP %d", second.StatusCode)
+	}
+}

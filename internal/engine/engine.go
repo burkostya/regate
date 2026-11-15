@@ -108,6 +108,10 @@ func (r *Runtime) Run(ctx context.Context, revision string, cfg *config.Config, 
 	if args == nil {
 		args = map[string]any{}
 	}
+	toolContract := cfg.ToolContracts[surface][toolName]
+	if err := toolContract.Input.Validate(args); err != nil {
+		return out, fmt.Errorf("tool %s input: %w", toolName, err)
+	}
 	start := time.Now()
 	finish := func(status string, err error) {
 		out.Status = status
@@ -135,6 +139,10 @@ func (r *Runtime) Run(ctx context.Context, revision string, cfg *config.Config, 
 		err = fmt.Errorf("on_request must produce an object")
 		finish("failure", err)
 		return out, err
+	}
+	if err = toolContract.Input.Validate(safeArgs); err != nil {
+		finish("failure", err)
+		return out, fmt.Errorf("tool %s transformed input: %w", toolName, err)
 	}
 	if tool.Pipeline == "" {
 		if dry {
@@ -181,11 +189,17 @@ func (r *Runtime) Run(ctx context.Context, revision string, cfg *config.Config, 
 		out, err = r.execute(runctx, revision, cfg, pipeline, out.RunID, surface, toolName, safeArgs, dry, nil)
 	}
 	if err == nil {
+		err = toolContract.Output.Validate(out.Value)
+	}
+	if err == nil {
 		before, _ := json.Marshal(out.Value)
 		out.Value, err = r.intercept(ctx, cfg, "before_response", surface, toolName, out.Value, dry)
 		after, _ := json.Marshal(out.Value)
 		if !bytes.Equal(before, after) {
 			out.MCP = nil
+		}
+		if err == nil {
+			err = toolContract.Output.Validate(out.Value)
 		}
 		if err == nil {
 			finish("success", nil)
@@ -375,6 +389,13 @@ func structured(v map[string]any) any {
 }
 func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Node, plan *config.NodeIR, vars map[string]any, dry bool, runID, surface, toolName string) nodeResult {
 	ret := nodeResult{name: n.Name}
+	checkInput := func(value any) bool {
+		if err := plan.InputSchema.Validate(value); err != nil {
+			ret.error = fmt.Errorf("node %s input: %w", n.Name, err)
+			return false
+		}
+		return true
+	}
 	get := func(key string) (any, error) {
 		compiled, ok := plan.Expressions[key]
 		if !ok {
@@ -385,6 +406,7 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 	switch n.Kind {
 	case "input":
 		ret.value = vars["input"]
+		checkInput(ret.value)
 	case "output", "transform", "filter", "parallel", "join":
 		if n.Attrs["value"] != nil {
 			ret.value, ret.error = get("value")
@@ -420,6 +442,9 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 			break
 		}
 		ret.value = v
+		if !checkInput(v) {
+			break
+		}
 		required, _ := n.Attrs["required"].([]any)
 		obj, ok := v.(map[string]any)
 		if !ok {
@@ -459,6 +484,9 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 			ret.error = e
 			break
 		}
+		if !checkInput(v) {
+			break
+		}
 		ret.value, ret.error = r.runHook(ctx, cfg.Hooks[policy.DecisionHook], cfg, v, dry)
 		if ret.error == nil {
 			ret.value = true
@@ -479,6 +507,9 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 				break
 			}
 		}
+		if !checkInput(v) {
+			break
+		}
 		ret.value, ret.error = r.runHook(ctx, h, cfg, v, dry)
 		if ret.error == nil && h.Transport != "builtin" {
 			ret.value, ret.error = r.intercept(ctx, cfg, "after_call", surface, toolName, ret.value, dry)
@@ -492,6 +523,9 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 		args, ok := v.(map[string]any)
 		if !ok {
 			ret.error = fmt.Errorf("mcp arguments must be object")
+			break
+		}
+		if !checkInput(args) {
 			break
 		}
 		if dry {
@@ -510,6 +544,9 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 		args, ok = v.(map[string]any)
 		if !ok {
 			ret.error = fmt.Errorf("before_call must return object for mcp.call")
+			break
+		}
+		if !checkInput(args) {
 			break
 		}
 		u := cfg.Upstreams[n.Str("upstream")]
@@ -541,6 +578,9 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 			ret.error = e
 			break
 		}
+		if !checkInput(v) {
+			break
+		}
 		h := config.Hook{URL: n.Str("url"), Transport: "http", Contract: "transform", TimeoutMS: n.Int("timeout_ms", 10000), AuthEnv: n.Str("auth_env")}
 		ret.value, ret.error = r.runHook(ctx, h, cfg, v, dry)
 		if ret.error == nil {
@@ -548,6 +588,11 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 		}
 	default:
 		ret.error = fmt.Errorf("unsupported node kind %s", n.Kind)
+	}
+	if ret.error == nil && !ret.suspend {
+		if err := plan.OutputSchema.Validate(ret.value); err != nil {
+			ret.error = fmt.Errorf("node %s output: %w", n.Name, err)
+		}
 	}
 	return ret
 }
