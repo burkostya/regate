@@ -244,6 +244,9 @@ func newInboundEndpoint(s *Service, cfg *config.Config, revision *string, surfac
                 }
                 out, err := s.Engine.Run(ctx, *revision, cfg, surface, name, args, false)
                 result := outcomeResult(out, err)
+                if ep.verifier!=nil && err!=nil {
+                    result=map[string]any{"content":[]any{map[string]any{"type":"text","text":"operation failed"}},"isError":true}
+                }
                 if ep.verifier!=nil && !tool.AllowUnmasked {
                     if scrubbed,ok:=expr.MaskPII(result).(map[string]any);ok {result=scrubbed}
                 }
@@ -262,7 +265,9 @@ func newInboundEndpoint(s *Service, cfg *config.Config, revision *string, surfac
             handler := func(ctx context.Context, req *sdk.ReadResourceRequest) (*sdk.ReadResourceResult, error) {
                     if err:=identity.RequireScopes(ctx,rs.RequiredScopes);err!=nil {return nil,err}
                     if rs.Source == "" {
-                        return &sdk.ReadResourceResult{Contents:[]*sdk.ResourceContents{{URI:rs.URI, MIMEType:rs.MimeType, Text:rs.Text}}}, nil
+                        text:=rs.Text
+                        if ep.verifier!=nil {text=expr.MaskPII(text).(string)}
+                        return &sdk.ReadResourceResult{Contents:[]*sdk.ResourceContents{{URI:rs.URI, MIMEType:rs.MimeType, Text:text}}}, nil
                     }
                     upstream, _, ok := strings.Cut(rs.Source, ".")
                     if !ok { return nil, fmt.Errorf("invalid resource source") }
@@ -272,6 +277,12 @@ func newInboundEndpoint(s *Service, cfg *config.Config, revision *string, surfac
                     if err != nil { return nil, err }
                     var out sdk.ReadResourceResult
                     if err := remarshalSDK(value, &out); err != nil { return nil, err }
+                    if ep.verifier!=nil {
+                        for _,item:=range out.Contents {
+                            if len(item.Blob)>0 {return nil,fmt.Errorf("binary resources require explicit declassification")}
+                            item.Text=expr.MaskPII(item.Text).(string)
+                        }
+                    }
                     return &out, nil
                 }
             srv.AddResource(descriptor, handler)
@@ -282,7 +293,9 @@ func newInboundEndpoint(s *Service, cfg *config.Config, revision *string, surfac
             descriptor := &sdk.Prompt{Name:p.Name, Description:p.Description}
             handler := func(ctx context.Context, _ *sdk.GetPromptRequest) (*sdk.GetPromptResult, error) {
                     if err:=identity.RequireScopes(ctx,p.RequiredScopes);err!=nil {return nil,err}
-                    return &sdk.GetPromptResult{Messages:[]*sdk.PromptMessage{{Role:"user", Content:&sdk.TextContent{Text:p.Text}}}}, nil
+                    value:=p.Text
+                    if ep.verifier!=nil {value=expr.MaskPII(value).(string)}
+                    return &sdk.GetPromptResult{Messages:[]*sdk.PromptMessage{{Role:"user", Content:&sdk.TextContent{Text:value}}}}, nil
                 }
             srv.AddPrompt(descriptor, handler)
             ep.notifyPrompts = func() { srv.AddPrompt(descriptor, handler) }
