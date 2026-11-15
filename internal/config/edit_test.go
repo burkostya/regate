@@ -16,7 +16,7 @@ func TestOpaqueDraftStructuralGraphRoundTrip(t *testing.T) {
   }
 
   node "summarize" {`, 1)
-    src += `\nfuture_top "opaque" { expression = var.unavailable }\n`
+    src += "\nfuture_top \"opaque\" { expression = var.unavailable }\n"
     if _, err := Decode(src); err == nil {
         t.Fatal("unsupported opaque HCL activated")
     }
@@ -33,7 +33,7 @@ func TestOpaqueDraftStructuralGraphRoundTrip(t *testing.T) {
     // Absent opaque content must survive, rather than being interpreted as a
     // user-requested destructive deletion.
     desired := strings.Replace(original, `tool      = "get_customer"`, `tool      = "get_customer_v2"`, 1)
-    desired = strings.Replace(desired, `    vendor_expression = upstream.features.flags["beta"]\n`, "", 1)
+    desired = strings.Replace(desired, "    vendor_expression = upstream.features.flags[\"beta\"]\n", "", 1)
     desired = strings.Replace(desired, `  future_node "provider" {
     feature = registry.experimental()
   }
@@ -64,7 +64,7 @@ func TestOpaqueDraftStructuralGraphRoundTrip(t *testing.T) {
 }
 
 func TestOpaqueDraftAttributeEditsAndFailClosedActivation(t *testing.T) {
-    src := example(t) + `\nother "extension" { endpoint = arbitrary.symbol }\n`
+    src := example(t) + "\nother \"extension\" { endpoint = arbitrary.symbol }\n"
     path := []BlockSelector{{Type:"pipeline", Label:"customer_summary"}, {Type:"node", Label:"fetch"}}
     updated, err := SetAttribute(src, path, "tool", `"get_customer_safe"`)
     if err != nil { t.Fatal(err) }
@@ -98,7 +98,7 @@ func TestOpaqueDraftChangesCannotBeSilentlyRewritten(t *testing.T) {
         t.Fatal("silent opaque mutation through structural patch")
     }
     if _, err := ReplaceBlock(src,"pipeline","customer_summary",
-        strings.Replace(original, `  node "summarize" {`, `  future_node "new" { x = 2 }\n  node "summarize" {`,1)); err == nil {
+        strings.Replace(original, `  node "summarize" {`, "  future_node \"new\" { x = 2 }\n  node \"summarize\" {",1)); err == nil {
         t.Fatal("graph patch silently inserted unknown block")
     }
     if _, err := ParseForEdit(`pipeline "bad" { kind = [ }`); err == nil {
