@@ -254,3 +254,32 @@ func TestOAuthConcurrentDiscoveryAuthorization(t *testing.T) {
     }
     wg.Wait()
 }
+
+func TestOAuthNeverForwardsInboundTokenOrLeaksProtectedErrors(t *testing.T) {
+    svc,srv,world,private:=oauthFixture(t)
+    token:=signedTestJWT(t,private,"https://issuer.test","https://regate.test/mcp/support","surface:read crm:read")
+    input:=map[string]any{"name":"get_customer_direct","arguments":map[string]any{"customer_id":"C1"}}
+    // A direct upstream tool must get its own service credential, never the
+    // bearer that authenticates the caller to Regate.
+    response:=decode(t,latestCall(t,srv.URL+"/mcp/support",token,"tools/call",101,input))
+    if response["error"]!=nil {t.Fatal(response)}
+    world.mu.Lock()
+    received:=world.lastAuth
+    world.failResponse="Bearer secret-token alice@example.com access_token=private"
+    world.mu.Unlock()
+    if received!="" && strings.Contains(received,token) {t.Fatal("caller OAuth token forwarded upstream")}
+    denied:=decode(t,latestCall(t,srv.URL+"/mcp/support",token,"tools/call",102,input))
+    output,_:=json.Marshal(denied)
+    if bytes.Contains(output,[]byte("alice@example.com")) || bytes.Contains(output,[]byte("secret-token")) ||
+        bytes.Contains(output,[]byte("private")) {
+        t.Fatalf("untrusted upstream error exposed: %s",output)
+    }
+    traces,_:=json.Marshal(svc.Store.Traces())
+    if bytes.Contains(traces,[]byte("alice@example.com")) || bytes.Contains(traces,[]byte("secret-token")) {
+        t.Fatalf("stored trace contains credentials/PII: %s",traces)
+    }
+    effects,_:=json.Marshal(svc.Store.Effects())
+    if bytes.Contains(effects,[]byte("alice@example.com")) || bytes.Contains(effects,[]byte("secret-token")) {
+        t.Fatalf("stored effect journal contains credentials/PII: %s",effects)
+    }
+}
