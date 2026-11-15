@@ -5,7 +5,9 @@
 ## What is enforced now
 
 - Admin bearer token is mandatory for CLI start and protected management endpoints.
-- Public token is mandatory for non-loopback binding; anonymous public surface calls are loopback-only by default.
+- Unconfigured legacy public surfaces use a public bearer token on non-loopback clients or allow anonymous loopback access for local development only. The admin bearer no longer implicitly authenticates to public surfaces.
+- OAuth-protected surfaces verify their trusted issuer, audience, expiry, required scopes and JWT signature (JWKS) or opaque token activity (introspection). This never falls back to loopback/public token auth. Individual tool/resource/prompt catalogs are scope-filtered and calls deny before protected effects.
+- RFC 9728 protected-resource metadata is available without credentials for configured OAuth surfaces. Sensitive OAuth tool results and task results are masked by default; unmasked tool release requires explicit `restricted` classification and `pii:read` scope.
 - Constant-time comparison for bearer equality.
 - No upstream token is passed through automatically; authentication is looked up from a named environment variable (`auth_env`).
 - HTTP hook and MCP upstream outbound host allowlist, no HTTP redirects, HTTP(S) URL validation. Outbound clients now reject DNS results pointing to loopback, private, link-local, shared-address and selected reserved ranges unless the original hostname is explicitly loopback. Connections dial validated IPs (DNS rebinding is blocked at dial-time); outgoing HTTP proxies are disabled for these clients.
@@ -17,7 +19,7 @@
 ## Missing before production deployment
 
 1. Use the official `modelcontextprotocol/go-sdk` with conformance tests, complete multi-version negotiation, stream cancellation, subscription closing and OAuth protected resources.
-2. Authenticate principals with scoped credentials/issuer+audience validation; implement per-surface and per-tool authorization rather than a shared public bearer only.
+2. Complete OAuth token-exchange/delegation and session lifecycle, real-IdP verification, short-lived credential refresh, revocation propagation and multi-tenant audit. JWT issuer/audience/scope validation and per-object enforcement are implemented, but full OAuth authorization-code/PKCE is not provided by Regate (it remains an external host/IdP function).
 3. Security-audit and extend DNS/IP egress rules (including internal-service exception policies and less-common reserved ranges), verify redirects, proxy behavior and all transports. Enforce outgoing request size, data volume and content policies.
 4. Complete trusted PII detection, classification, labels, provenance, declassification proofs, consent/retention and no-leak invariants.
 5. Implement EffectContract verification, remote idempotency support, read-back reconciliation and compensation mechanisms for unclear write results.
@@ -32,3 +34,13 @@
 ## Configuration secrets
 
 Use `REGATE_ADMIN_TOKEN` for management, `REGATE_PUBLIC_TOKEN` for non-loopback, `REGATE_ALLOWED_HOSTS` for approved HTTPS upstreams, `REGATE_SKILLS_DIR` for installed skill docs. Upstream/hook `auth_env` fields contain names of environment variables, not credentials. Never place bearer tokens in HCL source or UI layout.
+
+## OAuth provider and protected resource security
+
+See [OAuth resource-server contract](contracts/oauth.md) for HCL, JOSE
+algorithms, scope filtering, metadata discovery and test evidence. This is a
+resource-server boundary, not an identity provider. Inbound OAuth bearer
+credentials never become upstream authorization headers implicitly. Operators
+must configure the JWKS/introspection host in `REGATE_ALLOWED_HOSTS` and use
+trusted HTTPS endpoints outside local-only tests. Secret environment variable
+*names* can be stored in HCL, but secret *values* must stay outside it.
