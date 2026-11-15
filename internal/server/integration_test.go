@@ -273,6 +273,11 @@ func latestCall(t *testing.T, url, token, method string, id int, extra map[strin
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Mcp-Protocol-Version", "2026-07-28")
 	req.Header.Set("Mcp-Method", method)
+	if method == "tools/call" || method == "prompts/get" || method == "resources/read" {
+		name, _ := params["name"].(string)
+		if method == "resources/read" { name, _ = params["uri"].(string) }
+		if name != "" { req.Header.Set("Mcp-Name", name) }
+	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -297,6 +302,7 @@ func TestSubscriptionsNotifyOnActivate(t *testing.T) {
 	request, _ := http.NewRequestWithContext(ctx, "POST", server.URL+"/mcp/support", bytes.NewReader(raw))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Mcp-Protocol-Version", "2026-07-28")
+	request.Header.Set("Mcp-Method", "subscriptions/listen")
 	res, err := http.DefaultClient.Do(request)
 	if err != nil {
 		t.Fatal(err)
