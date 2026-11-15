@@ -45,6 +45,22 @@ func TestOfficialSDKClientPublicSurfaceInterop(t *testing.T) {
 	if result.IsError {
 		t.Fatalf("unexpected MCP error: %#v", result)
 	}
+	resources, err := session.ListResources(ctx, &sdk.ListResourcesParams{})
+	if err != nil || len(resources.Resources) == 0 {
+		t.Fatalf("resources/list: %v, %#v", err, resources)
+	}
+	resource, err := session.ReadResource(ctx, &sdk.ReadResourceParams{URI: "regate://support/instructions"})
+	if err != nil || len(resource.Contents) != 1 || resource.Contents[0].Text == "" {
+		t.Fatalf("resources/read: %v, %#v", err, resource)
+	}
+	prompts, err := session.ListPrompts(ctx, &sdk.ListPromptsParams{})
+	if err != nil || len(prompts.Prompts) != 1 {
+		t.Fatalf("prompts/list: %v, %#v", err, prompts)
+	}
+	prompt, err := session.GetPrompt(ctx, &sdk.GetPromptParams{Name: "customer_review"})
+	if err != nil || len(prompt.Messages) != 1 {
+		t.Fatalf("prompts/get: %v, %#v", err, prompt)
+	}
 }
 
 type tokenRT struct {
@@ -97,5 +113,22 @@ func TestOfficialSDKClientAdminSurfaceInterop(t *testing.T) {
 	}
 	if result.IsError {
 		t.Fatalf("administrative tool failed: %#v", result)
+	}
+	resources, err := session.ListResources(ctx, &sdk.ListResourcesParams{})
+	if err != nil || len(resources.Resources) == 0 {
+		t.Fatalf("admin skills resources/list: %v, %#v", err, resources)
+	}
+	foundSkill := false
+	for _, resource := range resources.Resources {
+		if resource.URI == "skill://regate-config/SKILL.md" {
+			foundSkill = true
+			content, err := session.ReadResource(ctx, &sdk.ReadResourceParams{URI: resource.URI})
+			if err != nil || len(content.Contents) == 0 || content.Contents[0].Text == "" {
+				t.Fatalf("admin skill resource read: %v, %#v", err, content)
+			}
+		}
+	}
+	if !foundSkill {
+		t.Fatalf("regate-config skill is missing from resources: %#v", resources.Resources)
 	}
 }
