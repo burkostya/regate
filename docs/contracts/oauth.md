@@ -96,3 +96,67 @@ propagation, live validation against each external IdP, strong audit
 attestations and production threat review remain release gates. Do not use
 these tests to claim general-purpose safe handling of arbitrary personal
 information or a complete v1 release.
+
+## Delegated upstream credentials (RFC 8693)
+
+The incoming bearer has the **Regate** resource audience, and must not be
+forwarded to another MCP or HTTP service. Configure an explicit target
+audience, least-privilege target scopes, exchange endpoint and a protected
+client secret reference:
+
+```hcl
+oauth "company" {
+  issuer                     = "https://idp.example.com/"
+  audience                   = "https://regate.example.com/mcp/support"
+  jwks_url                   = "https://idp.example.com/.well-known/jwks.json"
+  token_endpoint             = "https://idp.example.com/oauth2/token"
+  exchange_client_id_env     = "REGATE_EXCHANGE_CLIENT_ID"
+  exchange_client_secret_env = "REGATE_EXCHANGE_CLIENT_SECRET"
+}
+
+upstream "crm" {
+  url            = "https://crm.example.com/mcp"
+  timeout_ms     = 10000
+  trust_level    = "restricted"
+  oauth_exchange = "company"
+  oauth_audience = "https://crm.example.com"
+  oauth_scopes   = ["crm:read"]
+}
+```
+
+The exchange uses `urn:ietf:params:oauth:grant-type:token-exchange`,
+`subject_token_type=access_token`, the explicit target audience and scopes.
+Only a new bearer credential is used upstream. Its signature (or trusted
+introspection), issuer, **target** audience, owner subject and scopes are
+independently validated before dispatch. The exchanged credential is held only
+in the operation's in-memory HTTP client; it is not put in the MCP connection
+pool, revision store, task checkpoint, effect journal or trace. Neither static
+`auth_env` and exchange nor two competing issuer configurations may be used
+for one outbound operation. HTTP hooks can request exchange with the same
+`oauth_exchange`, `oauth_audience`, `oauth_scopes` fields.
+
+### Restricted data trust boundary
+
+Every input arriving on an OAuth-protected surface is conservatively treated
+as `restricted` at an external effect boundary. The full pipeline graph and
+its interceptors are inspected **before any effect**. MCP upstreams and
+external hooks must explicitly declare `trust_level="restricted"`, including
+policy hooks and agent MCP tools; a direct `http.call` node must also declare
+`trust_level="restricted"`. An omitted trust level is **public** and cannot
+receive restricted data. A privileged operator's explicit trust designation
+does not bypass the caller's independent scopes or PII response obligations.
+The built-in non-network PII mask is local and does not need a trusted
+external adapter.
+
+This is an intentionally conservative composition rule. It does **not**
+infer arbitrary property-level taint, certify external redactors or prove
+remote providers actually uphold declared trust. Real attestation and
+declassification evidence are separate v1 work.
+
+### Async exchange limitation (fail closed)
+
+A short-lived subject token must not be persisted in a task checkpoint simply
+to resume an external write later. Async task creation currently refuses
+pipelines that require a delegated subject token until durable audience- and
+scope-bounded capability grants can be implemented in #6. A successful
+synchronous exchange does not imply crash-resumable token exchange.
