@@ -42,9 +42,12 @@ func conformancePost(t *testing.T, endpoint, token, version, method, name string
 
 func TestMCPRawModernAndLegacyHTTPConformance(t *testing.T) {
     _,srv,_:=fixture(t)
-    modernMeta:=map[string]any{"_meta":map[string]any{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}
+    modernMeta:=map[string]any{"_meta":map[string]any{
+        "io.modelcontextprotocol/protocolVersion":"2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities":map[string]any{},
+    }}
     cases:=[]struct{method,name string;params map[string]any;want string}{
-        {"server/discover","",map[string]any{},"supportedVersions"},
+        {"server/discover","",modernMeta,"supportedVersions"},
         {"tools/list","",modernMeta,"tools"},
         {"resources/list","",modernMeta,"resources"},
         {"resources/templates/list","",modernMeta,"resourceTemplates"},
@@ -90,7 +93,10 @@ func TestMCPRawModernAndLegacyHTTPConformance(t *testing.T) {
 
 func TestMCPRawHTTPProtocolErrorsAndBodyLimit(t *testing.T) {
     _,srv,_:=fixture(t)
-    meta:=map[string]any{"_meta":map[string]any{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}
+    meta:=map[string]any{"_meta":map[string]any{
+        "io.modelcontextprotocol/protocolVersion":"2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities":map[string]any{},
+    }}
     code,response:=conformancePost(t,srv.URL+"/mcp/support","","2026-07-28","unknown/custom","",meta)
     if code < 400 || response["error"]==nil {
         t.Fatalf("unknown method was not rejected: HTTP %d %v",code,response)
@@ -134,7 +140,10 @@ func TestInboundCancelledRequestStopsBeforeProtectedEffects(t *testing.T) {
     ctx,cancel:=context.WithCancel(context.Background())
     defer cancel()
     params:=map[string]any{"name":"summarize_customer","arguments":map[string]any{"customer_id":"C123"},
-        "_meta":map[string]any{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}
+        "_meta":map[string]any{
+          "io.modelcontextprotocol/protocolVersion":"2026-07-28",
+          "io.modelcontextprotocol/clientCapabilities":map[string]any{},
+        }}
     payload,err:=json.Marshal(map[string]any{"jsonrpc":"2.0","id":71,"method":"tools/call","params":params})
     if err!=nil {t.Fatal(err)}
     req,err:=http.NewRequestWithContext(ctx,http.MethodPost,api.URL+"/mcp/support",bytes.NewReader(payload))
