@@ -114,6 +114,17 @@ func (m *inboundMCP) handle(s *Service, w http.ResponseWriter, r *http.Request, 
                 return
             }
             if version == "2026-07-28" && !admin && q.Method == "tools/call" && supportsTasks(q.Params) {
+                // The compatibility branch must not bypass the mandatory
+                // 2026-07-28 standard header checks enforced by the SDK.
+                name := str(q.Params, "name")
+                accept := r.Header.Get("Accept")
+                if name == "" || r.Header.Get("Mcp-Method") != "tools/call" ||
+                    r.Header.Get("Mcp-Name") != name ||
+                    !strings.Contains(accept, "application/json") ||
+                    !strings.Contains(accept, "text/event-stream") {
+                    http.Error(w, "invalid MCP task-start headers", http.StatusBadRequest)
+                    return
+                }
                 s.mcp(w, r, surface, false)
                 return
             }
