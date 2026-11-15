@@ -59,6 +59,12 @@ func oauthFixture(t *testing.T) (*Service,*httptest.Server,*mockWorld,*rsa.Priva
     b,err:=os.ReadFile("../../examples/regate.hcl")
     if err!=nil {t.Fatal(err)}
     src:=strings.ReplaceAll(string(b),"http://127.0.0.1:9091",crm.URL)
+    // Every backend in this protected fixture is explicitly trusted to
+    // receive Restricted data. Other tests verify an undeclared sink fails.
+    for _,block:=range []string{`upstream "crm" {`,`upstream "agent" {`,
+        `hook "decision" {`,`hook "mask_pii" {`,`hook "summarizer" {`} {
+        src=strings.Replace(src,block,block+"\n  trust_level = \"restricted\"",1)
+    }
     src=fmt.Sprintf(`oauth "company" {
       issuer = "https://issuer.test"
       jwks_url = %q

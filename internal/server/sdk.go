@@ -116,7 +116,8 @@ func (m *inboundMCP) handle(s *Service, w http.ResponseWriter, r *http.Request, 
                 http.Error(w,"insufficient scope",http.StatusForbidden)
                 return
             }
-            r=r.WithContext(identity.WithPrincipal(r.Context(),p))
+            verified:=identity.WithPrincipal(r.Context(),p)
+            r=r.WithContext(identity.WithSubjectToken(verified,bearer(r)))
         } else if !s.authorize(r,false) {
             w.Header().Set("WWW-Authenticate", "Bearer")
             http.Error(w,"unauthorized",http.StatusUnauthorized)
@@ -293,7 +294,10 @@ func newInboundEndpoint(s *Service, cfg *config.Config, revision *string, surfac
                     if !ok { return nil, fmt.Errorf("invalid resource source") }
                     ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
                     defer cancel()
-                    value, err := s.Engine.ReadResource(ctx, cfg.Upstreams[upstream], rs.URI)
+                    if ep.verifier!=nil && cfg.Upstreams[upstream].TrustLevel!="restricted" {
+                        return nil,fmt.Errorf("untrusted upstream resource boundary")
+                    }
+                    value, err := s.Engine.ReadResource(ctx,cfg,cfg.Upstreams[upstream], rs.URI)
                     if err != nil { return nil, err }
                     var out sdk.ReadResourceResult
                     if err := remarshalSDK(value, &out); err != nil { return nil, err }
