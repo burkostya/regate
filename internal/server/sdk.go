@@ -18,6 +18,8 @@ import (
     "time"
 
     "github.com/burkostya/regate/internal/config"
+    "github.com/burkostya/regate/internal/identity"
+    "github.com/burkostya/regate/internal/expr"
     sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -25,6 +27,9 @@ type sdkOwnerKey struct{}
 
 type inboundEndpoint struct {
     server *sdk.Server
+    verifier *identity.Verifier
+    requiredScopes []string
+    toolScopes map[string][]string
     handler http.Handler
     // Re-registering an unchanged descriptor triggers SDK list_changed without
     // deleting the old immutable catalog, including while requests are in flight.
@@ -94,6 +99,26 @@ func (m *inboundMCP) handle(s *Service, w http.ResponseWriter, r *http.Request, 
         http.NotFound(w, r)
         return
     }
+    if !admin {
+        if ep.verifier!=nil {
+            p,err:=ep.verifier.Verify(r.Context(),bearer(r))
+            if err!=nil {
+                w.Header().Set("WWW-Authenticate",`Bearer error="invalid_token"`)
+                http.Error(w,"invalid access token",http.StatusUnauthorized)
+                return
+            }
+            if !p.HasAll(ep.requiredScopes) {
+                w.Header().Set("WWW-Authenticate",`Bearer error="insufficient_scope"`)
+                http.Error(w,"insufficient scope",http.StatusForbidden)
+                return
+            }
+            r=r.WithContext(identity.WithPrincipal(r.Context(),p))
+        } else if !s.authorize(r,false) {
+            w.Header().Set("WWW-Authenticate", "Bearer")
+            http.Error(w,"unauthorized",http.StatusUnauthorized)
+            return
+        }
+    }
 
     // The SDK doesn't expose a task-start result type. Keep precisely this
     // extension's existing wire contract until SDK support is available.
@@ -125,6 +150,10 @@ func (m *inboundMCP) handle(s *Service, w http.ResponseWriter, r *http.Request, 
                     http.Error(w, "invalid MCP task-start headers", http.StatusBadRequest)
                     return
                 }
+                if err:=identity.RequireScopes(r.Context(),ep.toolScopes[name]);err!=nil {
+                    rpcError(w,q.ID,-32001,"insufficient tool scope")
+                    return
+                }
                 s.mcp(w, r, surface, false)
                 return
             }
@@ -152,6 +181,16 @@ func newInboundEndpoint(s *Service, cfg *config.Config, revision *string, surfac
     srv := sdk.NewServer(&sdk.Implementation{Name:"regate", Version:"0.1.0"},
         &sdk.ServerOptions{Instructions:discoveryInstructions(admin), Capabilities:caps, PageSize:128})
     ep := &inboundEndpoint{server:srv}
+    if !admin {
+        surf:=cfg.Surfaces[surface]
+        ep.requiredScopes=surf.RequiredScopes
+        ep.toolScopes=make(map[string][]string,len(surf.Tools))
+        for _,tool:=range surf.Tools {ep.toolScopes[tool.Name]=tool.RequiredScopes}
+        if surf.OAuth!="" {
+            ep.verifier=identity.NewVerifier(cfg.OAuth[surf.OAuth])
+        }
+        registerVisibilityMiddleware(srv,surf)
+    }
     if admin {
         for _, def := range AdminDefs() {
             var tool sdk.Tool
@@ -196,8 +235,14 @@ func newInboundEndpoint(s *Service, cfg *config.Config, revision *string, surfac
                 if err != nil { return nil, err }
                 ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
                 defer cancel()
+                if err:=identity.RequireScopes(ctx,tool.RequiredScopes);err!=nil {
+                    return sdkToolError(err),nil
+                }
                 out, err := s.Engine.Run(ctx, *revision, cfg, surface, name, args, false)
                 result := outcomeResult(out, err)
+                if ep.verifier!=nil && !tool.AllowUnmasked {
+                    if scrubbed,ok:=expr.MaskPII(result).(map[string]any);ok {result=scrubbed}
+                }
                 var wire sdk.CallToolResult
                 if err := remarshalSDK(result, &wire); err != nil { return nil, err }
                 return &wire, nil
@@ -211,6 +256,7 @@ func newInboundEndpoint(s *Service, cfg *config.Config, revision *string, surfac
             rs := resource
             descriptor := &sdk.Resource{URI:rs.URI, Name:rs.Name, MIMEType:rs.MimeType}
             handler := func(ctx context.Context, req *sdk.ReadResourceRequest) (*sdk.ReadResourceResult, error) {
+                    if err:=identity.RequireScopes(ctx,rs.RequiredScopes);err!=nil {return nil,err}
                     if rs.Source == "" {
                         return &sdk.ReadResourceResult{Contents:[]*sdk.ResourceContents{{URI:rs.URI, MIMEType:rs.MimeType, Text:rs.Text}}}, nil
                     }
@@ -230,7 +276,8 @@ func newInboundEndpoint(s *Service, cfg *config.Config, revision *string, surfac
         for _, prompt := range surf.Prompts {
             p := prompt
             descriptor := &sdk.Prompt{Name:p.Name, Description:p.Description}
-            handler := func(context.Context, *sdk.GetPromptRequest) (*sdk.GetPromptResult, error) {
+            handler := func(ctx context.Context, _ *sdk.GetPromptRequest) (*sdk.GetPromptResult, error) {
+                    if err:=identity.RequireScopes(ctx,p.RequiredScopes);err!=nil {return nil,err}
                     return &sdk.GetPromptResult{Messages:[]*sdk.PromptMessage{{Role:"user", Content:&sdk.TextContent{Text:p.Text}}}}, nil
                 }
             srv.AddPrompt(descriptor, handler)
@@ -241,6 +288,40 @@ func newInboundEndpoint(s *Service, cfg *config.Config, revision *string, surfac
     ep.handler = sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return srv },
         &sdk.StreamableHTTPOptions{Stateless:true, JSONResponse:true, MaxRequestBodyBytes:4<<20, PropagateRequestCancellation:true})
     return ep, nil
+}
+
+// Visibility is scoped by verified principal. This filters discovery catalogs
+// as well as protecting individual calls; unauthorized resources cannot be
+// enumerated by their URIs or tool names.
+func registerVisibilityMiddleware(srv *sdk.Server,surface config.Surface) {
+    tools:=map[string][]string{}
+    resources:=map[string][]string{}
+    prompts:=map[string][]string{}
+    for _,t:=range surface.Tools {tools[t.Name]=t.RequiredScopes}
+    for _,res:=range surface.Resources {resources[res.URI]=res.RequiredScopes}
+    for _,p:=range surface.Prompts {prompts[p.Name]=p.RequiredScopes}
+    srv.AddReceivingMiddleware(func(next sdk.MethodHandler) sdk.MethodHandler {
+        return func(ctx context.Context,method string,req sdk.Request)(sdk.Result,error){
+            result,err:=next(ctx,method,req)
+            if err!=nil || result==nil {return result,err}
+            principal,_:=identity.FromContext(ctx)
+            switch typed:=result.(type) {
+            case *sdk.ListToolsResult:
+                kept:=make([]*sdk.Tool,0,len(typed.Tools))
+                for _,tool:=range typed.Tools {if principal.HasAll(tools[tool.Name]) {kept=append(kept,tool)}}
+                typed.Tools=kept
+            case *sdk.ListResourcesResult:
+                kept:=make([]*sdk.Resource,0,len(typed.Resources))
+                for _,res:=range typed.Resources {if principal.HasAll(resources[res.URI]) {kept=append(kept,res)}}
+                typed.Resources=kept
+            case *sdk.ListPromptsResult:
+                kept:=make([]*sdk.Prompt,0,len(typed.Prompts))
+                for _,p:=range typed.Prompts {if principal.HasAll(prompts[p.Name]) {kept=append(kept,p)}}
+                typed.Prompts=kept
+            }
+            return result,nil
+        }
+    })
 }
 
 func remarshalSDK(value any, out any) error {
