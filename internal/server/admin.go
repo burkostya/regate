@@ -102,11 +102,12 @@ func (s *Service) Admin(ctx context.Context, name string, args map[string]any) (
 	case "regate_draft_get":
 		return s.Store.DraftGet(str(args, "draft_id"))
 	case "regate_draft_patch":
-		source := str(args, "source")
-		if _, e := s.Validate(source); e != nil {
-			return nil, e
-		}
-		return s.Store.DraftUpdate(str(args, "draft_id"), source)
+        source := str(args, "source")
+        // A draft is editable HCL source, not an activated program. Allow
+        // unknown blocks/expressions so forward-compatible opaque fragments
+        // survive editing; activation still requires full strict compilation.
+        if _, e := config.ParseForEdit(source); e != nil { return nil, e }
+        return s.Store.DraftUpdate(str(args, "draft_id"), source)
 	case "regate_validate":
 		source := str(args, "source")
 		if source == "" {
