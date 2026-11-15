@@ -26,9 +26,11 @@ type sdkOwnerKey struct{}
 type inboundEndpoint struct {
     server *sdk.Server
     handler http.Handler
-    tools []string
-    resources []string
-    prompts []string
+    // Re-registering an unchanged descriptor triggers SDK list_changed without
+    // deleting the old immutable catalog, including while requests are in flight.
+    notifyTools func()
+    notifyResources func()
+    notifyPrompts func()
 }
 
 type inboundMCP struct {
@@ -72,12 +74,12 @@ func (m *inboundMCP) publish(next map[string]*inboundEndpoint) {
     m.public = next
     m.mu.Unlock()
 
-    // Native SDK subscription streams remain on the previous server; sending a
-    // list change there wakes subscribers without reusing an obsolete revision.
+    // SDK-native subscriptions continue on their original sessions. Trigger a
+    // catalog refresh without deleting descriptors from in-flight revisions.
     for _, old := range previous {
-        if len(old.tools) > 0 { old.server.RemoveTools(old.tools...) }
-        if len(old.resources) > 0 { old.server.RemoveResources(old.resources...) }
-        if len(old.prompts) > 0 { old.server.RemovePrompts(old.prompts...) }
+        if old.notifyTools != nil { old.notifyTools() }
+        if old.notifyResources != nil { old.notifyResources() }
+        if old.notifyPrompts != nil { old.notifyPrompts() }
     }
 }
 
@@ -144,7 +146,7 @@ func newInboundEndpoint(s *Service, cfg *config.Config, revision *string, surfac
             var tool sdk.Tool
             if err := remarshalSDK(def, &tool); err != nil { return nil, err }
             name := tool.Name
-            srv.AddTool(&tool, func(ctx context.Context, req *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
+            handler := func(ctx context.Context, req *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
                 args, err := sdkArgs(req.Params.Arguments)
                 if err != nil { return nil, err }
                 ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
@@ -152,21 +154,23 @@ func newInboundEndpoint(s *Service, cfg *config.Config, revision *string, surfac
                 v, err := s.Admin(ctx, name, args)
                 if err != nil { return sdkToolError(err), nil }
                 return sdkToolValue(v)
-            })
-            ep.tools = append(ep.tools, name)
+            }
+            srv.AddTool(&tool, handler)
+            ep.notifyTools = func() { srv.AddTool(&tool, handler) }
         }
         for _, skill := range s.Skills() {
             uri, _ := skill["uri"].(string)
             front, _ := skill["frontmatter"].(map[string]any)
             name, _ := front["name"].(string)
             if uri == "" { continue }
-            srv.AddResource(&sdk.Resource{URI:uri, Name:name, MIMEType:"text/markdown"},
-                func(ctx context.Context, req *sdk.ReadResourceRequest) (*sdk.ReadResourceResult, error) {
+            descriptor := &sdk.Resource{URI:uri, Name:name, MIMEType:"text/markdown"}
+            handler := func(ctx context.Context, req *sdk.ReadResourceRequest) (*sdk.ReadResourceResult, error) {
                     content, err := s.SkillContent(req.Params.URI)
                     if err != nil { return nil, err }
                     return &sdk.ReadResourceResult{Contents:[]*sdk.ResourceContents{{URI:req.Params.URI, MIMEType:"text/markdown", Text:content}}}, nil
-                })
-            ep.resources = append(ep.resources, uri)
+                }
+            srv.AddResource(descriptor, handler)
+            ep.notifyResources = func() { srv.AddResource(descriptor, handler) }
         }
         if err := registerSkills(srv, s); err != nil { return nil, err }
     } else {
@@ -176,7 +180,7 @@ func newInboundEndpoint(s *Service, cfg *config.Config, revision *string, surfac
             if schema == nil { schema = map[string]any{"type":"object", "additionalProperties":true} }
             desc := &sdk.Tool{Name:tool.Name, Description:tool.Description, InputSchema:schema, OutputSchema:tool.OutputSchema}
             name := tool.Name
-            srv.AddTool(desc, func(ctx context.Context, req *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
+            handler := func(ctx context.Context, req *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
                 args, err := sdkArgs(req.Params.Arguments)
                 if err != nil { return nil, err }
                 ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
@@ -186,15 +190,16 @@ func newInboundEndpoint(s *Service, cfg *config.Config, revision *string, surfac
                 var wire sdk.CallToolResult
                 if err := remarshalSDK(result, &wire); err != nil { return nil, err }
                 return &wire, nil
-            })
-            ep.tools = append(ep.tools, name)
+            }
+            srv.AddTool(desc, handler)
+            ep.notifyTools = func() { srv.AddTool(desc, handler) }
         }
         for _, resource := range surf.Resources {
             parsed, err := url.Parse(resource.URI)
             if err != nil || parsed.Scheme == "" { return nil, fmt.Errorf("resource URI %q must be absolute", resource.URI) }
             rs := resource
-            srv.AddResource(&sdk.Resource{URI:rs.URI, Name:rs.Name, MIMEType:rs.MimeType},
-                func(ctx context.Context, req *sdk.ReadResourceRequest) (*sdk.ReadResourceResult, error) {
+            descriptor := &sdk.Resource{URI:rs.URI, Name:rs.Name, MIMEType:rs.MimeType}
+            handler := func(ctx context.Context, req *sdk.ReadResourceRequest) (*sdk.ReadResourceResult, error) {
                     if rs.Source == "" {
                         return &sdk.ReadResourceResult{Contents:[]*sdk.ResourceContents{{URI:rs.URI, MIMEType:rs.MimeType, Text:rs.Text}}}, nil
                     }
@@ -207,16 +212,18 @@ func newInboundEndpoint(s *Service, cfg *config.Config, revision *string, surfac
                     var out sdk.ReadResourceResult
                     if err := remarshalSDK(value, &out); err != nil { return nil, err }
                     return &out, nil
-                })
-            ep.resources = append(ep.resources, rs.URI)
+                }
+            srv.AddResource(descriptor, handler)
+            ep.notifyResources = func() { srv.AddResource(descriptor, handler) }
         }
         for _, prompt := range surf.Prompts {
             p := prompt
-            srv.AddPrompt(&sdk.Prompt{Name:p.Name, Description:p.Description},
-                func(context.Context, *sdk.GetPromptRequest) (*sdk.GetPromptResult, error) {
+            descriptor := &sdk.Prompt{Name:p.Name, Description:p.Description}
+            handler := func(context.Context, *sdk.GetPromptRequest) (*sdk.GetPromptResult, error) {
                     return &sdk.GetPromptResult{Messages:[]*sdk.PromptMessage{{Role:"user", Content:&sdk.TextContent{Text:p.Text}}}}, nil
-                })
-            ep.prompts = append(ep.prompts, p.Name)
+                }
+            srv.AddPrompt(descriptor, handler)
+            ep.notifyPrompts = func() { srv.AddPrompt(descriptor, handler) }
         }
     }
     if err := registerTaskMethods(srv, s); err != nil { return nil, err }
