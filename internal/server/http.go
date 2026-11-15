@@ -26,10 +26,9 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("/api/", s.requireAdmin(http.HandlerFunc(s.api)))
 	mux.Handle("/mcp/admin", s.requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.inbound.handle(s, w, r, "", true) })))
 	mux.HandleFunc("/mcp/", func(w http.ResponseWriter, r *http.Request) {
-		if !s.authorize(r, false) {
-			http.Error(w, "unauthorized", 401)
-			return
-		}
+        // Snapshot-scoped authentication is enforced by inbound.handle after
+        // selecting the exact active SDK endpoint; an earlier global bearer
+        // check could incorrectly reject valid OIDC credentials.
 		c, _ := s.Current()
 		surface := ""
 		for name, s := range c.Surfaces {
@@ -70,7 +69,7 @@ func (s *Service) authorize(r *http.Request, admin bool) bool {
 	}
 	public := os.Getenv("REGATE_PUBLIC_TOKEN")
 	if public != "" {
-		return constantTimeEq(bearer(r), public) || constantTimeEq(bearer(r), AdminToken())
+		return constantTimeEq(bearer(r), public)
 	}
 	// Anonymous access is permitted only for loopback clients.
 	host, _, e := net.SplitHostPort(r.RemoteAddr)
