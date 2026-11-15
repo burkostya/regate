@@ -12,14 +12,15 @@ import (
 // patch operations, but must not be activated until the compiler understands it.
 var blockAttributes = map[string]map[string]string{
 	"regate":      {"listen": "string"},
+    "oauth":        {"issuer": "string", "audience": "string", "jwks_url": "string", "introspection_url": "string", "client_id_env": "string", "client_secret_env": "string"},
 	"upstream":    {"url": "string", "auth_env": "string", "timeout_ms": "positive-int"},
 	"hook":        {"transport": "string", "url": "string", "upstream": "string", "tool": "string", "auth_env": "string", "contract": "string", "on_error": "string", "timeout_ms": "positive-int"},
 	"policy":      {"decision_hook": "string", "scope": "string"},
 	"pipeline":    {"entry": "string", "timeout_ms": "positive-int", "concurrency": "positive-int"},
-	"surface":     {"path": "string"},
-	"tool":        {"description": "string", "pipeline": "string", "source": "string", "input_schema": "object", "output_schema": "object", "read_only": "bool"},
-	"resource":    {"uri": "string", "source": "string", "text": "string", "mime_type": "string"},
-	"prompt":      {"description": "string", "text": "string"},
+	"surface":     {"path": "string", "oauth": "string", "required_scopes": "string-list"},
+	"tool":        {"description": "string", "pipeline": "string", "source": "string", "input_schema": "object", "output_schema": "object", "read_only": "bool", "required_scopes": "string-list", "data_classification": "string", "allow_unmasked": "bool"},
+	"resource":    {"uri": "string", "source": "string", "text": "string", "mime_type": "string", "required_scopes": "string-list"},
+	"prompt":      {"description": "string", "text": "string", "required_scopes": "string-list"},
 	"interceptor": {"stage": "string", "hook": "string", "surface": "string", "tool": "string", "order": "int"},
 	"edge":        {"from": "string", "to": "string", "when": "string"},
 }
@@ -44,7 +45,7 @@ var nestedBlocks = map[string]map[string]bool{
 	"surface":  {"tool": true, "resource": true, "prompt": true},
 }
 var requiredBlockAttrs = map[string][]string{
-	"upstream": {"url"}, "hook": {"transport", "contract"}, "pipeline": {"entry"},
+	"oauth": {"issuer", "audience"}, "upstream": {"url"}, "hook": {"transport", "contract"}, "pipeline": {"entry"},
 	"surface": {"path"}, "node": {"kind"}, "edge": {"from", "to"},
 }
 
@@ -60,7 +61,7 @@ func validateBlock(b *Block, parent string, top bool) error {
 	where := fmt.Sprintf("%s %s at line %d", b.Type, strings.Join(b.Labels, ":"), b.Line)
 	if top {
 		switch b.Type {
-		case "regate", "upstream", "hook", "policy", "pipeline", "surface", "interceptor":
+		case "regate", "oauth", "upstream", "hook", "policy", "pipeline", "surface", "interceptor":
 		default:
 			return fmt.Errorf("%s: unknown top-level block", where)
 		}
