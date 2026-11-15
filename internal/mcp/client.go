@@ -59,17 +59,29 @@ func NewConn(endpoint, tokenEnv string, timeout time.Duration) *Conn {
 	return &Conn{URL: endpoint, AuthEnv: tokenEnv, Timeout: timeout, Client: client}
 }
 
+// NewConnWithToken is ephemeral: never cache it in a global connection pool.
+// The token must be issued for this specific upstream audience, not forwarded
+// from the incoming Regate resource-server request.
+func NewConnWithToken(endpoint, token string, timeout time.Duration) *Conn {
+    conn:=NewConn(endpoint,"",timeout)
+    conn.Client.Transport=credentialTransport{base:conn.Client.Transport,staticToken:token}
+    return conn
+}
+
 // credentialTransport applies credentials only to validated outbound HTTP
 // requests; redirect following is already disabled by netguard.Client. This
 // is deliberately not a general-purpose OAuth implementation.
 type credentialTransport struct {
-	base     http.RoundTripper
+	base http.RoundTripper
 	tokenEnv string
+    staticToken string
 }
 
 func (t credentialTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	clone := req.Clone(req.Context())
-	if t.tokenEnv != "" {
+	if t.staticToken!="" {
+        clone.Header.Set("Authorization","Bearer "+t.staticToken)
+    } else if t.tokenEnv != "" {
 		if token := os.Getenv(t.tokenEnv); token != "" {
 			clone.Header.Set("Authorization", "Bearer "+token)
 		}
