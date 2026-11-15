@@ -60,14 +60,16 @@
   }
   async function ensureDraft(): Promise<Draft> {
     if (draft) return draft;
-    draft = await api('drafts', 'POST', {});
-    editorText = draft.source;
-    return draft;
+    const created = await api<Draft>('drafts', 'POST', {});
+    draft = created;
+    editorText = created.source;
+    return created;
   }
   async function createDraft() {
-    draft = await api('drafts', 'POST', {});
-    editorText = draft.source;
-    message = `Draft ${draft.id.slice(0,8)} created`;
+    const created = await api<Draft>('drafts', 'POST', {});
+    draft = created;
+    editorText = created.source;
+    message = `Draft ${created.id.slice(0,8)} created`;
   }
   async function saveHCL() {
     const changedSource = editorText;
@@ -80,8 +82,9 @@
   async function saveGraph() {
     if (!activePipeline) return;
     const d = await ensureDraft();
-    draft = await api('graph-patch','POST',{draft_id:d.id,pipeline:activePipeline.name,source:pipelineToHCL(activePipeline)});
-    editorText = draft.source;
+    const updated = await api<Draft>('graph-patch','POST',{draft_id:d.id,pipeline:activePipeline.name,source:pipelineToHCL(activePipeline)});
+    draft = updated;
+    editorText = updated.source;
     dirty = false;
     message = 'Pipeline changed in draft; other top-level HCL blocks preserved.';
   }
@@ -212,7 +215,7 @@
           {#if activePipeline}
             <div class="editor-grid"><div class="palette"><h3>Pipeline nodes</h3><p>Add a processing step</p><div class="palette-items">{#each kinds as kind}<button title={'Add '+kind} onclick={() => addNode(kind)}><span class="plus">+</span>{kind}</button>{/each}</div><div class="palette-divider"></div><h3>Existing nodes</h3>{#each Object.values(activePipeline.nodes) as n}<button class:selected={selectedNode===n.name} class="node-item" onclick={() => selectNode(n.name)}>{n.name}<small>{n.kind}</small></button>{/each}</div>
               <div class="canvas"><FlowCanvas {positions} pipeline={activePipeline} onchange={onGraphChange} onselect={selectNode}/></div>
-              <aside class="inspector"><h3>Inspector</h3>{#if selectedNode}<div class="field"><label>Node</label><code>{selectedNode}</code></div><div class="field"><label>Attributes (JSON)</label><textarea spellcheck="false" rows="13" bind:value={nodeJson}></textarea></div><div class="inspector-actions"><button class="primary" onclick={() => task(async()=>updateNode())}>Apply</button><button class="danger" onclick={() => task(async()=>removeNode())}>Delete</button></div>{:else}<p>Select a node in the graph or node list to edit its attributes.</p>{/if}<div class="divider"></div><h3>Pipeline details</h3><p>Entry: <code>{activePipeline.entry}</code></p><p>Timeout: {activePipeline.timeout_ms} ms</p><p>Concurrency: {activePipeline.concurrency}</p></aside></div>
+              <aside class="inspector"><h3>Inspector</h3>{#if selectedNode}<div class="field"><span class="field-label">Node</span><code>{selectedNode}</code></div><div class="field"><label for="node-attributes">Attributes (JSON)</label><textarea id="node-attributes" spellcheck="false" rows="13" bind:value={nodeJson}></textarea></div><div class="inspector-actions"><button class="primary" onclick={() => task(async()=>updateNode())}>Apply</button><button class="danger" onclick={() => task(async()=>removeNode())}>Delete</button></div>{:else}<p>Select a node in the graph or node list to edit its attributes.</p>{/if}<div class="divider"></div><h3>Pipeline details</h3><p>Entry: <code>{activePipeline.entry}</code></p><p>Timeout: {activePipeline.timeout_ms} ms</p><p>Concurrency: {activePipeline.concurrency}</p></aside></div>
             <div class="toolbar"><div class="actions"><button class="primary" disabled={busy} onclick={() => task(saveGraph)}>Save graph to draft</button><button class="secondary" onclick={() => task(saveLayout)}>Save layout</button><button class="secondary" onclick={() => task(validate)}>Validate HCL</button></div><div class="actions"><button class="secondary" onclick={() => task(() => runTool(false))}>Dry-run</button><button class="secondary" onclick={() => task(() => runTool(true))}>Live run</button></div></div>
             <div class="split-pane bottom"><div class="pane"><h3>Tool arguments</h3><textarea rows="5" spellcheck="false" bind:value={testArguments}></textarea><p>Dry-run requires mocks for external call nodes and doesn't contact upstream services.</p></div><div class="pane"><h3>Last execution</h3><pre class="output">{resultText || 'No execution yet.'}</pre></div></div>
           {/if}

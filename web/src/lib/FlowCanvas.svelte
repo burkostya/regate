@@ -3,12 +3,14 @@
   import '@xyflow/svelte/dist/style.css';
   import type { Pipeline, EdgeDef } from './api';
 
-  let { pipeline, positions, onchange, onselect } = $props<{
+  type Props = {
     pipeline: Pipeline;
     positions: Record<string, { x: number; y: number }>;
     onchange: (edges: EdgeDef[], positions: Record<string, { x: number; y: number }>) => void;
     onselect: (id: string) => void;
-  }>();
+  };
+
+  let { pipeline, positions, onchange, onselect }: Props = $props();
 
   let nodes = $state.raw<FlowNode[]>([]);
   let edges = $state.raw<FlowEdge[]>([]);
@@ -30,7 +32,7 @@
   }
   function onConnect(conn: { source: string | null; target: string | null; sourceHandle?: string | null; targetHandle?: string | null }) {
     if (!conn.source || !conn.target) return;
-    edges = addEdge({ source: conn.source, target: conn.target, type: 'smoothstep' }, edges);
+    edges = addEdge({ id: `${conn.source}-${conn.target}-${edges.length}`, source: conn.source, target: conn.target, type: 'smoothstep' }, edges);
     update();
   }
 </script>
@@ -39,7 +41,7 @@
   <SvelteFlow bind:nodes bind:edges fitView colorMode="dark" onconnect={onConnect}
     onnodeclick={(event: any) => { const n = event?.node ?? event?.detail?.node; if (n?.id) onselect(n.id); }}
     onnodedragstop={() => update()}>
-    <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#405166" />
+    <Background variant={BackgroundVariant.Dots} gap={22} size={1} />
     <Controls />
     <MiniMap pannable zoomable />
   </SvelteFlow>
