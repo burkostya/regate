@@ -31,6 +31,8 @@ type inboundEndpoint struct {
     verifier *identity.Verifier
     requiredScopes []string
     toolScopes map[string][]string
+    config *config.Config
+    revision *string
     resourceMetadata string
     handler http.Handler
     // Re-registering an unchanged descriptor triggers SDK list_changed without
@@ -156,7 +158,25 @@ func (m *inboundMCP) handle(s *Service, w http.ResponseWriter, r *http.Request, 
                     rpcError(w,q.ID,-32001,"insufficient tool scope")
                     return
                 }
-                s.mcp(w, r, surface, false)
+                if q.JSONRPC!="2.0" || len(q.ID)==0 || string(q.ID)=="null" {
+                    rpcError(w,q.ID,-32600,"invalid task-start request")
+                    return
+                }
+                meta,_:=q.Params["_meta"].(map[string]any)
+                if meta["io.modelcontextprotocol/protocolVersion"]!="2026-07-28" {
+                    rpcError(w,q.ID,-32602,"invalid protocol metadata")
+                    return
+                }
+                if _,ok:=meta["io.modelcontextprotocol/clientCapabilities"].(map[string]any);!ok {
+                    rpcError(w,q.ID,-32602,"invalid client capabilities")
+                    return
+                }
+                result,err:=s.createTaskFor(r.Context(),ep.config,*ep.revision,surface,name,bearer(r),obj(q.Params,"arguments"))
+                if err!=nil {
+                    rpcError(w,q.ID,-32000,"task rejected")
+                    return
+                }
+                rpcResult(w,q.ID,result,true)
                 return
             }
         }
@@ -182,7 +202,7 @@ func newInboundEndpoint(s *Service, cfg *config.Config, revision *string, surfac
     if admin { caps.AddExtension("io.modelcontextprotocol/skills", nil) }
     srv := sdk.NewServer(&sdk.Implementation{Name:"regate", Version:"0.1.0"},
         &sdk.ServerOptions{Instructions:discoveryInstructions(admin), Capabilities:caps, PageSize:128})
-    ep := &inboundEndpoint{server:srv}
+    ep := &inboundEndpoint{server:srv,config:cfg,revision:revision}
     if !admin {
         surf:=cfg.Surfaces[surface]
         ep.requiredScopes=surf.RequiredScopes
