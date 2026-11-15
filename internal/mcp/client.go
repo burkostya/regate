@@ -128,6 +128,13 @@ func (c *Conn) connect(ctx context.Context) (*sdk.ClientSession, error) {
 
 func withSession[T any](c *Conn, ctx context.Context, invoke func(*sdk.ClientSession) (T, error)) (T, error) {
 	var zero T
+	// Bound the entire operation, including negotiation and all list pages.
+	// The HTTP client timeout alone would only limit individual requests.
+	if c.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.Timeout)
+		defer cancel()
+	}
 	session, err := c.connect(ctx)
 	if err != nil {
 		return zero, err
