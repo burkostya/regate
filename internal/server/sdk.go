@@ -294,6 +294,9 @@ func newInboundEndpoint(s *Service, cfg *config.Config, revision *string, surfac
                     if !ok { return nil, fmt.Errorf("invalid resource source") }
                     ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
                     defer cancel()
+                    if ep.verifier!=nil && cfg.Upstreams[upstream].TrustLevel!="restricted" {
+                        return nil,fmt.Errorf("untrusted upstream resource boundary")
+                    }
                     value, err := s.Engine.ReadResource(ctx,cfg,cfg.Upstreams[upstream], rs.URI)
                     if err != nil { return nil, err }
                     var out sdk.ReadResourceResult
