@@ -488,3 +488,36 @@ func TestSurfaceInputSchemaRejectsBeforeExternalEffect(t *testing.T) {
 		t.Fatalf("external side effect reached despite invalid input: %v", world.calls)
 	}
 }
+
+func TestManagementAttributeAddPreservesExistingGraph(t *testing.T) {
+	svc, server, _ := fixture(t)
+	created := decode(t, jsonPost(t, server.URL+"/api/drafts", "test-secret", map[string]any{}))
+	id := created["id"].(string)
+	result := decode(t, jsonPost(t, server.URL+"/api/attribute-add", "test-secret", map[string]any{
+		"draft_id":   id,
+		"path":       "pipeline/customer_summary/node/fetch",
+		"attribute":  "input_schema",
+		"expression": `{type="object",required=["customer_id"],properties={customer_id={type="string"}}}`,
+	}))
+	updated, ok := result["source"].(string)
+	if !ok || !strings.Contains(updated, "input_schema") {
+		t.Fatalf("new attribute missing from draft: %#v", result)
+	}
+	if !strings.Contains(updated, `node "summarize"`) {
+		t.Fatal("existing graph lost")
+	}
+	draft, err := svc.Store.DraftGet(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.Validate(draft.Source); err != nil {
+		t.Fatal(err)
+	}
+	second := jsonPost(t, server.URL+"/api/attribute-add", "test-secret", map[string]any{
+		"draft_id": id, "path": "pipeline/customer_summary/node/fetch", "attribute": "input_schema", "expression": `{type="object"}`,
+	})
+	defer second.Body.Close()
+	if second.StatusCode != 400 {
+		t.Fatalf("duplicate attribute unexpectedly accepted: HTTP %d", second.StatusCode)
+	}
+}

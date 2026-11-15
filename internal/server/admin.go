@@ -36,6 +36,7 @@ var AdminTools = map[string][]Arg{
 	"regate_graph_get":        {{"pipeline", "Pipeline name", true}},
 	"regate_graph_patch":      {{"draft_id", "Draft identifier", true}, {"pipeline", "Pipeline name", true}, {"source", "Replacement HCL pipeline block", true}},
 	"regate_attribute_patch":  {{"draft_id", "Draft identifier", true}, {"path", "Block path e.g. pipeline/customer_summary/node/fetch", true}, {"attribute", "Existing attribute name", true}, {"expression", "HCL2 expression source", true}},
+	"regate_attribute_add":    {{"draft_id", "Draft identifier", true}, {"path", "Block path e.g. pipeline/customer_summary/node/fetch", true}, {"attribute", "New attribute name", true}, {"expression", "HCL2 expression source", true}},
 	"regate_hook_inspect":     {{"name", "Hook name", true}},
 	"regate_pipeline_trace":   {{"run_id", "Filter by run", false}},
 	"regate_impact_analyze":   {{"draft_id", "Draft identifier", true}},
@@ -164,7 +165,7 @@ func (s *Service) Admin(ctx context.Context, name string, args map[string]any) (
 			return nil, e
 		}
 		return s.Store.DraftUpdate(d.ID, source)
-	case "regate_attribute_patch":
+	case "regate_attribute_patch", "regate_attribute_add":
 		d, e := s.Store.DraftGet(str(args, "draft_id"))
 		if e != nil {
 			return nil, e
@@ -180,7 +181,12 @@ func (s *Service) Admin(ctx context.Context, name string, args map[string]any) (
 			}
 			selectors = append(selectors, config.BlockSelector{Type: parts[i], Label: parts[i+1]})
 		}
-		source, e := config.SetAttribute(d.Source, selectors, str(args, "attribute"), str(args, "expression"))
+		var source string
+		if name == "regate_attribute_add" {
+			source, e = config.AddAttribute(d.Source, selectors, str(args, "attribute"), str(args, "expression"))
+		} else {
+			source, e = config.SetAttribute(d.Source, selectors, str(args, "attribute"), str(args, "expression"))
+		}
 		if e != nil {
 			return nil, e
 		}

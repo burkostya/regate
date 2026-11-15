@@ -12,12 +12,6 @@ jobs:
           go-version-file: go.mod
       - name: Resolve and verify module dependencies
         run: go mod tidy
-      - name: Print dependency lock update (for compiler migration)
-        run: |
-          git diff -- go.mod go.sum
-          echo 'REGATE_GO_SUM_BEGIN'
-          cat go.sum
-          echo 'REGATE_GO_SUM_END'
       - name: Check module files are tidy
         run: git diff --exit-code -- go.mod go.sum
       - run: go vet ./...

@@ -95,11 +95,13 @@ and label, e.g. `pipeline/customer_summary/node/fetch`, plus `attribute` and
 syntax errors and any change that makes the whole configuration invalid.
 
 The source retains comments, whitespace and opaque content outside the edit.
-A **structural** graph replacement (adding/removing/reordering nodes, edges
-or attributes) falls back to replacing the entire named block: comments
-inside that block are not guaranteed to survive. Introducing new attributes
-currently also requires block replacement. These limits are visible and
-remain in scope for full v1 acceptance.
+A **structural** graph replacement is now merged by stable block identities:
+additions/removals alter only the affected source ranges and preserve operator
+comments on unrelated nodes and edges. The content *within* a deliberately
+removed block is deleted as part of that operation. Adding a field does not
+require a whole-block replacement; use `regate_attribute_add` or REST
+`POST /api/attribute-add`. Explicitly unsupported/unknown executable HCL is
+still refused by the compiler; retaining its source does not make it runnable.
 
 `regate_diff` and `regate_impact_analyze` provide structural summaries and
 `semantic_changes` with stable paths for added/removed/changed executable
