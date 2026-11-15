@@ -283,12 +283,19 @@ var email = regexp.MustCompile(`(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b`
 func MaskPII(v any) any {
 	switch x := v.(type) {
 	case string:
-		return email.ReplaceAllString(x, "[EMAIL_REDACTED]")
+        x=email.ReplaceAllString(x,"[EMAIL_REDACTED]")
+        x=authorizationValue.ReplaceAllString(x,"Bearer [REDACTED]")
+        x=secretAssignment.ReplaceAllString(x,"[CREDENTIAL_REDACTED]")
+        return x
 	case map[string]any:
 		y := map[string]any{}
 		for k, val := range x {
 			key := strings.ToLower(k)
-			if strings.Contains(key, "email") || strings.Contains(key, "phone") || strings.Contains(key, "ssn") {
+			if strings.Contains(key, "email") || strings.Contains(key, "phone") || strings.Contains(key, "ssn") ||
+                strings.Contains(key, "password") || strings.Contains(key, "secret") ||
+                strings.Contains(key, "authorization") || strings.Contains(key, "access_token") ||
+                strings.Contains(key, "refresh_token") || strings.Contains(key, "id_token") ||
+                strings.Contains(key, "api_key") || strings.Contains(key, "cookie") {
 				y[k] = "[REDACTED]"
 			} else {
 				y[k] = MaskPII(val)
