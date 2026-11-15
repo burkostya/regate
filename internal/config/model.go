@@ -31,12 +31,19 @@ type OAuth struct {
     IntrospectionURL string `json:"introspection_url,omitempty"`
     ClientIDEnv string `json:"client_id_env,omitempty"`
     ClientSecretEnv string `json:"client_secret_env,omitempty"`
+    TokenEndpoint string `json:"token_endpoint,omitempty"`
+    ExchangeClientIDEnv string `json:"exchange_client_id_env,omitempty"`
+    ExchangeClientSecretEnv string `json:"exchange_client_secret_env,omitempty"`
 }
 type Upstream struct {
 	Name      string `json:"name"`
 	URL       string `json:"url"`
 	AuthEnv   string `json:"auth_env,omitempty"`
 	TimeoutMS int    `json:"timeout_ms"`
+    TrustLevel string `json:"trust_level,omitempty"`
+    OAuthExchange string `json:"oauth_exchange,omitempty"`
+    OAuthAudience string `json:"oauth_audience,omitempty"`
+    OAuthScopes []string `json:"oauth_scopes,omitempty"`
 }
 type Hook struct {
 	Name      string `json:"name"`
@@ -48,6 +55,10 @@ type Hook struct {
 	Contract  string `json:"contract"`
 	OnError   string `json:"on_error"`
 	TimeoutMS int    `json:"timeout_ms"`
+    TrustLevel string `json:"trust_level,omitempty"`
+    OAuthExchange string `json:"oauth_exchange,omitempty"`
+    OAuthAudience string `json:"oauth_audience,omitempty"`
+    OAuthScopes []string `json:"oauth_scopes,omitempty"`
 }
 type Policy struct {
 	Name         string `json:"name"`
@@ -147,12 +158,15 @@ func Decode(src string) (*Config, error) {
 			}
 		case "oauth":
             c.OAuth[name] = OAuth{Name:name,Issuer:b.String("issuer"), Audience:b.String("audience"),JWKSURL:b.String("jwks_url"),
-                IntrospectionURL:b.String("introspection_url"),ClientIDEnv:b.String("client_id_env"),ClientSecretEnv:b.String("client_secret_env")}
+                IntrospectionURL:b.String("introspection_url"),ClientIDEnv:b.String("client_id_env"),ClientSecretEnv:b.String("client_secret_env"),
+                TokenEndpoint:b.String("token_endpoint"),ExchangeClientIDEnv:b.String("exchange_client_id_env"),ExchangeClientSecretEnv:b.String("exchange_client_secret_env")}
 		case "upstream":
-			u := Upstream{Name: name, URL: b.String("url"), AuthEnv: b.String("auth_env"), TimeoutMS: b.Int("timeout_ms", 15000)}
+			u := Upstream{Name:name,URL:b.String("url"),AuthEnv:b.String("auth_env"),TimeoutMS:b.Int("timeout_ms",15000),
+                TrustLevel:b.String("trust_level"),OAuthExchange:b.String("oauth_exchange"),OAuthAudience:b.String("oauth_audience"),OAuthScopes:stringList(b.Attrs["oauth_scopes"])}
 			c.Upstreams[name] = u
 		case "hook":
-			h := Hook{Name: name, Transport: b.String("transport"), URL: b.String("url"), Upstream: b.String("upstream"), Tool: b.String("tool"), AuthEnv: b.String("auth_env"), Contract: b.String("contract"), OnError: b.String("on_error"), TimeoutMS: b.Int("timeout_ms", 10000)}
+			h := Hook{Name:name,Transport:b.String("transport"),URL:b.String("url"),Upstream:b.String("upstream"),Tool:b.String("tool"),AuthEnv:b.String("auth_env"),Contract:b.String("contract"),OnError:b.String("on_error"),TimeoutMS:b.Int("timeout_ms",10000),
+                TrustLevel:b.String("trust_level"),OAuthExchange:b.String("oauth_exchange"),OAuthAudience:b.String("oauth_audience"),OAuthScopes:stringList(b.Attrs["oauth_scopes"])}
 			if h.OnError == "" {
 				h.OnError = "deny"
 			}
@@ -246,16 +260,27 @@ func (c *Config) Validate() error {
             if err:=validURL(provider.IntrospectionURL);err!=nil {return fmt.Errorf("oauth %s introspection: %w",name,err)}
             if provider.ClientIDEnv=="" || provider.ClientSecretEnv=="" {return fmt.Errorf("oauth %s introspection requires client_id_env and client_secret_env",name)}
         }
-        for _,key:=range []string{provider.ClientIDEnv,provider.ClientSecretEnv} {
+        if provider.TokenEndpoint!="" {
+            if err:=validURL(provider.TokenEndpoint);err!=nil {return fmt.Errorf("oauth %s token endpoint: %w",name,err)}
+            if !safeEnvName(provider.ExchangeClientIDEnv) || !safeEnvName(provider.ExchangeClientSecretEnv) {
+                return fmt.Errorf("oauth %s token exchange requires client env references",name)
+            }
+        } else if provider.ExchangeClientIDEnv!="" || provider.ExchangeClientSecretEnv!="" {
+            return fmt.Errorf("oauth %s token-exchange credentials require token_endpoint",name)
+        }
+        for _,key:=range []string{provider.ClientIDEnv,provider.ClientSecretEnv,provider.ExchangeClientIDEnv,provider.ExchangeClientSecretEnv} {
             if key!="" && !safeEnvName(key) {return fmt.Errorf("oauth %s: invalid secret environment variable",name)}
         }
     }
 	for name, u := range c.Upstreams {
+        if err:=validateOutboundBinding(c.OAuth,u.OAuthExchange,u.OAuthAudience,u.OAuthScopes,u.AuthEnv,u.TrustLevel);err!=nil {return fmt.Errorf("upstream %s: %w",name,err)}
 		if err := validURL(u.URL); err != nil {
 			return fmt.Errorf("upstream %s: %w", name, err)
 		}
 	}
 	for name, h := range c.Hooks {
+        if err:=validateOutboundBinding(c.OAuth,h.OAuthExchange,h.OAuthAudience,h.OAuthScopes,h.AuthEnv,h.TrustLevel);err!=nil {return fmt.Errorf("hook %s: %w",name,err)}
+        if h.Transport=="mcp" && h.OAuthExchange!="" {return fmt.Errorf("hook %s: configure OAuth exchange on the referenced MCP upstream",name)}
 		if h.Transport != "http" && h.Transport != "mcp" && h.Transport != "builtin" {
 			return fmt.Errorf("hook %s: transport must be http/mcp/builtin", name)
 		}
@@ -313,6 +338,7 @@ func (c *Config) Validate() error {
 				}
 			}
 			if node.Kind == "http.call" {
+                if e:=validateTrustLevel(node.Str("trust_level"));e!=nil {return fmt.Errorf("pipeline %s node %s: %w",name,n,e)}
 				if e := validURL(node.Str("url")); e != nil {
 					return fmt.Errorf("pipeline %s node %s: %w", name, n, e)
 				}
@@ -463,6 +489,27 @@ func (c *Config) Validate() error {
 	})
 	return nil
 }
+func validateTrustLevel(value string) error {
+    switch value {
+    case "", "public", "restricted":return nil
+    default:return fmt.Errorf("trust_level must be public or restricted")
+    }
+}
+func validateOutboundBinding(providers map[string]OAuth,provider,audience string,scopes []string,authEnv,trust string) error {
+    if err:=validateTrustLevel(trust);err!=nil {return err}
+    if authEnv!="" && !safeEnvName(authEnv) {return fmt.Errorf("invalid auth_env secret reference")}
+    if provider=="" {
+        if audience!="" || len(scopes)>0 {return fmt.Errorf("oauth audience/scopes require oauth_exchange provider")}
+        return nil
+    }
+    selected,ok:=providers[provider]
+    if !ok || selected.TokenEndpoint=="" {return fmt.Errorf("undefined OAuth token-exchange provider")}
+    if audience=="" || len(scopes)==0 {return fmt.Errorf("token exchange requires explicit target audience and least-privilege scopes")}
+    if err:=validateScopeList(scopes);err!=nil {return err}
+    if authEnv!="" {return fmt.Errorf("auth_env and oauth_exchange are mutually exclusive")}
+    return nil
+}
+
 func containsScope(scopes []string, wanted string) bool {
     for _,scope:=range scopes {if scope==wanted{return true}}
     return false
