@@ -18,7 +18,6 @@ import (
     "time"
 
     "github.com/burkostya/regate/internal/config"
-    "github.com/burkostya/regate/internal/storage"
     sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -40,35 +39,46 @@ type inboundMCP struct {
 
 func newInboundMCP(s *Service, cfg *config.Config, revision string) (*inboundMCP, error) {
     m := &inboundMCP{public: make(map[string]*inboundEndpoint)}
-    admin, err := newInboundEndpoint(s, cfg, revision, "", true)
+    admin, err := newInboundEndpoint(s, cfg, &revision, "", true)
     if err != nil { return nil, err }
     m.admin = admin
     if err := m.replace(s, cfg, revision); err != nil { return nil, err }
     return m, nil
 }
 
-func (m *inboundMCP) replace(s *Service, cfg *config.Config, revision string) error {
+// prepare builds the next immutable catalogs before the store transaction.
+// No route can observe them until publish has installed the real revision ID.
+func (m *inboundMCP) prepare(s *Service, cfg *config.Config) (map[string]*inboundEndpoint, *string, error) {
     next := make(map[string]*inboundEndpoint, len(cfg.Surfaces))
+    revision := new(string)
     for name := range cfg.Surfaces {
         ep, err := newInboundEndpoint(s, cfg, revision, name, false)
-        if err != nil { return fmt.Errorf("MCP surface %q: %w", name, err) }
+        if err != nil { return nil, nil, fmt.Errorf("MCP surface %q: %w", name, err) }
         next[name] = ep
     }
+    return next, revision, nil
+}
 
+func (m *inboundMCP) replace(s *Service, cfg *config.Config, revision string) error {
+    next, rev, err := m.prepare(s, cfg)
+    if err != nil { return err }
+    *rev = revision
+    m.publish(next)
+    return nil
+}
+func (m *inboundMCP) publish(next map[string]*inboundEndpoint) {
     m.mu.Lock()
     previous := m.public
     m.public = next
     m.mu.Unlock()
 
-    // SDK's subscriptions/listen owns the open SSE streams. Notify subscribers
-    // of the replaced catalog on their *old* server, without forwarding any
-    // subsequent call onto the old revision.
+    // Native SDK subscription streams remain on the previous server; sending a
+    // list change there wakes subscribers without reusing an obsolete revision.
     for _, old := range previous {
         if len(old.tools) > 0 { old.server.RemoveTools(old.tools...) }
         if len(old.resources) > 0 { old.server.RemoveResources(old.resources...) }
         if len(old.prompts) > 0 { old.server.RemovePrompts(old.prompts...) }
     }
-    return nil
 }
 
 // handle preserves the old, unversioned HTTP JSON-RPC client's missing Accept
@@ -108,7 +118,7 @@ func (m *inboundMCP) handle(s *Service, w http.ResponseWriter, r *http.Request, 
     ep.handler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), sdkOwnerKey{}, bearer(r))))
 }
 
-func newInboundEndpoint(s *Service, cfg *config.Config, revision, surface string, admin bool) (*inboundEndpoint, error) {
+func newInboundEndpoint(s *Service, cfg *config.Config, revision *string, surface string, admin bool) (*inboundEndpoint, error) {
     caps := &sdk.ServerCapabilities{
         Tools: &sdk.ToolCapabilities{ListChanged: true},
         Resources: &sdk.ResourceCapabilities{ListChanged: true},
@@ -161,7 +171,7 @@ func newInboundEndpoint(s *Service, cfg *config.Config, revision, surface string
                 if err != nil { return nil, err }
                 ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
                 defer cancel()
-                out, err := s.Engine.Run(ctx, revision, cfg, surface, name, args, false)
+                out, err := s.Engine.Run(ctx, *revision, cfg, surface, name, args, false)
                 result := outcomeResult(out, err)
                 var wire sdk.CallToolResult
                 if err := remarshalSDK(result, &wire); err != nil { return nil, err }
@@ -289,8 +299,3 @@ func registerTaskMethods(srv *sdk.Server, s *Service) error {
     return nil
 }
 
-// Referenced from Service activation/rollback to preserve the control-plane
-// ordering: persist revision, replace active config and publish SDK catalogs.
-func (s *Service) replaceMCP(cfg *config.Config, rev storage.Revision) error {
-    return s.inbound.replace(s,cfg,rev.ID)
-}
