@@ -91,8 +91,9 @@ inside the pipeline as well. `regate_attribute_patch` (and REST
 `POST /api/attribute-patch`) replaces **only an existing attribute expression**
 in a draft. The required `path` is a slash-separated sequence of block type
 and label, e.g. `pipeline/customer_summary/node/fetch`, plus `attribute` and
-`expression` (new HCL2 source). It refuses ambiguous paths, missing attributes,
-syntax errors and any change that makes the whole configuration invalid.
+`expression` (new HCL2 source). It refuses ambiguous paths, missing attributes and syntax errors. Edits
+to a previously valid executable configuration remain strictly validated;
+opaque drafts can remain incomplete, but cannot be activated until fixed.
 
 The source retains comments, whitespace and opaque content outside the edit.
 A **structural** graph replacement is now merged by stable block identities:
@@ -100,8 +101,11 @@ additions/removals alter only the affected source ranges and preserve operator
 comments on unrelated nodes and edges. The content *within* a deliberately
 removed block is deleted as part of that operation. Adding a field does not
 require a whole-block replacement; use `regate_attribute_add` or REST
-`POST /api/attribute-add`. Explicitly unsupported/unknown executable HCL is
-still refused by the compiler; retaining its source does not make it runnable.
+`POST /api/attribute-add`. Opaque draft syntax is parsed by `ParseForEdit` without evaluating unknown
+expressions. Graph edits preserve unrepresented unknown attributes and blocks
+byte-for-byte, reject attempts to silently mutate or introduce opaque content,
+and never execute it. Explicitly unsupported executable HCL is still refused
+by `Decode` before activation; retaining its source does not make it runnable.
 
 `regate_diff` and `regate_impact_analyze` provide structural summaries and
 `semantic_changes` with stable paths for added/removed/changed executable
@@ -112,8 +116,10 @@ values. Whitespace, source spans and comments alone are not semantic changes.
 The compiled IR is typed at the known HCL and CEL expression boundary, not at
 all dynamic MCP port boundaries. Pending: full cross-port JSON Schema typing,
 verified remote contract resolution, explicit pure data dependency edges,
-source-preserving *insertion/removal* of nested blocks and attributes, and
-arbitrary opaque block editing in the visual editor. Dynamic CEL subscripts
+fully guided editing of unknown/opaque blocks (the raw HCL editor remains
+required for these), and a browser-level source-preservation round trip.
+Supported node/edge and attribute additions/removals are handled by source
+range operations, and opaque nested blocks remain untouched by graph edits. Dynamic CEL subscripts
 and paths through conditional branches need runtime validation.
 
 ### Declared JSON Schema contracts (compiler extension)
@@ -145,8 +151,22 @@ revision retains its compiled schemas.
 entire pipeline. It matches named blocks and `edge` blocks by endpoints and
 condition, updates only changed expressions, and handles additions/removals
 without rewriting siblings. Edits are rejected if they target ambiguous block
-identities or produce an invalid executable configuration. Comments immediately
+identities or would invalidate a previously executable configuration. Drafts
+that already contain unsupported HCL may still be edited while remaining
+non-executable. Only explicit raw-source edits may change opaque fragments. Comments immediately
 outside changed ranges are preserved. Deleted elements cannot preserve content
 *inside* their own deleted range; for this reason a visual editor should warn
 when deleting a node with hand-written documentation. `AddAttribute` provides
 a targeted insertion operation in the underlying configuration package.
+
+### Opaque source and draft validation boundary
+
+The management `regate_draft_patch` operation performs **HCL syntax** validation,
+not full executable compilation. This allows partially configured and
+forward-compatible drafts to keep opaque blocks, unknown variables and
+unknown attributes. `regate_validate` and `regate_activate` always perform
+strict `Decode` before any revision may be published. Visual graph patches
+cannot delete unrepresented unknown fields or nested blocks, and reject
+attempts to edit these fields semantically. Comments and whitespace are
+preserved by byte-range edits rather than HCL AST regeneration. A malformed
+HCL token stream cannot be persisted via the structured draft-patch method.
