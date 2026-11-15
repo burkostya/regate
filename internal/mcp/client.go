@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/burkostya/regate/internal/netguard"
 	"io"
 	"net/http"
 	"os"
@@ -48,7 +49,7 @@ type Conn struct {
 }
 
 func NewConn(url, tokenEnv string, timeout time.Duration) *Conn {
-	return &Conn{URL: url, AuthEnv: tokenEnv, Timeout: timeout, Client: &http.Client{Timeout: timeout, CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}}
+	return &Conn{URL: url, AuthEnv: tokenEnv, Timeout: timeout, Client: netguard.Client(timeout)}
 }
 func meta() map[string]any {
 	return map[string]any{"io.modelcontextprotocol/protocolVersion": Protocol, "io.modelcontextprotocol/clientInfo": map[string]any{"name": "regate", "version": "0.1.0"}, "io.modelcontextprotocol/clientCapabilities": map[string]any{}}

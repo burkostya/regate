@@ -8,7 +8,7 @@
 - Public token is mandatory for non-loopback binding; anonymous public surface calls are loopback-only by default.
 - Constant-time comparison for bearer equality.
 - No upstream token is passed through automatically; authentication is looked up from a named environment variable (`auth_env`).
-- HTTP hook and MCP upstream outbound host allowlist, no HTTP redirects, HTTP(S) URL validation.
+- HTTP hook and MCP upstream outbound host allowlist, no HTTP redirects, HTTP(S) URL validation. Outbound clients now reject DNS results pointing to loopback, private, link-local, shared-address and selected reserved ranges unless the original hostname is explicitly loopback. Connections dial validated IPs (DNS rebinding is blocked at dial-time); outgoing HTTP proxies are disabled for these clients.
 - HCL changes pass validation and draft base revision conflicts are rejected.
 - Decision `deny`/`indeterminate`/network errors and unfulfilled obligations fail closed.
 - The expression evaluator accepts a finite safe subset without arbitrary code execution.
@@ -18,7 +18,7 @@
 
 1. Use the official `modelcontextprotocol/go-sdk` with conformance tests, complete multi-version negotiation, stream cancellation, subscription closing and OAuth protected resources.
 2. Authenticate principals with scoped credentials/issuer+audience validation; implement per-surface and per-tool authorization rather than a shared public bearer only.
-3. Prevent DNS rebinding and private-network SSRF at the resolver/dialer layer. Enforce outgoing request size, data volume and content policies.
+3. Security-audit and extend DNS/IP egress rules (including internal-service exception policies and less-common reserved ranges), verify redirects, proxy behavior and all transports. Enforce outgoing request size, data volume and content policies.
 4. Complete trusted PII detection, classification, labels, provenance, declassification proofs, consent/retention and no-leak invariants.
 5. Implement EffectContract verification, remote idempotency support, read-back reconciliation and compensation mechanisms for unclear write results.
 6. Add complete HCL2+CEL typed validation, JSON Schema validation, compilation against the observed upstream schema and semantic impact analysis.

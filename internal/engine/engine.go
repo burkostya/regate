@@ -7,9 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -19,6 +17,7 @@ import (
 	"github.com/burkostya/regate/internal/config"
 	"github.com/burkostya/regate/internal/expr"
 	"github.com/burkostya/regate/internal/mcp"
+	"github.com/burkostya/regate/internal/netguard"
 	"github.com/burkostya/regate/internal/storage"
 )
 
@@ -52,35 +51,9 @@ func (r *Runtime) Discover(ctx context.Context, cfg *config.Config, upstream str
 	}
 	return r.conn(u).ListTools(ctx)
 }
-func checkOutbound(raw string) error {
-	u, e := url.Parse(raw)
-	if e != nil {
-		return e
-	}
-	host := strings.ToLower(u.Hostname())
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("only HTTP(S) supported")
-	}
-	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-		return nil
-	}
-	if u.Scheme != "https" {
-		return fmt.Errorf("external HTTP forbidden: %s", host)
-	}
-	// Explicit upstream allowlist prevents accidental connections to metadata/internal services.
-	for _, h := range strings.Split(os.Getenv("REGATE_ALLOWED_HOSTS"), ",") {
-		if strings.EqualFold(strings.TrimSpace(h), host) {
-			return nil
-		}
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return fmt.Errorf("IP literals outside loopback prohibited")
-	}
-	return fmt.Errorf("upstream host %s is not in REGATE_ALLOWED_HOSTS", host)
-}
-func httpClient(timeout time.Duration) *http.Client {
-	return &http.Client{Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-}
+func checkOutbound(raw string) error { return netguard.ValidateURL(raw) }
+
+func httpClient(timeout time.Duration) *http.Client { return netguard.Client(timeout) }
 
 type Outcome struct {
 	RunID    string         `json:"run_id"`

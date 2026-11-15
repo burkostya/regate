@@ -22,6 +22,7 @@
 | Effect journal (`dispatching`, `confirmed`, `unknown`) | Partial implementation | Go executor |
 | Async MCP tasks, cancellation, checkpoint and resume | Partial implementation | Task integration test |
 | Subscription change notification | Implemented subset | SSE activation test |
+| Outbound HTTP DNS/IP safety guard | Implemented initial fail-closed guard | `internal/netguard` unit tests (DNS rebinding / mixed DNS / loopback) |
 | Admin skills + `skills/list`, `skills/get` / `skill://` resources | Implemented subset | Admin skill test |
 | SvelteKit + Svelte Flow editor | **Authored but unverified** | No npm install or build possible in offline environment |
 | Go race tests, vet, build | **Passed** | `go test -race ./...`, `go vet ./...`, `go build ...` |
@@ -35,7 +36,7 @@
 5. Production-grade effect reconciliation/idempotency/compensation, backpressure and durable scheduling (no blind retries after uncertain writes).
 6. Enforced data labels/taint tracking and verified PII obligations, permissions, principal identities and trust boundaries throughout every node.
 7. Persist revisions/events/traces/tasks in SQLite with transactions; safe migrations and recovery/compaction.
-8. OAuth and scoped permissions for admin, user/surface, and upstreams; hardened DNS/IP SSRF; secure secret handling.
+8. OAuth and scoped permissions for admin, user/surface, and upstreams; production-audited egress/SSRF rules with explicit internal-service configuration; secure secret handling.
 9. Real independent MCP resource/prompt catalog discovery and edit/mapping; upstream change detection and compatibility diagnostics.
 10. Complete UI build, type checks, browser/e2e tests, full graphical node/edge/port editor, impact analysis, robust source preservation and operator approval workflow.
 11. OpenTelemetry spans/metrics/export, quotas and capacity controls, full audit history, release acceptance/e2e scenarios.
