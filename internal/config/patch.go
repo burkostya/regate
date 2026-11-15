@@ -16,7 +16,7 @@ import (
 // neighboring comments and all opaque source outside the edit are preserved.
 // Ambiguous matching is deliberately rejected rather than overwriting data.
 func ReplaceBlock(source, typ, label, replacement string) (string, error) {
-	blocks, err := Parse(source)
+	blocks, err := ParseForEdit(source)
 	if err != nil {
 		return "", err
 	}
@@ -32,7 +32,7 @@ func ReplaceBlock(source, typ, label, replacement string) (string, error) {
 	if found == nil {
 		return "", fmt.Errorf("missing %s %q", typ, label)
 	}
-	desired, err := Parse(replacement)
+	desired, err := ParseForEdit(replacement)
 	if err != nil {
 		return "", fmt.Errorf("replacement: %w", err)
 	}
@@ -47,15 +47,41 @@ func ReplaceBlock(source, typ, label, replacement string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if _, err = Decode(next); err != nil {
-		return "", err
-	}
+	if err = validateSourceEdit(source, next); err != nil {
+        return "", err
+    }
 	return next, nil
 }
 
 type BlockSelector struct {
 	Type  string
 	Label string
+}
+
+// knownEditableAttr checks the compiler's closed executable schema. Unknown
+// fields may be retained in drafts but cannot be silently changed by a graph
+// editor that does not understand their semantics.
+func knownEditableAttr(b *Block, name string) bool {
+    if b.Type == "node" {
+        // Operators must be able to repair an unresolved/unknown kind in an
+        // incomplete draft without switching to the full-source editor.
+        if name == "kind" || name == "input_schema" || name == "output_schema" { return true }
+        _, ok := nodeAttributes[b.String("kind")][name]
+        return ok
+    }
+    _, ok := blockAttributes[b.Type][name]
+    return ok
+}
+
+// validateSourceEdit is fail-closed for known-good executable configurations.
+// Invalid drafts are allowed to stay invalid so operators can edit opaque HCL,
+// but activation always calls Decode and will reject them.
+func validateSourceEdit(original, edited string) error {
+    if _, err := ParseForEdit(edited); err != nil { return err }
+    if _, err := Decode(original); err == nil {
+        if _, err := Decode(edited); err != nil { return err }
+    }
+    return nil
 }
 
 // SetAttribute replaces only the HCL value expression of an existing field.
@@ -68,6 +94,9 @@ func SetAttribute(source string, path []BlockSelector, name, expression string) 
 	if !ok {
 		return "", fmt.Errorf("attribute %q absent; use AddAttribute", name)
 	}
+    if !knownEditableAttr(target,name) {
+        return "", fmt.Errorf("attribute %q is opaque; edit it in the HCL source, not the graph", name)
+    }
 	if err = validateExpression(expression); err != nil {
 		return "", err
 	}
@@ -75,9 +104,9 @@ func SetAttribute(source string, path []BlockSelector, name, expression string) 
 	if err != nil {
 		return "", err
 	}
-	if _, err = Decode(next); err != nil {
-		return "", err
-	}
+	if err = validateSourceEdit(source, next); err != nil {
+        return "", err
+    }
 	return next, nil
 }
 
@@ -97,15 +126,18 @@ func AddAttribute(source string, path []BlockSelector, name, expression string) 
 	if !hclsyntax.ValidIdentifier(name) {
 		return "", fmt.Errorf("invalid HCL attribute name %q", name)
 	}
+    if !knownEditableAttr(target,name) {
+        return "", fmt.Errorf("cannot insert unsupported attribute %q with a graph patch", name)
+    }
 	indent := blockChildIndent(source, target)
 	insert := fmt.Sprintf("%s%s = %s\n", indent, name, expression)
 	next, err := insertBeforeClose(source, target, insert)
 	if err != nil {
 		return "", err
 	}
-	if _, err = Decode(next); err != nil {
-		return "", err
-	}
+	if err = validateSourceEdit(source, next); err != nil {
+        return "", err
+    }
 	return next, nil
 }
 
@@ -124,7 +156,7 @@ func selectBlock(source string, path []BlockSelector) (*Block, error) {
 	if len(path) == 0 {
 		return nil, fmt.Errorf("empty block path")
 	}
-	blocks, err := Parse(source)
+	blocks, err := ParseForEdit(source)
 	if err != nil {
 		return nil, err
 	}
@@ -168,9 +200,33 @@ func childIdentity(b *Block) (string, error) {
 	}
 	return "", fmt.Errorf("unidentifiable %s at line %d", b.Type, b.Line)
 }
+func knownNestedChild(parent, child string) bool { return nestedBlocks[parent][child] }
+
+// requireOpaqueFragmentsUnchanged ensures a structural patch never silently
+// rewrites or adds unknown nested HCL. An unrepresented opaque child is kept;
+// if the editor explicitly includes one, it must match an existing fragment.
+func requireOpaqueFragmentsUnchanged(original, replacement string, old, desired *Block) error {
+    kept := map[string]int{}
+    for _, child := range old.Children {
+        if !knownNestedChild(old.Type, child.Type) {
+            kept[original[child.Start:child.End]]++
+        }
+    }
+    for _, child := range desired.Children {
+        if knownNestedChild(desired.Type, child.Type) { continue }
+        fragment := replacement[child.Start:child.End]
+        if kept[fragment] == 0 {
+            return fmt.Errorf("opaque %s cannot be added or modified through structural graph patch", child.Type)
+        }
+        kept[fragment]--
+    }
+    return nil
+}
+
 func indexedChildren(b *Block) (map[string]*Block, error) {
 	indexed := map[string]*Block{}
 	for _, child := range b.Children {
+        if !knownNestedChild(b.Type, child.Type) { continue }
 		key, err := childIdentity(child)
 		if err != nil {
 			return nil, err
@@ -187,6 +243,9 @@ func structuralEdits(original, replacement string, old, desired *Block) ([]sourc
 	if old.Type != desired.Type || !reflect.DeepEqual(old.Labels, desired.Labels) {
 		return nil, fmt.Errorf("block identity mismatch")
 	}
+    if err := requireOpaqueFragmentsUnchanged(original,replacement,old,desired); err != nil {
+        return nil,err
+    }
 	edits := []sourceEdit{}
 	insertions := []string{}
 	keys := make([]string, 0, len(old.Attrs))
@@ -197,6 +256,12 @@ func structuralEdits(original, replacement string, old, desired *Block) ([]sourc
 	for _, key := range keys {
 		prior := old.Attrs[key]
 		value, exists := desired.Attrs[key]
+        if !knownEditableAttr(old,key) {
+            if exists && !reflect.DeepEqual(prior,value) {
+                return nil,fmt.Errorf("opaque attribute %q cannot be changed by graph patch",key)
+            }
+            continue
+        }
 		if !exists {
 			r, ok := old.AttrFullRanges[key]
 			if !ok {
@@ -217,6 +282,9 @@ func structuralEdits(original, replacement string, old, desired *Block) ([]sourc
 		if _, ok := old.Attrs[key]; ok {
 			continue
 		}
+        if !knownEditableAttr(desired,key) {
+            return nil,fmt.Errorf("opaque attribute %q cannot be introduced through graph patch",key)
+        }
 		r, exists := desired.AttrFullRanges[key]
 		if !exists {
 			return nil, fmt.Errorf("missing new attribute span %s", key)
@@ -233,6 +301,7 @@ func structuralEdits(original, replacement string, old, desired *Block) ([]sourc
 		return nil, err
 	}
 	for _, child := range old.Children {
+        if !knownNestedChild(old.Type,child.Type) {continue}
 		key, _ := childIdentity(child)
 		target, exists := desiredChildren[key]
 		if !exists {
@@ -247,6 +316,7 @@ func structuralEdits(original, replacement string, old, desired *Block) ([]sourc
 		}
 	}
 	for _, child := range desired.Children {
+        if !knownNestedChild(desired.Type,child.Type) {continue}
 		key, _ := childIdentity(child)
 		if _, exists := oldChildren[key]; exists {
 			continue
