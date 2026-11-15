@@ -127,6 +127,12 @@ func (r *Runtime) Run(ctx context.Context, revision string, cfg *config.Config, 
 	if !found {
 		return out, fmt.Errorf("tool not found")
 	}
+    if err:=enforceDataTrust(cfg,surface,tool);err!=nil {
+        out.Status="denied"
+        out.Error="untrusted destination"
+        if r.Store!=nil {r.Store.WriteTrace(storage.Trace{RunID:out.RunID,Revision:revision,Surface:surface,Tool:toolName,Status:"denied",Message:out.Error})}
+        return out,err
+    }
 	if args == nil {
 		args = map[string]any{}
 	}
@@ -752,12 +758,15 @@ func (r *Runtime) Resume(ctx context.Context, cfg *config.Config, revision strin
 	}
 	s := cfg.Surfaces[cp.Surface]
 	var pipeline string
+    var selected config.Tool
 	for _, t := range s.Tools {
 		if t.Name == cp.Tool {
 			pipeline = t.Pipeline
+            selected=t
 			break
 		}
 	}
+    if err:=enforceDataTrust(cfg,cp.Surface,selected);err!=nil {return Outcome{RunID:runID,Revision:revision,Status:"denied",Error:"untrusted destination"},err}
 	if pipeline == "" {
 		return Outcome{}, fmt.Errorf("missing original tool")
 	}
