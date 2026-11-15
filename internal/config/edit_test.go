@@ -105,3 +105,15 @@ func TestOpaqueDraftChangesCannotBeSilentlyRewritten(t *testing.T) {
         t.Fatal("syntax-invalid draft accepted")
     }
 }
+
+func TestAttributePatchCanRepairUnknownKind(t *testing.T) {
+    original := example(t)
+    src := strings.Replace(original, `kind      = "mcp.call"`, `kind      = custom.unknown_kind`,1)
+    if src == original { t.Fatal("test fixture kind missing") }
+    if _, err := Decode(src); err == nil { t.Fatal("dynamic kind should be rejected on activation") }
+    path := []BlockSelector{{Type:"pipeline",Label:"customer_summary"}, {Type:"node",Label:"fetch"}}
+    repaired, err := SetAttribute(src,path,"kind",`"mcp.call"`)
+    if err != nil { t.Fatalf("could not repair unknown node kind: %v",err) }
+    if repaired != original { t.Fatalf("known kind repair changed unrelated source") }
+    if _, err := Decode(repaired); err != nil { t.Fatal(err) }
+}
