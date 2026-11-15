@@ -154,7 +154,7 @@ func selectBlock(source string, path []BlockSelector) (*Block, error) {
 	if len(path) == 0 {
 		return nil, fmt.Errorf("empty block path")
 	}
-	blocks, err := Parse(source)
+	blocks, err := ParseForEdit(source)
 	if err != nil {
 		return nil, err
 	}
