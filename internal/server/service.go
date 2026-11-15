@@ -31,6 +31,7 @@ type catalogEntry struct {
     Resources []map[string]any `json:"resources"`
     ResourceTemplates []map[string]any `json:"resourceTemplates"`
     Prompts []map[string]any `json:"prompts"`
+    Revision string `json:"revision"`
 	At time.Time `json:"at"`
 	Error string `json:"error,omitempty"`
 }
@@ -83,6 +84,7 @@ func (s *Service) Activate(id string) (storage.Revision, error) {
     s.inbound.publish(next)
     s.cfg = cfg
     s.rev = rev
+    s.catalog = map[string]catalogEntry{}
     s.mu.Unlock()
 	s.subscriptions.emit("notifications/tools/list_changed")
 	s.subscriptions.emit("notifications/resources/list_changed")
@@ -110,6 +112,7 @@ func (s *Service) Rollback(target string) (storage.Revision, error) {
     s.inbound.publish(next)
     s.cfg = cfg
     s.rev = rev
+    s.catalog = map[string]catalogEntry{}
     s.mu.Unlock()
 	s.subscriptions.emit("notifications/tools/list_changed")
 	s.subscriptions.emit("notifications/resources/list_changed")
@@ -117,26 +120,29 @@ func (s *Service) Rollback(target string) (storage.Revision, error) {
 	return rev, nil
 }
 func (s *Service) Discover(ctx context.Context, name string, refresh bool) (catalogEntry, error) {
-	s.mu.RLock()
-	e, ok := s.catalog[name]
-	s.mu.RUnlock()
-	if !refresh && ok && time.Since(e.At) < time.Minute {
-		return e, nil
-	}
-	cfg, _ := s.Current()
-	items, err := s.Engine.DiscoverCatalog(ctx, cfg, name)
-	e = catalogEntry{
+    cfg, revision := s.Current()
+    s.mu.RLock()
+    e, ok := s.catalog[name]
+    s.mu.RUnlock()
+    // A catalog discovered under another config revision may represent an
+    // entirely different upstream authority. Never reuse it.
+    if !refresh && ok && e.Revision == revision.ID && time.Since(e.At) < time.Minute {
+        if e.Error!="" {return e,fmt.Errorf("cached upstream discovery failed: %s",e.Error)}
+        return e,nil
+    }
+    items, err := s.Engine.DiscoverCatalog(ctx, cfg, name)
+    e = catalogEntry{
         Items:items.Tools, Resources:items.Resources,
         ResourceTemplates:items.ResourceTemplates, Prompts:items.Prompts,
-        At:time.Now().UTC(),
+        Revision:revision.ID, At:time.Now().UTC(),
     }
-	if err != nil {
-		e.Error = err.Error()
-	}
-	s.mu.Lock()
-	s.catalog[name] = e
-	s.mu.Unlock()
-	return e, err
+    if err!=nil {e.Error=err.Error()}
+    s.mu.Lock()
+    // If activation raced with discovery, return this historical result to
+    // its caller but never publish it as the current catalog cache.
+    if s.rev.ID==revision.ID {s.catalog[name]=e}
+    s.mu.Unlock()
+    return e,err
 }
 func (s *Service) Status() map[string]any {
 	cfg, rev := s.Current()
