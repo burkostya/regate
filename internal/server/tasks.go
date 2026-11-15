@@ -17,6 +17,15 @@ import (
 )
 
 var running sync.Map // task id -> context.CancelFunc; one-process cancellation
+// OAuth task owners are identities, not access-token bytes. A renewed token
+// from the same issuer/audience/subject can resume a durable task; a token for
+// a different principal can never inherit another owner's state.
+func ownerIdentity(ctx context.Context,raw string) string {
+    if principal,ok:=identity.FromContext(ctx);ok {
+        return "oauth:"+principal.Issuer+"\x00"+principal.Audience+"\x00"+principal.Subject
+    }
+    return raw
+}
 func fingerprint(secret string) string {
 	h := sha256.Sum256([]byte(secret))
 	return hex.EncodeToString(h[:])
@@ -54,7 +63,7 @@ func (s *Service) createTaskFor(ctx context.Context,cfg *config.Config,revision 
     }
     task := storage.TaskRecord{
         TaskID: storage.ID(),Status:"working",StatusMessage:"Executing pipeline",
-        OwnerDigest:fingerprint(owner),Surface:surface,Tool:tool,Revision:revision,
+        OwnerDigest:fingerprint(ownerIdentity(ctx,owner)),Surface:surface,Tool:tool,Revision:revision,
         RequiredScopes:append([]string(nil),selected.RequiredScopes...),
         RedactPII:published.OAuth!="" && !selected.AllowUnmasked,
         TTLMS:3600000,PollIntervalMS:1000,
