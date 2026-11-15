@@ -34,7 +34,18 @@ type SourceRange struct {
 	Column int `json:"column"`
 }
 
+// ParseForEdit reads HCL syntax and byte ranges even when an opaque fragment
+// cannot be statically evaluated. It is deliberately NOT executable validation:
+// only Decode may compile a configuration for activation.
+func ParseForEdit(source string) ([]*Block, error) {
+    return parseSource(source, true)
+}
+
 func Parse(source string) ([]*Block, error) {
+    return parseSource(source, false)
+}
+
+func parseSource(source string, tolerant bool) ([]*Block, error) {
 	file, diags := hclsyntax.ParseConfig([]byte(source), "regate.hcl", hcl.Pos{Line: 1, Column: 1})
 	if diags.HasErrors() {
 		return nil, fmt.Errorf("HCL2: %s", diags.Error())
@@ -45,19 +56,24 @@ func Parse(source string) ([]*Block, error) {
 	}
 	blocks := make([]*Block, 0, len(body.Blocks))
 	for _, node := range body.Blocks {
-		block, err := readBlock(node)
+		block, err := readBlock(node, source, tolerant)
 		if err != nil {
 			return nil, err
 		}
 		blocks = append(blocks, block)
 	}
-	if len(body.Attributes) > 0 {
+	if len(body.Attributes) > 0 && !tolerant {
 		return nil, fmt.Errorf("HCL2: top-level attributes are not supported; use named blocks")
 	}
 	return blocks, nil
 }
 
-func readBlock(node *hclsyntax.Block) (*Block, error) {
+// opaqueHCLValue is non-executable and is never returned by Parse, only by
+// ParseForEdit. Keeping the expression's source preserves equality detection
+// without accidentally coercing an unsupported expression into a string.
+type opaqueHCLValue struct { Source string }
+
+func readBlock(node *hclsyntax.Block, source string, tolerant bool) (*Block, error) {
 	r := node.Range()
 	b := &Block{Type: node.Type, Labels: append([]string(nil), node.Labels...), Attrs: map[string]any{}, Start: r.Start.Byte, End: r.End.Byte, Line: r.Start.Line, AttrRanges: map[string]SourceRange{}, AttrFullRanges: map[string]SourceRange{}}
 	names := make([]string, 0, len(node.Body.Attributes))
@@ -67,22 +83,28 @@ func readBlock(node *hclsyntax.Block) (*Block, error) {
 	sort.Strings(names)
 	for _, name := range names {
 		a := node.Body.Attributes[name]
-		val, diags := a.Expr.Value(nil)
-		if diags.HasErrors() {
-			return nil, fmt.Errorf("%s[%s] attribute %s at %s: %s", b.Type, joinLabels(b.Labels), name, a.Expr.Range().String(), diags.Error())
-		}
-		result, err := ctyToGo(val)
-		if err != nil {
-			return nil, fmt.Errorf("%s[%s] attribute %s: %w", b.Type, joinLabels(b.Labels), name, err)
-		}
-		b.Attrs[name] = result
 		ar := a.Expr.Range()
 		b.AttrRanges[name] = SourceRange{Start: ar.Start.Byte, End: ar.End.Byte, Line: ar.Start.Line, Column: ar.Start.Column}
+        val, diags := a.Expr.Value(nil)
+        if diags.HasErrors() {
+            if !tolerant {
+                return nil, fmt.Errorf("%s[%s] attribute %s at %s: %s", b.Type, joinLabels(b.Labels), name, ar.String(), diags.Error())
+            }
+            b.Attrs[name] = opaqueHCLValue{Source: source[ar.Start.Byte:ar.End.Byte]}
+        } else {
+            result, err := ctyToGo(val)
+            if err != nil {
+                if !tolerant { return nil, fmt.Errorf("%s[%s] attribute %s: %w", b.Type, joinLabels(b.Labels), name, err) }
+                b.Attrs[name] = opaqueHCLValue{Source: source[ar.Start.Byte:ar.End.Byte]}
+            } else {
+                b.Attrs[name] = result
+            }
+        }
 		fr := a.Range()
 		b.AttrFullRanges[name] = SourceRange{Start: fr.Start.Byte, End: fr.End.Byte, Line: fr.Start.Line, Column: fr.Start.Column}
 	}
 	for _, child := range node.Body.Blocks {
-		parsed, err := readBlock(child)
+		parsed, err := readBlock(child, source, tolerant)
 		if err != nil {
 			return nil, err
 		}
