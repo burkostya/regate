@@ -44,3 +44,15 @@ credentials never become upstream authorization headers implicitly. Operators
 must configure the JWKS/introspection host in `REGATE_ALLOWED_HOSTS` and use
 trusted HTTPS endpoints outside local-only tests. Secret environment variable
 *names* can be stored in HCL, but secret *values* must stay outside it.
+
+## Delegation and data-boundary admission
+
+An authenticated Regate token cannot be used for another audience: RFC8693
+exchange must return a separately issuer-verified bearer for an explicitly
+configured `oauth_audience`. Missing/failed exchange denies before a
+write-effect journal entry. Every OAuth pipeline is conservatively Restricted
+until independently verified declassification is available; all external
+hooks, agents and MCP upstreams must be marked `trust_level="restricted"`
+or the complete pipeline fails before dispatch. Async delegated operations
+currently require a durable grant mechanism and are refused rather than
+persisting the incoming credential. See `docs/contracts/oauth.md`.
