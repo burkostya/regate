@@ -25,9 +25,12 @@ func jwtJSON(v any) string {
     return base64.RawURLEncoding.EncodeToString(data)
 }
 func signedTestJWT(t *testing.T,private *rsa.PrivateKey,issuer,audience,scopes string) string {
+    return signedTestJWTSubject(t,private,issuer,audience,scopes,"test-user")
+}
+func signedTestJWTSubject(t *testing.T,private *rsa.PrivateKey,issuer,audience,scopes,subject string) string {
     t.Helper()
     claims:=map[string]any{
-        "iss":issuer,"aud":audience,"sub":"test-user","exp":time.Now().Add(time.Hour).Unix(),"scope":scopes,
+        "iss":issuer,"aud":audience,"sub":subject,"exp":time.Now().Add(time.Hour).Unix(),"scope":scopes,
     }
     unsigned:=jwtJSON(map[string]any{"alg":"RS256","kid":"test-key"})+"."+jwtJSON(claims)
     h:=sha256.Sum256([]byte(unsigned))
@@ -212,14 +215,17 @@ func TestOAuthTaskCannotBypassToolScopeAndMasking(t *testing.T) {
     if !stored.RedactPII || len(stored.RequiredScopes)!=1 || stored.RequiredScopes[0]!="crm:read" {
         t.Fatalf("async task lost auth/redaction contract: %#v",stored)
     }
-    // A token with the same identity but a different signed JWT is not a
-    // sufficient task owner; secrets are bound to the specific client token.
-    other:=signedTestJWT(t,private,"https://issuer.test","https://regate.test/mcp/support","surface:read crm:read other:scope")
-    response:=latestCall(t,srv.URL+"/mcp/support",other,"tasks/get",24,map[string]any{"taskId":id})
+    // A refreshed credential issued for the same principal must retain task
+    // access. The owner remains subject-bound even after access token rotation.
+    refreshed:=signedTestJWT(t,private,"https://issuer.test","https://regate.test/mcp/support","surface:read crm:read extra:scope")
+    accessible:=decode(t,latestCall(t,srv.URL+"/mcp/support",refreshed,"tasks/get",24,map[string]any{"taskId":id}))
+    if accessible["error"]!=nil {t.Fatalf("renewed bearer lost task: %#v",accessible)}
+    different:=signedTestJWTSubject(t,private,"https://issuer.test","https://regate.test/mcp/support","surface:read crm:read","different-user")
+    response:=latestCall(t,srv.URL+"/mcp/support",different,"tasks/get",25,map[string]any{"taskId":id})
     defer response.Body.Close()
     data,_:=io.ReadAll(response.Body)
     if response.StatusCode<400 || !bytes.Contains(data,[]byte(`"error"`)) {
-        t.Fatalf("task available to distinct bearer: HTTP %d %s",response.StatusCode,data)
+        t.Fatalf("task available to distinct principal: HTTP %d %s",response.StatusCode,data)
     }
 }
 
