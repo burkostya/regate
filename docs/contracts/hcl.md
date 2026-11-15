@@ -1,74 +1,110 @@
-# Regate v0.1 configuration syntax (restricted HCL)
+# Regate HCL2 and CEL compilation contract
 
-## Scope and warning
+HCL is the sole executable source. UI coordinates/layout remain separate JSON.
+Regate uses `hashicorp/hcl/v2/hclsyntax` for parsing and `cty` for static
+configuration values. All executable HCL blocks have a closed schema: unknown
+attributes, child blocks and wrong types prevent activation. Native HCL2
+arithmetic, conditionals, maps, lists and for expressions can be used for
+**static** configuration values. Variable references and calls to arbitrary
+functions are intentionally not available in HCL configuration evaluation.
 
-The current parser (`internal/config/hcl.go`) accepts a **constrained HCL-like grammar**, not full HashiCorp HCL2. Supported: quoted block labels; attributes assigned strings, integers, floats, booleans, null, maps/lists; comments `#`, `//`, `/* */` (as implemented); child blocks. Unsupported: full HCL expressions, interpolation, `file()`, `for` comprehensions, dynamic blocks, modules, unquoted references. A malformed or unsupported expression is rejected rather than executed.
-
-The aim is to replace this adapter with `hashicorp/hcl/v2` + `cty` and a CEL or equivalent typed expression compiler after dependencies are available. Do **not** claim interchangeability with Terraform HCL or CEL today.
-
-### Top-level blocks
-
-- `regate { listen = "127.0.0.1:8080" }`
-- `upstream "name" { url = "https://example.org/mcp" auth_env = "TOKEN_ENV" timeout_ms = 10000 }`
-- `hook "name" { transport = "http|mcp|builtin" ... contract = "transform|decision|observe|action" on_error = "deny" }`
-- `policy "name" { decision_hook = "hookName" }`
-- `interceptor "name" { stage = "on_request|before_call|after_call|before_response|on_error" hook = "hookName" surface = "optional" tool = "optional" order = 100 }`
-- `pipeline "name" { entry = "first" timeout_ms = 60000 concurrency = 8 node "x" { ... } edge { from = "x" to = "y" } }`
-- `surface "name" { path = "/mcp/name" tool "public" { ... } resource "..." { ... } prompt "..." { ... } }`
-
-### Expressions (not CEL)
-
-In node attribute positions such as `value`, `arguments`, `mapping` and `test`, a **quoted string** is parsed as a safe Go-expression subset, e.g. `"input.customer_id"`, `"nodes.fetch.value"`, `"input.count > 3"`, `"lower(input.email)"`. Maps and lists evaluate their string leaves recursively; use `literal:hello` for a literal string. The expression engine has no file access, arbitrary call/exec, unbounded recursion or network support. It is not a general Go interpreter.
-
-Example:
+Node attributes `value`, `mapping`, `arguments` and `test` are different:
+strings in these positions are **CEL programs**, not HCL expressions. CEL
+expressions use dynamically typed `input` and `nodes` activation variables
+because remote MCP schemas may vary at runtime. Unknown variable names and
+statically invalid operations are rejected during configuration compilation.
+The `condition.test` expression must return a Boolean (or a dynamic value
+whose Boolean type is verified at runtime). Nested maps/lists compile their
+string leaves recursively. Prefix a string with `literal:` to opt out of CEL
+and return it as an ordinary string. Examples:
 
 ```hcl
-node "fetch" {
-  kind      = "mcp.call"
-  upstream  = "crm"
-  tool      = "get_customer"
-  effect    = "read"
-  arguments = { customer_id = "input.customer_id" }
-  mock      = { customer_id = "literal:C123" }
+pipeline "customer_summary" {
+  entry       = "fetch"
+  timeout_ms  = 2000 * 30
+  concurrency = 4
+
+  node "fetch" {
+    kind      = "mcp.call"
+    upstream  = "crm"
+    tool      = "get_customer"
+    effect    = "read"
+    arguments = {customer_id = "input.customer_id"}
+    mock      = {customer_id = "C123"}
+  }
+
+  node "finish" {
+    kind  = "output"
+    value = "nodes.fetch.value"
+  }
+
+  edge {
+    from = "fetch"
+    to   = "finish"
+  }
 }
 ```
 
-`effect = "read"` must be used only for genuinely read-only operations. `unknown`/omitted effects are journaled as possibly modifying an external resource.
+### Compilation before activation
 
-### Pipeline node kinds
+`Decode → HCL2 parse → cty value evaluation → closed schema validation →
+reference/graph validation → CEL compilation → deterministic typed IR`.
+The IR contains a topological node order, output port categories, source byte
+ranges, compiled CEL programs and validated static `nodes.NAME` dependencies.
+An expression referencing a missing node or a node that cannot precede it is
+rejected at activation. A dynamic map index, conditional path, or untrusted
+remote response can still fail at runtime; **this is not a proof of full
+JSON Schema compatibility**.
 
-| Kind | Important attributes | Behavior in prototype |
-|---|---|---|
-| `input` | — | Emits tool arguments |
-| `output` | `value` | Selects tool return value |
-| `transform` | `value` or `mapping` | Computes value |
-| `filter` | `value`, `fields` | Copies selected fields |
-| `validate` | `value`, `required` | Checks object and required fields only |
-| `condition` | `test` | Boolean; edges can use `when = "true"/"false"` |
-| `parallel` | `value` | Pass-through/control marker, not nested subpipeline |
-| `join` | `mode = "all|any|quorum"`, `quorum`, `value` | Waits for all/any/quorum predecessor states |
-| `mcp.call` | `upstream`, `tool`, `arguments`, `effect`, `mock` | Remote MCP call and effect journal |
-| `hook.call` | `hook`, `value` | HTTP/MCP/builtin processing |
-| `http.call` | `url`, `value`, `auth_env`, `timeout_ms` | HTTP transformer |
-| `policy.check` | `policy`, `value` | Explicit decision hook |
-| `mask.pii` | `value` | Simple regex/key-based masking, NOT strong de-identification |
-| `suspend` | — | Store checkpoint; await separate resume |
+CEL uses `cel.CostLimit(10000)` for each evaluation, with an 8192-byte
+expression source cap. No filesystem, network, subprocess or arbitrary Go
+function is exposed to CEL. The legacy expression helpers `lower`, `upper`,
+`contains`, `str` and `redact` are compatibility functions; new configs should
+prefer standard CEL methods where possible.
 
-### Surface tools
+### Supported blocks and node kinds
 
-Each `tool` specifies exactly one of:
+Top-level blocks: `regate`, `upstream`, `hook`, `policy`, `pipeline`,
+`surface`, `interceptor`. Within pipelines: `node` and `edge`. Within
+surfaces: `tool`, `resource` and `prompt`.
 
-- `source = "upstream.remote_tool"`: direct transparent MCP proxy (no pipeline transformation).
-- `pipeline = "named_pipeline"`: use the execution graph.
+Node kinds: `input`, `output`, `transform`, `filter`, `validate`, `condition`,
+`parallel`, `join`, `mcp.call`, `hook.call`, `http.call`, `policy.check`,
+`mask.pii`, `suspend`. All node attributes are validated by kind; unknown
+attributes fail closed. An `mcp.call` must declare its upstream, tool and
+optional effect. `read` must only be asserted for genuinely read-only calls.
+The default `unknown` effect is journaled as a potential write. Current hook
+failure handling is `deny` only (no fail-open policy).
 
-Use `input_schema` / `output_schema` as literal object maps. These schemas are published in `tools/list`; **full JSON Schema validation is not yet implemented**.
+A surface tool specifies exactly one of `source = "upstream.tool"` (direct
+proxy) or `pipeline = "named_pipeline"`. `input_schema` and `output_schema`
+are native HCL object values published with the tool. Full JSON Schema
+validation of remote content is a separate v1 requirement.
 
-### Revision workflow
+### Source-preserving edits and semantic diffs
 
-`GET /api/config` or admin MCP `regate_config_get` → `regate_draft_create` → `regate_draft_patch` or `regate_graph_patch` → `regate_validate` → `regate_diff` and `regate_impact_analyze` → `regate_test` → `regate_activate`.
+`regate_graph_patch` replaces one explicitly named pipeline block without
+changing any bytes outside it. `regate_attribute_patch` (and REST
+`POST /api/attribute-patch`) replaces **only an existing attribute expression**
+in a draft. The required `path` is a slash-separated sequence of block type
+and label, e.g. `pipeline/customer_summary/node/fetch`, plus `attribute` and
+`expression` (new HCL2 source). It refuses ambiguous paths, missing attributes,
+syntax errors and any change that makes the whole configuration invalid.
 
-`graph_patch` replaces exactly one top-level pipeline source span and preserves bytes outside it; it does not preserve every comment within the replaced pipeline. Do not mistake this for a fully lossless HCL AST editor.
+The source retains comments, whitespace and opaque content outside the edit.
+Replacing a whole block does not retain comments *inside that block*; new
+attributes also currently require replacing the containing block. These
+limits are deliberate, visible and still subject to full v1 acceptance.
 
-### Known limitations
+`regate_diff` and `regate_impact_analyze` provide structural summaries and
+`semantic_changes` with stable paths for added/removed/changed executable
+values. Whitespace, source spans and comments alone are not semantic changes.
 
-There is no complete type-checker across ports, no formal subpipeline-call primitive, incomplete expression operation coverage, no dynamic discovery of upstream schema changes at activation, and no source-map-preserving HCL2 formatter. These belong to the complete v1 acceptance contract.
+### Remaining limitations
+
+The compiled IR is typed at the known HCL and CEL expression boundary, not at
+all dynamic MCP port boundaries. Pending: full cross-port JSON Schema typing,
+verified remote contract resolution, explicit pure data dependency edges,
+source-preserving *insertion/removal* of nested blocks and attributes, and
+arbitrary opaque block editing in the visual editor. Dynamic CEL subscripts
+and paths through conditional branches need runtime validation.

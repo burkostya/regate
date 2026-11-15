@@ -1,18 +1,271 @@
-// Package expr evaluates a safe, finite expression subset used by Regate.
-// It is NOT CEL and should not be presented as a CEL implementation.
+// Package expr is the CEL expression boundary for Regate. Expressions are
+// compiled once at configuration activation and evaluated with a bounded CEL
+// cost budget; no arbitrary Go code, reflection calls or network functions
+// are exposed to users.
 package expr
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"reflect"
 	"regexp"
-	"strconv"
 	"strings"
+
+	"cel.dev/cel-go/cel"
+	"cel.dev/cel-go/common/types"
+	"cel.dev/cel-go/common/types/ref"
+	"cel.dev/cel-go/common/types/traits"
 )
+
+const MaxCost uint64 = 10000
+const MaxExpressionLength = 8192
+
+type Compiled struct {
+	Source     string
+	OutputType *cel.Type
+	program    cel.Program
+	isLiteral  bool
+	literal    any
+}
+
+// Compile performs CEL parse, name resolution and type checking. The dynamic
+// input/nodes values retain their runtime JSON shapes, but statically known
+// type violations are rejected (e.g. 1 + true or a non-Boolean condition).
+func Compile(source string, expected *cel.Type) (*Compiled, error) {
+	if strings.HasPrefix(source, "literal:") {
+		if expected != nil && expected != cel.DynType && expected != cel.StringType {
+			return nil, fmt.Errorf("literal string cannot satisfy %s", expected)
+		}
+		return &Compiled{Source: source, OutputType: cel.StringType, isLiteral: true, literal: strings.TrimPrefix(source, "literal:")}, nil
+	}
+	if len(source) > MaxExpressionLength {
+		return nil, fmt.Errorf("CEL expression exceeds %d bytes", MaxExpressionLength)
+	}
+	env, err := makeEnv()
+	if err != nil {
+		return nil, err
+	}
+	ast, issues := env.Compile(source)
+	if issues != nil && issues.Err() != nil {
+		return nil, fmt.Errorf("CEL %q: %w", source, issues.Err())
+	}
+	got := ast.OutputType()
+	if expected != nil && expected != cel.DynType && !got.IsEquivalentType(cel.DynType) && !got.IsEquivalentType(expected) {
+		return nil, fmt.Errorf("CEL %q evaluates to %s, expected %s", source, got, expected)
+	}
+	program, err := env.Program(ast, cel.CostLimit(MaxCost))
+	if err != nil {
+		return nil, fmt.Errorf("CEL program %q: %w", source, err)
+	}
+	return &Compiled{Source: source, OutputType: got, program: program}, nil
+}
+
+func makeEnv() (*cel.Env, error) {
+	strUnary := func(f func(string) string) func(ref.Val) ref.Val {
+		return func(v ref.Val) ref.Val {
+			s, ok := v.(types.String)
+			if !ok {
+				return types.NewErr("string expected")
+			}
+			return types.String(f(string(s)))
+		}
+	}
+	return cel.NewEnv(
+		cel.Variable("input", cel.DynType),
+		cel.Variable("nodes", cel.DynType),
+		// Compatibility for the pre-CEL prototype. New configurations should
+		// prefer CEL receiver methods such as "alice".contains("lic").
+		cel.Function("lower", cel.Overload("regate_lower_string", []*cel.Type{cel.StringType}, cel.StringType, cel.UnaryBinding(strUnary(strings.ToLower)))),
+		cel.Function("upper", cel.Overload("regate_upper_string", []*cel.Type{cel.StringType}, cel.StringType, cel.UnaryBinding(strUnary(strings.ToUpper)))),
+		cel.Function("contains", cel.Overload("regate_contains_string", []*cel.Type{cel.StringType, cel.StringType}, cel.BoolType, cel.BinaryBinding(func(a, b ref.Val) ref.Val {
+			return types.Bool(strings.Contains(string(a.(types.String)), string(b.(types.String))))
+		}))),
+		cel.Function("str", cel.Overload("regate_str_dyn", []*cel.Type{cel.DynType}, cel.StringType, cel.UnaryBinding(func(v ref.Val) ref.Val { return types.String(fmt.Sprint(v.Value())) }))),
+		cel.Function("redact", cel.Overload("regate_redact_dyn", []*cel.Type{cel.DynType}, cel.DynType, cel.UnaryBinding(func(v ref.Val) ref.Val {
+			native, err := nativeValue(v)
+			if err != nil {
+				return types.NewErr("redaction input: %v", err)
+			}
+			return types.DefaultTypeAdapter.NativeToValue(MaskPII(native))
+		}))),
+	)
+}
+func (c *Compiled) Eval(ctx context.Context, vars map[string]any) (any, error) {
+	if c.isLiteral {
+		return c.literal, nil
+	}
+	if vars == nil {
+		vars = map[string]any{}
+	}
+	// CEL's CostLimit is enforced while running, not merely estimated at
+	// compile time. ContextEval also supports caller cancellation.
+	value, _, err := c.program.ContextEval(ctx, vars)
+	if err != nil {
+		return nil, fmt.Errorf("CEL %q: %w", c.Source, err)
+	}
+	out, err := nativeValue(value)
+	if err != nil {
+		return nil, fmt.Errorf("CEL %q: %w", c.Source, err)
+	}
+	return out, nil
+}
+func Eval(source string, vars map[string]any) (any, error) {
+	c, err := Compile(source, nil)
+	if err != nil {
+		return nil, err
+	}
+	return c.Eval(context.Background(), vars)
+}
+
+// Value is a recursively compiled expression tree for mapping/list literals.
+// String leaves are CEL expressions; other primitive values are literals.
+type Value struct {
+	Expr    *Compiled
+	Fields  map[string]*Value
+	Items   []*Value
+	Literal any
+	Kind    string
+}
+
+func CompileValue(v any, expected *cel.Type) (*Value, error) {
+	switch x := v.(type) {
+	case string:
+		e, err := Compile(x, expected)
+		if err != nil {
+			return nil, err
+		}
+		return &Value{Expr: e, Kind: "expr"}, nil
+	case map[string]any:
+		if expected != nil && expected != cel.DynType && expected != cel.MapType(cel.StringType, cel.DynType) {
+			return nil, fmt.Errorf("object is incompatible with expected %s", expected)
+		}
+		out := &Value{Kind: "map", Fields: map[string]*Value{}}
+		for key, item := range x {
+			compiled, err := CompileValue(item, nil)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", key, err)
+			}
+			out.Fields[key] = compiled
+		}
+		return out, nil
+	case []any:
+		out := &Value{Kind: "list", Items: make([]*Value, len(x))}
+		for i, item := range x {
+			compiled, err := CompileValue(item, nil)
+			if err != nil {
+				return nil, fmt.Errorf("item %d: %w", i, err)
+			}
+			out.Items[i] = compiled
+		}
+		return out, nil
+	default:
+		if expected == cel.BoolType {
+			if _, ok := v.(bool); !ok {
+				return nil, fmt.Errorf("expected bool, received %T", v)
+			}
+		}
+		return &Value{Kind: "literal", Literal: v}, nil
+	}
+}
+func (v *Value) Eval(ctx context.Context, vars map[string]any) (any, error) {
+	if v == nil {
+		return nil, nil
+	}
+	switch v.Kind {
+	case "expr":
+		return v.Expr.Eval(ctx, vars)
+	case "map":
+		result := map[string]any{}
+		for k, item := range v.Fields {
+			val, err := item.Eval(ctx, vars)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", k, err)
+			}
+			result[k] = val
+		}
+		return result, nil
+	case "list":
+		result := make([]any, len(v.Items))
+		for i, item := range v.Items {
+			val, err := item.Eval(ctx, vars)
+			if err != nil {
+				return nil, fmt.Errorf("item %d: %w", i, err)
+			}
+			result[i] = val
+		}
+		return result, nil
+	default:
+		return v.Literal, nil
+	}
+}
+func EvalValue(v any, vars map[string]any) (any, error) {
+	p, err := CompileValue(v, nil)
+	if err != nil {
+		return nil, err
+	}
+	return p.Eval(context.Background(), vars)
+}
+
+func nativeValue(v ref.Val) (any, error) {
+	if v == nil {
+		return nil, fmt.Errorf("nil CEL result")
+	}
+	switch x := v.(type) {
+	case types.String:
+		return string(x), nil
+	case types.Bool:
+		return bool(x), nil
+	case types.Int:
+		return int64(x), nil
+	case types.Uint:
+		return uint64(x), nil
+	case types.Double:
+		return float64(x), nil
+	case types.Bytes:
+		return []byte(x), nil
+	case types.Null:
+		return nil, nil
+	}
+	if m, ok := v.(traits.Mapper); ok {
+		result := map[string]any{}
+		it := m.Iterator()
+		for it.HasNext() == types.True {
+			key := it.Next()
+			s, ok := key.(types.String)
+			if !ok {
+				return nil, fmt.Errorf("non-string CEL map key %T", key)
+			}
+			item, found := m.Find(key)
+			if !found {
+				return nil, fmt.Errorf("missing CEL map element")
+			}
+			val, err := nativeValue(item)
+			if err != nil {
+				return nil, err
+			}
+			result[string(s)] = val
+		}
+		return result, nil
+	}
+	if list, ok := v.(traits.Lister); ok {
+		sz, ok := list.Size().(types.Int)
+		if !ok {
+			return nil, fmt.Errorf("invalid CEL list size")
+		}
+		if sz > 1_000_000 {
+			return nil, fmt.Errorf("CEL list exceeds one million entries")
+		}
+		result := make([]any, int(sz))
+		for i := range result {
+			val, err := nativeValue(list.Get(types.Int(i)))
+			if err != nil {
+				return nil, err
+			}
+			result[i] = val
+		}
+		return result, nil
+	}
+	return v.Value(), nil
+}
 
 var email = regexp.MustCompile(`(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b`)
 
@@ -23,7 +276,8 @@ func MaskPII(v any) any {
 	case map[string]any:
 		y := map[string]any{}
 		for k, val := range x {
-			if strings.Contains(strings.ToLower(k), "email") || strings.Contains(strings.ToLower(k), "phone") || strings.Contains(strings.ToLower(k), "ssn") {
+			key := strings.ToLower(k)
+			if strings.Contains(key, "email") || strings.Contains(key, "phone") || strings.Contains(key, "ssn") {
 				y[k] = "[REDACTED]"
 			} else {
 				y[k] = MaskPII(val)
@@ -32,297 +286,11 @@ func MaskPII(v any) any {
 		return y
 	case []any:
 		y := make([]any, len(x))
-		for i, vv := range x {
-			y[i] = MaskPII(vv)
+		for i, item := range x {
+			y[i] = MaskPII(item)
 		}
 		return y
 	default:
 		return v
 	}
-}
-func Eval(s string, vars map[string]any) (any, error) {
-	if strings.HasPrefix(s, "literal:") {
-		return strings.TrimPrefix(s, "literal:"), nil
-	}
-	tree, e := parser.ParseExpr(s)
-	if e != nil {
-		return nil, fmt.Errorf("expression %q: %w", s, e)
-	}
-	return eval(tree, vars, 0)
-}
-func EvalValue(x any, vars map[string]any) (any, error) {
-	switch v := x.(type) {
-	case string:
-		return Eval(v, vars)
-	case map[string]any:
-		m := map[string]any{}
-		for k, item := range v {
-			res, e := EvalValue(item, vars)
-			if e != nil {
-				return nil, fmt.Errorf("%s: %w", k, e)
-			}
-			m[k] = res
-		}
-		return m, nil
-	case []any:
-		a := make([]any, len(v))
-		for i, item := range v {
-			res, e := EvalValue(item, vars)
-			if e != nil {
-				return nil, e
-			}
-			a[i] = res
-		}
-		return a, nil
-	default:
-		return x, nil
-	}
-}
-func lookup(obj any, key string) (any, error) {
-	m, ok := obj.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("cannot select %q on %T", key, obj)
-	}
-	val, exists := m[key]
-	if !exists {
-		return nil, fmt.Errorf("missing key %q", key)
-	}
-	return val, nil
-}
-func eval(ex ast.Expr, vars map[string]any, depth int) (any, error) {
-	if depth > 48 {
-		return nil, fmt.Errorf("expression depth exceeded")
-	}
-	next := func(e ast.Expr) (any, error) { return eval(e, vars, depth+1) }
-	switch e := ex.(type) {
-	case *ast.ParenExpr:
-		return next(e.X)
-	case *ast.Ident:
-		if e.Name == "true" {
-			return true, nil
-		}
-		if e.Name == "false" {
-			return false, nil
-		}
-		if e.Name == "nil" {
-			return nil, nil
-		}
-		x, ok := vars[e.Name]
-		if !ok {
-			return nil, fmt.Errorf("unknown variable %s", e.Name)
-		}
-		return x, nil
-	case *ast.SelectorExpr:
-		x, er := next(e.X)
-		if er != nil {
-			return nil, er
-		}
-		return lookup(x, e.Sel.Name)
-	case *ast.IndexExpr:
-		x, er := next(e.X)
-		if er != nil {
-			return nil, er
-		}
-		k, er := next(e.Index)
-		if er != nil {
-			return nil, er
-		}
-		switch obj := x.(type) {
-		case map[string]any:
-			return lookup(obj, fmt.Sprint(k))
-		case []any:
-			i, ok := toFloat(k)
-			if !ok || i < 0 || int(i) >= len(obj) {
-				return nil, fmt.Errorf("index out of range")
-			}
-			return obj[int(i)], nil
-		}
-		return nil, fmt.Errorf("cannot index %T", x)
-	case *ast.BasicLit:
-		switch e.Kind {
-		case token.STRING:
-			return strconv.Unquote(e.Value)
-		case token.INT:
-			return strconv.ParseInt(e.Value, 10, 64)
-		case token.FLOAT:
-			return strconv.ParseFloat(e.Value, 64)
-		}
-	case *ast.UnaryExpr:
-		v, er := next(e.X)
-		if er != nil {
-			return nil, er
-		}
-		switch e.Op {
-		case token.NOT:
-			b, ok := v.(bool)
-			if !ok {
-				return nil, fmt.Errorf("not expects bool")
-			}
-			return !b, nil
-		case token.SUB:
-			f, ok := toFloat(v)
-			if !ok {
-				return nil, fmt.Errorf("minus expects number")
-			}
-			return -f, nil
-		}
-	case *ast.BinaryExpr:
-		a, er := next(e.X)
-		if er != nil {
-			return nil, er
-		}
-		if e.Op == token.LAND {
-			b, ok := a.(bool)
-			if !ok {
-				return nil, fmt.Errorf("&& expects bool")
-			}
-			if !b {
-				return false, nil
-			}
-		}
-		if e.Op == token.LOR {
-			b, ok := a.(bool)
-			if !ok {
-				return nil, fmt.Errorf("|| expects bool")
-			}
-			if b {
-				return true, nil
-			}
-		}
-		b, er := next(e.Y)
-		if er != nil {
-			return nil, er
-		}
-		switch e.Op {
-		case token.EQL:
-			return reflect.DeepEqual(a, b), nil
-		case token.NEQ:
-			return !reflect.DeepEqual(a, b), nil
-		case token.LAND, token.LOR:
-			vb, ok := b.(bool)
-			if !ok {
-				return nil, fmt.Errorf("logical op expects bool")
-			}
-			return vb, nil
-		case token.ADD:
-			if s, ok := a.(string); ok {
-				return s + fmt.Sprint(b), nil
-			}
-		}
-		af, ok1 := toFloat(a)
-		bf, ok2 := toFloat(b)
-		if !ok1 || !ok2 {
-			return nil, fmt.Errorf("incompatible operator operands %T %T", a, b)
-		}
-		switch e.Op {
-		case token.ADD:
-			return af + bf, nil
-		case token.SUB:
-			return af - bf, nil
-		case token.MUL:
-			return af * bf, nil
-		case token.QUO:
-			if bf == 0 {
-				return nil, fmt.Errorf("divide by zero")
-			}
-			return af / bf, nil
-		case token.GTR:
-			return af > bf, nil
-		case token.GEQ:
-			return af >= bf, nil
-		case token.LSS:
-			return af < bf, nil
-		case token.LEQ:
-			return af <= bf, nil
-		}
-	case *ast.CallExpr:
-		id, ok := e.Fun.(*ast.Ident)
-		if !ok {
-			return nil, fmt.Errorf("only builtin calls allowed")
-		}
-		if len(e.Args) > 10 {
-			return nil, fmt.Errorf("too many arguments")
-		}
-		args := make([]any, len(e.Args))
-		for i, arg := range e.Args {
-			v, er := next(arg)
-			if er != nil {
-				return nil, er
-			}
-			args[i] = v
-		}
-		switch id.Name {
-		case "size":
-			if len(args) != 1 {
-				return nil, fmt.Errorf("size requires one arg")
-			}
-			switch v := args[0].(type) {
-			case string:
-				return int64(len(v)), nil
-			case []any:
-				return int64(len(v)), nil
-			case map[string]any:
-				return int64(len(v)), nil
-			}
-		case "lower", "upper":
-			if len(args) != 1 {
-				return nil, fmt.Errorf("one arg expected")
-			}
-			s, ok := args[0].(string)
-			if !ok {
-				return nil, fmt.Errorf("string expected")
-			}
-			if id.Name == "lower" {
-				return strings.ToLower(s), nil
-			}
-			return strings.ToUpper(s), nil
-		case "contains":
-			if len(args) != 2 {
-				return nil, fmt.Errorf("contains requires two args")
-			}
-			return strings.Contains(fmt.Sprint(args[0]), fmt.Sprint(args[1])), nil
-		case "coalesce":
-			for _, arg := range args {
-				if arg != nil && arg != "" {
-					return arg, nil
-				}
-			}
-			return nil, nil
-		case "redact":
-			if len(args) != 1 {
-				return nil, fmt.Errorf("redact requires one arg")
-			}
-			return MaskPII(args[0]), nil
-		case "str":
-			if len(args) != 1 {
-				return nil, fmt.Errorf("str requires one arg")
-			}
-			return fmt.Sprint(args[0]), nil
-		case "json":
-			if len(args) != 1 {
-				return nil, fmt.Errorf("json requires one arg")
-			}
-			var val any
-			if err := json.Unmarshal([]byte(fmt.Sprint(args[0])), &val); err != nil {
-				return nil, err
-			}
-			return val, nil
-		}
-		return nil, fmt.Errorf("unknown function %s", id.Name)
-	}
-	return nil, fmt.Errorf("expression operator %T unsupported", ex)
-}
-func toFloat(v any) (float64, bool) {
-	switch x := v.(type) {
-	case int:
-		return float64(x), true
-	case int64:
-		return float64(x), true
-	case float64:
-		return x, true
-	case json.Number:
-		f, e := x.Float64()
-		return f, e == nil
-	}
-	return 0, false
 }

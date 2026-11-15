@@ -2,7 +2,7 @@
 
 **Target scope (user-approved):** full first release includes HTTP-only MCP client/server, editable virtual tools/resources/prompts, HCL2 declarative config, typed transformations/CEL, DAG branches and compositions, HTTP/MCP hooks including agents/PII/Decision API, policies, revisioned management MCP and skills, SvelteKit+Svelte Flow visual editor, async tasks, diagnostics, security and tests. **Do not silently split or drop these features.**
 
-**Current deliverable:** a self-contained dependency-free **Go engineering prototype** plus frontend **source**, NOT complete v1. This distinction is important when planning installation or deployment.
+**Current deliverable:** a Go engineering prototype with an HCL2/CEL typed-IR migration under development, plus SvelteKit frontend source. NOT complete v1. This distinction is important when planning installation or deployment.
 
 ## Implemented and locally verified
 
@@ -13,7 +13,7 @@
 | Public tools with direct source and DAG pipeline | Implemented subset | `TestEndToEndMCP`, `TestMCPDirectProxyPreservesContent` |
 | HTTP Decision API / PII transform / MCP agent hook | Implemented subset | `TestEndToEndMCP`, deny test |
 | `on_request`, `before_call`, `after_call`, `before_response`, `on_error` hooks | Partial implementation | Go code and integration paths |
-| HCL parsing/validation and safe expressions | Restricted implementation | config + expr unit tests |
+| HCL2 parsing/cty, CEL, closed block schemas and typed IR | Migration in PR for issue #3; CI confirmation required | `internal/config`, `internal/expr` and negative/source-preservation tests |
 | DAG conditional edges/parallel waves/join | Basic implementation | Code path; incomplete formal/race coverage |
 | Prompt/resource publishing and proxy resource read | Partial implementation | Server method path |
 | Management MCP and REST endpoints | Implemented subset | Auth + draft/activate/conflict/rollback tests |
@@ -29,7 +29,7 @@
 
 ## Unfinished functionality required for full v1
 
-1. Replace restricted parser and evaluator with HCL2, `cty` and CEL, including interpolation support and complete port contract typing.
+1. Complete HCL2/CEL/typed-IR migration (#3): validate on GitHub Actions; add full cross-port JSON Schema typing, runtime contract refinement and more flexible opaque/source-safe semantic patch operations.
 2. Replace hand-written MCP wire subset with official `modelcontextprotocol/go-sdk`; cover protocol conformance, OAuth, all supported transports/versions within HTTP, task/skill extensions and subscription semantics.
 3. Full JSON Schema input/output validation, compatibility checks and source-map/opaque-safe bidirectional editing of arbitrary HCL2 fragments.
 4. Full composition semantics (`pipeline.call`, map, controlled retries, named ports, safe joins with effects), robust task and MRTR resume, and property-based execution tests.

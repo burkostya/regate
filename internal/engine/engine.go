@@ -327,7 +327,7 @@ func (r *Runtime) execute(ctx context.Context, revision string, cfg *config.Conf
 					return
 				}
 				vars := map[string]any{"input": input, "nodes": snap}
-				results[i] = r.evalNode(ctx, cfg, p.Nodes[name], vars, dry, runID, surface, toolName)
+				results[i] = r.evalNode(ctx, cfg, p.Nodes[name], cfg.Plans[p.Name].Nodes[name], vars, dry, runID, surface, toolName)
 			}(index, name)
 		}
 		wg.Wait()
@@ -373,15 +373,15 @@ func structured(v map[string]any) any {
 	}
 	return v["structuredContent"]
 }
-func resolve(v any, vars map[string]any) (any, error) {
-	if v == nil {
-		return nil, nil
-	}
-	return expr.EvalValue(v, vars)
-}
-func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Node, vars map[string]any, dry bool, runID, surface, toolName string) nodeResult {
+func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Node, plan *config.NodeIR, vars map[string]any, dry bool, runID, surface, toolName string) nodeResult {
 	ret := nodeResult{name: n.Name}
-	get := func(key string) (any, error) { return resolve(n.Attrs[key], vars) }
+	get := func(key string) (any, error) {
+		compiled, ok := plan.Expressions[key]
+		if !ok {
+			return nil, fmt.Errorf("node %s: expression %s not compiled", n.Name, key)
+		}
+		return compiled.Eval(ctx, vars)
+	}
 	switch n.Kind {
 	case "input":
 		ret.value = vars["input"]
