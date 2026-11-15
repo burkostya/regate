@@ -1,0 +1,7 @@
+.git
+.state
+web/node_modules
+web/.svelte-kit
+web/build
+*.log
+*.zip

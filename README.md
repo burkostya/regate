@@ -1,5 +1,146 @@
 # Regate
 
-HTTP-only MCP gateway with configurable virtual tools, hooks, and pipelines.
+**Regate** is an experimental, HTTP-only **MCP gateway and virtual-tool composition engine** written in Go, with a declarative HCL-like configuration, programmable HTTP/MCP hooks, a management MCP endpoint and a SvelteKit + Svelte Flow console.
 
-**Status:** initial repository setup; engineering prototype import follows. This is not yet production-ready.
+> **Release status: engineering prototype (v0.1), not production-ready and not the complete agreed v1.** The working Go prototype deliberately uses a **restricted HCL-like parser**, a **small safe expression language (not CEL)**, a **hand-written subset of MCP over HTTP (not the official Go SDK)**, and a file-backed store (not SQLite). The Svelte application is authored but has **not been dependency-installed or compiled in the offline build environment**. See [Implemented and missing](docs/release-status.md) before any deployment.
+
+## What you can experiment with now
+
+- Connect HTTP MCP upstream servers; expose renamed/curated tools through independent `surface` endpoints.
+- Expose tools from a DAG of transformations, policy decision hooks, PII masking, HTTP calls and other MCP tools.
+- Discover upstream tools, proxy existing MCP tool results, publish local resources and prompts.
+- Inspect, draft, validate, diff, activate and roll back configuration through a **separate authenticated management MCP** and matching REST API.
+- Use stateless MCP `2026-07-28` discovery/tools/tasks/skills requests and local `subscriptions/listen` change notifications; legacy `initialize` has basic compatibility.
+- Run dry-run scenarios with mocks, inspect traces and file-backed effect journal; use durable task IDs and suspended-run checkpoints.
+- View/edit a graph and its HCL from a SvelteKit/Svelte Flow console (requires external npm dependencies).
+
+## Requirements
+
+Backend: Go **1.23+**, no external Go dependencies for the prototype. Frontend: Node 22+, npm and connectivity to npm for its dependencies. Real MCP adapters require compliant upstream servers; the demo includes local fixtures.
+
+## Run a complete local demonstration
+
+Terminal A, from repository root:
+
+```sh
+go run ./cmd/regate-demo
+```
+
+Terminal B:
+
+```sh
+export REGATE_ADMIN_TOKEN='replace-this-with-a-long-secret'
+go run ./cmd/regate -config ./examples/regate.hcl -state ./.state
+```
+
+Try the virtual tool with the legacy-compatible JSON-RPC form (from the same machine):
+
+```sh
+curl -sS http://127.0.0.1:8080/mcp/support \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"summarize_customer","arguments":{"customer_id":"C123"}}}'
+```
+
+Expected result: a summary from the demo agent containing masked PII, e.g. `Contact [REDACTED]`. Try `customer_id="DENY-1"` to exercise the policy denial. This is only a demonstration: `get_customer_direct` intentionally bypasses the masking pipeline to show transparent tool proxying, so do not expose the demo surface to other users.
+
+Use the protected management endpoint:
+
+```sh
+curl -sS http://127.0.0.1:8080/mcp/admin \
+  -H "Authorization: Bearer $REGATE_ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"regate_status","arguments":{}}}'
+```
+
+Admin resources include `skill://regate-config/SKILL.md` and `skill://regate-authoring/SKILL.md`. The gateway reads these files from the directory named by `REGATE_SKILLS_DIR` (default `./skills` from repository root).
+
+### MCP revision 2026-07-28
+
+For the latest stateless request shape, set HTTP header `Mcp-Protocol-Version: 2026-07-28` and include:
+
+```json
+"_meta": {
+  "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+  "io.modelcontextprotocol/clientCapabilities": {}
+}
+```
+
+inside every `params` object except `server/discover`. The local prototype does **not** guarantee compliance with the entire protocol revision; the official SDK is the intended final implementation.
+
+## Open the visual console
+
+From the repository root, while Regate is running:
+
+```sh
+cd web
+npm install
+npm run dev
+```
+
+Open `http://127.0.0.1:5173`, enter `REGATE_ADMIN_TOKEN`. The Vite development proxy sends `/api/*` to `http://127.0.0.1:8080`; override with `REGATE_PROXY` if Regate runs at another address. The token lives only in memory in the page in this prototype.
+
+> **Frontend build unverified:** package registries were unreachable in the execution environment in which this project was generated. `npm install`, `npm run check` and `npm run build` are required when connectivity is available. Do not assume the frontend is working without these checks.
+
+## Optional container image (for controlled local experiments)
+
+```sh
+podman build -t regate:prototype .
+podman run --rm --network host -e REGATE_ADMIN_TOKEN='replace-this' \
+  -e REGATE_PUBLIC_TOKEN='replace-this-public-token' \
+  -v "$PWD/.state-container:/data:Z" regate:prototype
+```
+
+**Important:** the shipped sample upstream URL is `127.0.0.1:9091`, so it works with host networking on Linux, not a default bridged container network. Adapt upstream URLs and configure HTTPS/TLS/authorization before any remotely accessible deployment. The container starts listening on all interfaces and requires `REGATE_PUBLIC_TOKEN`. The local demo is not a deployment template.
+
+## Quality checks
+
+```sh
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/regate ./cmd/regate-demo
+```
+
+The Go tests cover parser and expression safety, HTTP MCP end-to-end flow, decision denial, data redaction, management authentication/revisions/conflicts, original-content proxying, subscriptions, tasks and skills. They do not replace official MCP conformance tests, threat modeling, load tests or deployment testing.
+
+## Configuration contract
+
+See [HCL subset contract](docs/contracts/hcl.md) and [architecture](docs/architecture/overview.md). Example: [examples/regate.hcl](examples/regate.hcl).
+
+Configuration has two representations:
+
+1. **Source**: HCL-like text, saved as immutable revisions and editable drafts. Initial `-config` file bootstraps a *new* state directory; later restarts use persisted active revision.
+2. **Layout**: separate JSON node coordinates for Svelte Flow. It never participates in execution.
+
+The Go runtime evaluates DAGs. A node can return a JSON value or an MCP result payload. Interceptors are scoped by surface/tool and configured in HCL. Explicit `on_request`, `before_call`, `after_call`, `before_response`, `on_error` stages are supported for selected runtime paths. `on_error` is observational and cannot override a denial.
+
+## Security warnings
+
+**Do not expose this prototype to the public internet or use real PII/secrets.** In particular: OAuth, trustworthy principal propagation, full data-label tracking and declassification, verified upstream effects/reconciliation, hardened SSRF/DNS rebinding defenses, resource budget limits, complete JSON Schema enforcement and a security-reviewed MCP transport are **not implemented**. The built-in email redactor is a demo utility, **not** a sufficient PII scrubber. The `get_customer_direct` demo tool intentionally exposes raw data.
+
+Required bootstrap controls:
+
+- `REGATE_ADMIN_TOKEN` — mandatory for the CLI and for management tools.
+- `REGATE_PUBLIC_TOKEN` — mandatory if listening on a non-loopback interface.
+- `REGATE_ALLOWED_HOSTS` — comma-separated allowlist for outbound HTTPS hosts; localhost is permitted for demos. Network redirects are disabled.
+- `REGATE_SKILLS_DIR` — absolute path to skill files in deployed installations.
+- `auth_env` in HCL — *name of an environment variable*, not a bearer token value.
+
+See [security notes](docs/security.md) and [release status](docs/release-status.md).
+
+## Project layout
+
+- `cmd/regate` — gateway CLI; `cmd/regate-demo` — local sample upstream and HTTP hooks.
+- `internal/config` — restricted parser, AST, config validation, source patching.
+- `internal/expr` — bounded evaluator, demo masking function.
+- `internal/engine` — DAG execution, MCP/HTTP actions and effect journal calls.
+- `internal/mcp` — experimental HTTP MCP client.
+- `internal/server` — MCP endpoints, management REST, subscriptions, tasks, skills.
+- `internal/storage` — durable file-backed revisions/drafts/journal/tasks/checkpoints.
+- `web` — SvelteKit/Svelte Flow console source.
+- `skills` — agent operational instructions, also published by management MCP.
+- `docs` — architectural contracts, decision records, formal sketch and remaining work.
+
+## License
+
+No license has been selected yet. The source is provided for review and development; select a license before public redistribution.
