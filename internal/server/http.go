@@ -23,6 +23,7 @@ import (
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { reply(w, 200, map[string]any{"ok": true}) })
+    mux.HandleFunc("/.well-known/oauth-protected-resource/",s.oauthResourceMetadata)
 	mux.Handle("/api/", s.requireAdmin(http.HandlerFunc(s.api)))
 	mux.Handle("/mcp/admin", s.requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.inbound.handle(s, w, r, "", true) })))
 	mux.HandleFunc("/mcp/", func(w http.ResponseWriter, r *http.Request) {
