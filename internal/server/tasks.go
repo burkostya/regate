@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/burkostya/regate/internal/engine"
+    "github.com/burkostya/regate/internal/expr"
 	"github.com/burkostya/regate/internal/storage"
 )
 
@@ -23,7 +24,7 @@ func allowedOwner(task storage.TaskRecord, owner string) bool {
 }
 func outcomeResult(out engine.Outcome, err error) map[string]any {
 	if err != nil {
-		return map[string]any{"content": []any{map[string]any{"type": "text", "text": err.Error()}}, "isError": true, "resultType": "complete"}
+		return map[string]any{"content": []any{map[string]any{"type": "text", "text": expr.RedactDiagnostic(err.Error())}}, "isError": true, "resultType": "complete"}
 	}
 	if out.MCP != nil {
 		out.MCP["resultType"] = "complete"
