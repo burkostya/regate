@@ -371,10 +371,12 @@ func TestTaskExecutionAndOwnership(t *testing.T) {
 	id := result["taskId"].(string)
 	// Task ownership is enforced even when the network request itself is made
 	// from an allowed loopback address.
-	ownerMismatch := decode(t, latestCall(t, server.URL+"/mcp/support", "other", "tasks/get", 18, map[string]any{"taskId": id}))
-	if ownerMismatch["error"] == nil {
-		t.Fatal("task visible to other bearer")
-	}
+	ownerMismatch := latestCall(t, server.URL+"/mcp/support", "other", "tasks/get", 18, map[string]any{"taskId": id})
+    defer ownerMismatch.Body.Close()
+    ownerError,_:=io.ReadAll(ownerMismatch.Body)
+    if ownerMismatch.StatusCode < 400 || !bytes.Contains(ownerError, []byte(`"error"`)) {
+        t.Fatalf("task visible to other bearer: HTTP %d %s",ownerMismatch.StatusCode,ownerError)
+    }
 	deadline := time.After(2 * time.Second)
 	for {
 		r := decode(t, latestCall(t, server.URL+"/mcp/support", "", "tasks/get", 19, map[string]any{"taskId": id}))
