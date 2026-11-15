@@ -86,9 +86,21 @@ func (v *Verifier) Verify(ctx context.Context, token string) (Principal,error) {
 func decodeJSONObject(blob []byte) (map[string]any,error) {
     d:=json.NewDecoder(bytes.NewReader(blob))
     d.UseNumber()
-    var obj map[string]any
-    if err:=d.Decode(&obj);err!=nil {return nil,err}
-    if obj==nil {return nil,errors.New("JSON object required")}
+    opening,err:=d.Token()
+    if err!=nil || opening!=json.Delim('{') {return nil,errors.New("JSON object required")}
+    obj:=map[string]any{}
+    for d.More() {
+        token,err:=d.Token()
+        if err!=nil {return nil,err}
+        name,ok:=token.(string)
+        if !ok {return nil,errors.New("invalid JSON key")}
+        if _,duplicate:=obj[name];duplicate {return nil,errors.New("duplicate JSON claim")}
+        var value any
+        if err:=d.Decode(&value);err!=nil{return nil,err}
+        obj[name]=value
+    }
+    closing,err:=d.Token()
+    if err!=nil || closing!=json.Delim('}') {return nil,errors.New("JSON object missing close")}
     var excess any
     if err:=d.Decode(&excess);err!=io.EOF {return nil,errors.New("unexpected trailing JSON")}
     return obj,nil
@@ -159,7 +171,7 @@ func (v *Verifier) verifyJWT(ctx context.Context,token string)(Principal,error) 
     switch pub:=value.public.(type) {
     case *rsa.PublicKey:
         if algorithm=="RS256" {verified=rsa.VerifyPKCS1v15(pub,crypto.SHA256,hash[:],signature)==nil}
-        if algorithm=="PS256" {verified=rsa.VerifyPSS(pub,crypto.SHA256,hash[:],signature,nil)==nil}
+        if algorithm=="PS256" {verified=rsa.VerifyPSS(pub,crypto.SHA256,hash[:],signature,&rsa.PSSOptions{SaltLength:rsa.PSSSaltLengthEqualsHash,Hash:crypto.SHA256})==nil}
     case *ecdsa.PublicKey:
         if algorithm=="ES256" && len(signature)==64 {
             rr:=new(big.Int).SetBytes(signature[:32])
@@ -190,7 +202,10 @@ func (v *Verifier) keyFor(ctx context.Context,kid string)(key,error) {
     v.mu.Lock()
     defer v.mu.Unlock()
     if v.keys!=nil && time.Now().Before(v.keysUntil) {
+        // Avoid attacker-controlled kid values inducing a JWKS network fetch
+        // for every unauthorized request. Rotation is observed within TTL.
         if k,ok:=v.keys[kid];ok{return k,nil}
+        return key{},ErrInvalidToken
     }
     if err:=v.fetchKeys(ctx);err!=nil{return key{},err}
     k,ok:=v.keys[kid]
