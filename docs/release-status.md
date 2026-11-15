@@ -36,7 +36,7 @@
 5. Production-grade effect reconciliation/idempotency/compensation, backpressure and durable scheduling (no blind retries after uncertain writes).
 6. Enforced data labels/taint tracking and verified PII obligations, permissions, principal identities and trust boundaries throughout every node.
 7. Persist revisions/events/traces/tasks in SQLite with transactions; safe migrations and recovery/compaction.
-8. OAuth and scoped permissions for admin, user/surface, and upstreams; production-audited egress/SSRF rules with explicit internal-service configuration; secure secret handling.
+8. OAuth JWT/JWKS or RFC7662 introspection and issuer/audience/scope-verified public surfaces are implemented in PR #18. Management remains a separate static admin bearer; delegated upstream token exchange, end-to-end taint policies, provider-specific integration, audit-ready secret management and production threat verification remain open.
 9. Independent MCP resource/prompt discovery (including templates, pagination and revision-aware caching) now exists; source-safe mapping/editing, upstream change detection and compatibility diagnostics remain open.
 10. Complete UI build, type checks, browser/e2e tests, full graphical node/edge/port editor, impact analysis, robust source preservation and operator approval workflow.
 11. OpenTelemetry spans/metrics/export, quotas and capacity controls, full audit history, release acceptance/e2e scenarios.
@@ -95,3 +95,11 @@
 - Catalog entries include the configuration revision; activation/rollback invalidate cache and stale responses never repopulate it. Failed refreshes remain errors.
 - Independent raw HTTP transport tests cover modern/legacy negotiation, standard catalog methods, skills, bad headers/methods, request-size rejection and cancellation before protected external effects.
 - Remaining: external-provider compatibility matrix, extended task ownership/recovery across instances, durable SSE resumption, OAuth security, performance and load/chaos testing.
+
+#### OAuth identity and per-object authorization milestone (PR #18)
+
+- HCL OAuth providers and resource-scoped surfaces verify signed JWTs with pinned JWKS or opaque tokens by RFC 7662 introspection. No unsigned or unsupported JOSE token can authenticate. Issuer, audience, subject, expiration and scopes are checked, including negative signature/expiry/issuer/audience tests.
+- Public resource metadata advertises issuer and scopes. Tool/resource/prompt descriptors are visibility-filtered per authenticated principal, and every invocation is checked before effects. Management token and user tokens are not interchangeable.
+- By default OAuth responses (including successful asynchronous results, resources, prompts and error paths) use PII/credential masking, with an explicit scoped unmasked tool contract. Traces record only generic OAuth execution errors.
+- Tasks bind creation-time scopes, redaction and original immutable config revision; renewed OAuth access tokens retain ownership by verified issuer+audience+subject, while other users and downgraded scopes cannot access them.
+- Still required: dedicated data-taint/evidence policies across every pipeline/agent boundary, delegated token exchange and real OAuth providers before #5 can be closed.

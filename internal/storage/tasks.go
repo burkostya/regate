@@ -15,6 +15,9 @@ type TaskRecord struct {
 	StatusMessage  string         `json:"statusMessage,omitempty"`
 	OwnerDigest    string         `json:"owner_digest"`
 	Surface        string         `json:"surface"`
+    Tool           string         `json:"tool,omitempty"`
+    RequiredScopes []string       `json:"required_scopes,omitempty"`
+    RedactPII      bool           `json:"redact_pii,omitempty"`
 	RunID          string         `json:"run_id,omitempty"`
 	Revision       string         `json:"revision"`
 	CreatedAt      time.Time      `json:"createdAt"`

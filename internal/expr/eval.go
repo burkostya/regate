@@ -267,17 +267,35 @@ func nativeValue(v ref.Val) (any, error) {
 	return v.Value(), nil
 }
 
+var authorizationValue = regexp.MustCompile(`(?i)\bBearer[ \t]+[A-Z0-9._~+/=-]+`)
+var secretAssignment = regexp.MustCompile(`(?i)\b(?:access_token|refresh_token|id_token|api[_-]?key|authorization|password|client_secret|secret)[ \t]*[:=][ \t]*(?:"[^"]*"|'[^']*'|[^,; \r\n]+)`)
+// Diagnostic accepts untrusted failures from upstream systems; it is deliberately
+// conservative. OAuth-protected executions log only a fixed generic message.
+func RedactDiagnostic(value string) string {
+    if len(value)>4096 {value=value[:4096]}
+    value=authorizationValue.ReplaceAllString(value,"Bearer [REDACTED]")
+    value=secretAssignment.ReplaceAllString(value,"[CREDENTIAL_REDACTED]")
+    return MaskPII(value).(string)
+}
+
 var email = regexp.MustCompile(`(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b`)
 
 func MaskPII(v any) any {
 	switch x := v.(type) {
 	case string:
-		return email.ReplaceAllString(x, "[EMAIL_REDACTED]")
+        x=email.ReplaceAllString(x,"[EMAIL_REDACTED]")
+        x=authorizationValue.ReplaceAllString(x,"Bearer [REDACTED]")
+        x=secretAssignment.ReplaceAllString(x,"[CREDENTIAL_REDACTED]")
+        return x
 	case map[string]any:
 		y := map[string]any{}
 		for k, val := range x {
 			key := strings.ToLower(k)
-			if strings.Contains(key, "email") || strings.Contains(key, "phone") || strings.Contains(key, "ssn") {
+			if strings.Contains(key, "email") || strings.Contains(key, "phone") || strings.Contains(key, "ssn") ||
+                strings.Contains(key, "password") || strings.Contains(key, "secret") ||
+                strings.Contains(key, "authorization") || strings.Contains(key, "access_token") ||
+                strings.Contains(key, "refresh_token") || strings.Contains(key, "id_token") ||
+                strings.Contains(key, "api_key") || strings.Contains(key, "cookie") {
 				y[k] = "[REDACTED]"
 			} else {
 				y[k] = MaskPII(val)

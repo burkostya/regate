@@ -20,6 +20,8 @@ type mockWorld struct {
 	agentInput map[string]any
 	calls      []string
 	failWrites bool
+    failResponse string
+    lastAuth string
 }
 
 func (m *mockWorld) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -57,7 +59,13 @@ func (m *mockWorld) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		m.mu.Lock()
 		m.calls = append(m.calls, v.Method)
+        if v.Method=="tools/call" {m.lastAuth=r.Header.Get("Authorization")}
+        failure:=m.failResponse
 		m.mu.Unlock()
+        if v.Method=="tools/call" && failure!="" {
+            json.NewEncoder(w).Encode(map[string]any{"jsonrpc":"2.0","id":v.ID,"error":map[string]any{"code":-32000,"message":failure}})
+            return
+        }
 		result := map[string]any{}
 		switch v.Method {
 		case "server/discover":
@@ -371,10 +379,12 @@ func TestTaskExecutionAndOwnership(t *testing.T) {
 	id := result["taskId"].(string)
 	// Task ownership is enforced even when the network request itself is made
 	// from an allowed loopback address.
-	ownerMismatch := decode(t, latestCall(t, server.URL+"/mcp/support", "other", "tasks/get", 18, map[string]any{"taskId": id}))
-	if ownerMismatch["error"] == nil {
-		t.Fatal("task visible to other bearer")
-	}
+	ownerMismatch := latestCall(t, server.URL+"/mcp/support", "other", "tasks/get", 18, map[string]any{"taskId": id})
+    defer ownerMismatch.Body.Close()
+    ownerError,_:=io.ReadAll(ownerMismatch.Body)
+    if ownerMismatch.StatusCode < 400 || !bytes.Contains(ownerError, []byte(`"error"`)) {
+        t.Fatalf("task visible to other bearer: HTTP %d %s",ownerMismatch.StatusCode,ownerError)
+    }
 	deadline := time.After(2 * time.Second)
 	for {
 		r := decode(t, latestCall(t, server.URL+"/mcp/support", "", "tasks/get", 19, map[string]any{"taskId": id}))

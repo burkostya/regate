@@ -125,12 +125,13 @@ func (r *Runtime) Run(ctx context.Context, revision string, cfg *config.Config, 
 	finish := func(status string, err error) {
 		out.Status = status
 		if err != nil {
-			out.Error = err.Error()
+			out.Error = expr.RedactDiagnostic(err.Error())
+            if cfg.Surfaces[surface].OAuth!="" {out.Error="operation failed"}
 		}
 		if err != nil {
 			// Error observers are best-effort and cannot turn a rejected effect into success.
 			// Mask obvious PII before delivering diagnostics to an external hook.
-			_, _ = r.intercept(ctx, cfg, "on_error", surface, toolName, map[string]any{"status": status, "message": expr.MaskPII(err.Error()), "run_id": out.RunID}, dry)
+			_, _ = r.intercept(ctx, cfg, "on_error", surface, toolName, map[string]any{"status": status, "message": out.Error, "run_id": out.RunID}, dry)
 		}
 		if r.Store != nil {
 			r.Store.WriteTrace(storage.Trace{RunID: out.RunID, Revision: revision, Surface: surface, Tool: toolName, Status: status, Message: out.Error, DurationMS: time.Since(start).Milliseconds()})
@@ -223,7 +224,8 @@ func (r *Runtime) Run(ctx context.Context, revision string, cfg *config.Config, 
 	} else {
 		finish("failure", err)
 	}
-	out.Error = err.Error()
+	out.Error = expr.RedactDiagnostic(err.Error())
+            if cfg.Surfaces[surface].OAuth!="" {out.Error="operation failed"}
 	return out, err
 }
 func (r *Runtime) intercept(ctx context.Context, cfg *config.Config, stage, surface, tool string, value any, dry bool) (any, error) {
@@ -621,7 +623,7 @@ func (r *Runtime) mcpCall(ctx context.Context, u config.Upstream, tool string, a
 		reason := ""
 		if e != nil {
 			state = "unknown"
-			reason = e.Error()
+			reason = expr.RedactDiagnostic(e.Error())
 		}
 		if ee := r.Store.Effect(storage.Effect{ID: id, RunID: runID, Node: node, Operation: u.Name + "." + tool, Status: state, Reason: reason}); ee != nil {
 			return nil, ee

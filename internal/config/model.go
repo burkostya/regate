@@ -9,6 +9,7 @@ import (
 
 type Config struct {
 	Listen        string                             `json:"listen"`
+    OAuth         map[string]OAuth                    `json:"oauth,omitempty"`
 	Upstreams     map[string]Upstream                `json:"upstreams"`
 	Hooks         map[string]Hook                    `json:"hooks"`
 	Policies      map[string]Policy                  `json:"policies"`
@@ -18,6 +19,18 @@ type Config struct {
 	Source        string                             `json:"-"`
 	Plans         map[string]*PipelineIR             `json:"-"`
 	ToolContracts map[string]map[string]ToolContract `json:"-"`
+}
+// OAuth defines an explicit per-surface trusted issuer and resource audience.
+ // JWKS authenticates self-contained signed JWTs; introspection supports opaque
+ // access tokens. Both are optional individually, but at least one is required.
+type OAuth struct {
+    Name string `json:"name"`
+    Issuer string `json:"issuer"`
+    Audience string `json:"audience"`
+    JWKSURL string `json:"jwks_url,omitempty"`
+    IntrospectionURL string `json:"introspection_url,omitempty"`
+    ClientIDEnv string `json:"client_id_env,omitempty"`
+    ClientSecretEnv string `json:"client_secret_env,omitempty"`
 }
 type Upstream struct {
 	Name      string `json:"name"`
@@ -44,6 +57,8 @@ type Policy struct {
 type Surface struct {
 	Name      string     `json:"name"`
 	Path      string     `json:"path"`
+    OAuth     string     `json:"oauth,omitempty"`
+    RequiredScopes []string `json:"required_scopes,omitempty"`
 	Tools     []Tool     `json:"tools"`
 	Resources []Resource `json:"resources,omitempty"`
 	Prompts   []Prompt   `json:"prompts,omitempty"`
@@ -56,6 +71,9 @@ type Tool struct {
 	InputSchema  map[string]any `json:"input_schema,omitempty"`
 	OutputSchema map[string]any `json:"output_schema,omitempty"`
 	ReadOnly     bool           `json:"read_only"`
+    RequiredScopes []string `json:"required_scopes,omitempty"`
+    DataClassification string `json:"data_classification,omitempty"`
+    AllowUnmasked bool `json:"allow_unmasked,omitempty"`
 }
 type Resource struct {
 	Name     string `json:"name"`
@@ -63,11 +81,13 @@ type Resource struct {
 	Source   string `json:"source,omitempty"`
 	Text     string `json:"text,omitempty"`
 	MimeType string `json:"mime_type,omitempty"`
+    RequiredScopes []string `json:"required_scopes,omitempty"`
 }
 type Prompt struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	Text        string `json:"text"`
+    RequiredScopes []string `json:"required_scopes,omitempty"`
 }
 type Pipeline struct {
 	Name        string          `json:"name"`
@@ -105,7 +125,7 @@ func Decode(src string) (*Config, error) {
 	if err = ValidateBlockSchema(blocks); err != nil {
 		return nil, err
 	}
-	c := &Config{Listen: "127.0.0.1:8080", Upstreams: map[string]Upstream{}, Hooks: map[string]Hook{}, Policies: map[string]Policy{}, Pipelines: map[string]Pipeline{}, Surfaces: map[string]Surface{}, Source: src}
+	c := &Config{Listen: "127.0.0.1:8080", OAuth: map[string]OAuth{}, Upstreams: map[string]Upstream{}, Hooks: map[string]Hook{}, Policies: map[string]Policy{}, Pipelines: map[string]Pipeline{}, Surfaces: map[string]Surface{}, Source: src}
 	seen := map[string]bool{}
 	for _, b := range blocks {
 		name := ""
@@ -125,6 +145,9 @@ func Decode(src string) (*Config, error) {
 			if s := b.String("listen"); s != "" {
 				c.Listen = s
 			}
+		case "oauth":
+            c.OAuth[name] = OAuth{Name:name,Issuer:b.String("issuer"), Audience:b.String("audience"),JWKSURL:b.String("jwks_url"),
+                IntrospectionURL:b.String("introspection_url"),ClientIDEnv:b.String("client_id_env"),ClientSecretEnv:b.String("client_secret_env")}
 		case "upstream":
 			u := Upstream{Name: name, URL: b.String("url"), AuthEnv: b.String("auth_env"), TimeoutMS: b.Int("timeout_ms", 15000)}
 			c.Upstreams[name] = u
@@ -157,7 +180,7 @@ func Decode(src string) (*Config, error) {
 			}
 			c.Pipelines[name] = p
 		case "surface":
-			s := Surface{Name: name, Path: b.String("path")}
+			s := Surface{Name:name,Path:b.String("path"),OAuth:b.String("oauth"),RequiredScopes:stringList(b.Attrs["required_scopes"])}
 			for _, ch := range b.Children {
 				n, e := ch.Label()
 				if e != nil {
@@ -167,11 +190,11 @@ func Decode(src string) (*Config, error) {
 				case "tool":
 					schema, _ := ch.Attrs["input_schema"].(map[string]any)
 					out, _ := ch.Attrs["output_schema"].(map[string]any)
-					s.Tools = append(s.Tools, Tool{Name: n, Description: ch.String("description"), Pipeline: ch.String("pipeline"), Source: ch.String("source"), InputSchema: schema, OutputSchema: out, ReadOnly: ch.Bool("read_only", false)})
+					s.Tools = append(s.Tools, Tool{Name: n, Description: ch.String("description"), Pipeline: ch.String("pipeline"), Source: ch.String("source"), InputSchema: schema, OutputSchema: out, ReadOnly: ch.Bool("read_only", false),RequiredScopes:stringList(ch.Attrs["required_scopes"]),DataClassification:ch.String("data_classification"),AllowUnmasked:ch.Bool("allow_unmasked",false)})
 				case "resource":
-					s.Resources = append(s.Resources, Resource{Name: n, URI: ch.String("uri"), Source: ch.String("source"), Text: ch.String("text"), MimeType: ch.String("mime_type")})
+					s.Resources = append(s.Resources, Resource{Name: n, URI: ch.String("uri"), Source: ch.String("source"), Text: ch.String("text"), MimeType: ch.String("mime_type"),RequiredScopes:stringList(ch.Attrs["required_scopes"])})
 				case "prompt":
-					s.Prompts = append(s.Prompts, Prompt{Name: n, Description: ch.String("description"), Text: ch.String("text")})
+					s.Prompts = append(s.Prompts, Prompt{Name: n, Description: ch.String("description"), Text: ch.String("text"),RequiredScopes:stringList(ch.Attrs["required_scopes"])})
 				default:
 					return nil, fmt.Errorf("invalid %s in surface", ch.Type)
 				}
@@ -191,11 +214,42 @@ func Decode(src string) (*Config, error) {
 	}
 	return c, nil
 }
+func stringList(v any) []string {
+    raw,_:=v.([]any)
+    out:=make([]string,0,len(raw))
+    for _,item:=range raw {if s,ok:=item.(string);ok {out=append(out,s)}}
+    return out
+}
+func validateScopeList(v []string) error {
+    seen:=map[string]bool{}
+    for _,scope:=range v {
+        if strings.TrimSpace(scope)!=scope || strings.ContainsAny(scope," \t\n\r") || len(scope)==0 || seen[scope] {
+            return fmt.Errorf("scope must be unique nonempty token without whitespace")
+        }
+        seen[scope]=true
+    }
+    return nil
+}
 func (c *Config) Validate() error {
 	if len(c.Pipelines) == 0 && len(c.Surfaces) == 0 {
 		return fmt.Errorf("no surfaces or pipelines")
 	}
 	paths := map[string]bool{}
+    for name,provider := range c.OAuth {
+        if provider.Issuer=="" || provider.Audience=="" {return fmt.Errorf("oauth %s: issuer and audience required",name)}
+        if err:=validURL(provider.Issuer);err!=nil {return fmt.Errorf("oauth %s issuer: %w",name,err)}
+        if provider.JWKSURL=="" && provider.IntrospectionURL=="" {return fmt.Errorf("oauth %s: jwks_url or introspection_url required",name)}
+        if provider.JWKSURL!="" {
+            if err:=validURL(provider.JWKSURL);err!=nil {return fmt.Errorf("oauth %s JWKS: %w",name,err)}
+        }
+        if provider.IntrospectionURL!="" {
+            if err:=validURL(provider.IntrospectionURL);err!=nil {return fmt.Errorf("oauth %s introspection: %w",name,err)}
+            if provider.ClientIDEnv=="" || provider.ClientSecretEnv=="" {return fmt.Errorf("oauth %s introspection requires client_id_env and client_secret_env",name)}
+        }
+        for _,key:=range []string{provider.ClientIDEnv,provider.ClientSecretEnv} {
+            if key!="" && !safeEnvName(key) {return fmt.Errorf("oauth %s: invalid secret environment variable",name)}
+        }
+    }
 	for name, u := range c.Upstreams {
 		if err := validURL(u.URL); err != nil {
 			return fmt.Errorf("upstream %s: %w", name, err)
@@ -329,6 +383,12 @@ func (c *Config) Validate() error {
 		}
 	}
 	for name, s := range c.Surfaces {
+        if s.OAuth!="" {
+            if _,ok:=c.OAuth[s.OAuth];!ok {return fmt.Errorf("surface %s: undefined oauth provider",name)}
+        } else if len(s.RequiredScopes)>0 {
+            return fmt.Errorf("surface %s: required_scopes require oauth provider",name)
+        }
+        if err:=validateScopeList(s.RequiredScopes);err!=nil {return fmt.Errorf("surface %s: %w",name,err)}
 		if s.Path == "" {
 			return fmt.Errorf("surface %s: empty path", name)
 		}
@@ -345,6 +405,18 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("duplicate tool %s in %s", t.Name, name)
 			}
 			names[t.Name] = true
+            if err:=validateScopeList(t.RequiredScopes);err!=nil {return fmt.Errorf("tool %s: %w",t.Name,err)}
+            if len(t.RequiredScopes)>0 && s.OAuth=="" {return fmt.Errorf("tool %s: scopes require surface OAuth",t.Name)}
+            switch t.DataClassification {
+            case "", "public", "restricted":
+            default: return fmt.Errorf("tool %s: data_classification must be public or restricted",t.Name)
+            }
+            if t.DataClassification=="restricted" && (s.OAuth=="" || len(t.RequiredScopes)==0) {
+                return fmt.Errorf("tool %s: restricted data needs OAuth and required_scopes",t.Name)
+            }
+            if t.AllowUnmasked && (s.OAuth=="" || t.DataClassification!="restricted" || !containsScope(t.RequiredScopes,"pii:read")) {
+                return fmt.Errorf("tool %s: allow_unmasked requires OAuth restricted data and pii:read scope",t.Name)
+            }
 			if t.Pipeline == "" && t.Source == "" {
 				return fmt.Errorf("tool %s: needs pipeline or source", t.Name)
 			}
@@ -366,6 +438,14 @@ func (c *Config) Validate() error {
 				}
 			}
 		}
+        for _,res:=range s.Resources {
+            if err:=validateScopeList(res.RequiredScopes);err!=nil {return fmt.Errorf("resource %s: %w",res.Name,err)}
+            if len(res.RequiredScopes)>0 && s.OAuth=="" {return fmt.Errorf("resource %s: scopes require surface OAuth",res.Name)}
+        }
+        for _,prompt:=range s.Prompts {
+            if err:=validateScopeList(prompt.RequiredScopes);err!=nil {return fmt.Errorf("prompt %s: %w",prompt.Name,err)}
+            if len(prompt.RequiredScopes)>0 && s.OAuth=="" {return fmt.Errorf("prompt %s: scopes require surface OAuth",prompt.Name)}
+        }
 	}
 	for _, i := range c.Interceptors {
 		if _, ok := c.Hooks[i.Hook]; !ok {
@@ -382,6 +462,17 @@ func (c *Config) Validate() error {
 		return c.Interceptors[i].Name < c.Interceptors[j].Name
 	})
 	return nil
+}
+func containsScope(scopes []string, wanted string) bool {
+    for _,scope:=range scopes {if scope==wanted{return true}}
+    return false
+}
+func safeEnvName(s string) bool {
+    if s=="" {return false}
+    for _,r:=range s {
+        if !(r>='A'&&r<='Z'||r>='a'&&r<='z'||r>='0'&&r<='9'||r=='_') {return false}
+    }
+    return true
 }
 func validURL(raw string) error {
 	u, e := url.Parse(raw)
