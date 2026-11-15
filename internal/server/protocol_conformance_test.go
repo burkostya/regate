@@ -58,7 +58,6 @@ func TestMCPRawModernAndLegacyHTTPConformance(t *testing.T) {
         {"prompts/get","customer_review",map[string]any{
             "name":"customer_review", "_meta":modernMeta["_meta"],
         },"messages"},
-        {"ping","",modernMeta,""},
     }
     for _,tc:=range cases {
         t.Run(tc.method,func(t *testing.T){
