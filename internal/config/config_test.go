@@ -110,7 +110,7 @@ func TestHCL2EvaluationAndStrictTyping(t *testing.T) {
 		{strings.Replace(example(t), `timeout_ms = 5000`, `timeout_ms = "five"`, 1), "timeout_ms"},
 		{strings.Replace(example(t), `timeout_ms = 5000`, `timeout_ms = 0`, 1), "timeout_ms"},
 		{strings.Replace(example(t), `  timeout_ms = 5000`, `  timeout_mss = 5000`, 1), "timeout_mss"},
-		{strings.Replace(example(t), `kind   = "policy.check"`, `kind   = "policy.check"\n    unknown_attr = true`, 1), "unknown_attr"},
+		{strings.Replace(example(t), `kind   = "policy.check"`, "kind   = \"policy.check\"\n    unknown_attr = true", 1), "unknown_attr"},
 		{strings.Replace(example(t), `value  = "input"`, `value  = "1 + true"`, 1), "CEL"},
 	}
 	for _, tc := range bad {

@@ -80,7 +80,7 @@ type Node struct {
 	Name  string         `json:"name"`
 	Kind  string         `json:"kind"`
 	Attrs map[string]any `json:"attrs"`
-	Span  SourceRange    `json:"span"`
+	Span  SourceRange    `json:"-"`
 }
 type Edge struct {
 	From string `json:"from"`
