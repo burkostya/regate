@@ -35,7 +35,11 @@ func outcomeResult(out engine.Outcome, err error) map[string]any {
 	return map[string]any{"resultType": "complete", "content": []any{map[string]any{"type": "text", "text": fmt.Sprint(out.Value)}}, "structuredContent": out.Value, "isError": false}
 }
 func (s *Service) CreateTask(ctx context.Context, surface, tool, owner string, args map[string]any) (map[string]any, error) {
-	cfg, rev := s.Current()
+    cfg,rev:=s.Current()
+    return s.createTaskFor(ctx,cfg,rev.ID,surface,tool,owner,args)
+}
+
+func (s *Service) createTaskFor(ctx context.Context,cfg *config.Config,revision string,surface,tool,owner string,args map[string]any) (map[string]any,error) {
     published,ok:=cfg.Surfaces[surface]
     if !ok {return nil,fmt.Errorf("surface not found")}
     var selected *config.Tool
@@ -50,7 +54,7 @@ func (s *Service) CreateTask(ctx context.Context, surface, tool, owner string, a
     }
     task := storage.TaskRecord{
         TaskID: storage.ID(),Status:"working",StatusMessage:"Executing pipeline",
-        OwnerDigest:fingerprint(owner),Surface:surface,Tool:tool,Revision:rev.ID,
+        OwnerDigest:fingerprint(owner),Surface:surface,Tool:tool,Revision:revision,
         RequiredScopes:append([]string(nil),selected.RequiredScopes...),
         RedactPII:published.OAuth!="" && !selected.AllowUnmasked,
         TTLMS:3600000,PollIntervalMS:1000,
@@ -63,7 +67,7 @@ func (s *Service) CreateTask(ctx context.Context, surface, tool, owner string, a
 	go func() {
 		defer cancel()
 		defer running.Delete(task.TaskID)
-		out, err := s.Engine.Run(ctx, rev.ID, cfg, surface, tool, args, false)
+		out, err := s.Engine.Run(ctx, revision, cfg, surface, tool, args, false)
 		// Persist status under a per-task mutex to avoid races with cancel/update.
 		s.tasksMu.Lock()
 		defer s.tasksMu.Unlock()
