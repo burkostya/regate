@@ -12,7 +12,7 @@ func TestOpaqueDraftStructuralGraphRoundTrip(t *testing.T) {
     src = strings.Replace(src, `    tool      = "get_customer"`, `    tool      = "get_customer"
     vendor_expression = upstream.features.flags["beta"]`, 1)
     src = strings.Replace(src, `  node "summarize" {`, `  future_node "provider" {
-    feature = registry.experimental()
+    feature = registry_experimental()
   }
 
   node "summarize" {`, 1)
@@ -35,7 +35,7 @@ func TestOpaqueDraftStructuralGraphRoundTrip(t *testing.T) {
     desired := strings.Replace(original, `tool      = "get_customer"`, `tool      = "get_customer_v2"`, 1)
     desired = strings.Replace(desired, "    vendor_expression = upstream.features.flags[\"beta\"]\n", "", 1)
     desired = strings.Replace(desired, `  future_node "provider" {
-    feature = registry.experimental()
+    feature = registry_experimental()
   }
 
 `, "", 1)
@@ -44,7 +44,7 @@ func TestOpaqueDraftStructuralGraphRoundTrip(t *testing.T) {
     for _, fragment := range []string{
         `vendor_expression = upstream.features.flags["beta"]`,
         `future_node "provider"`,
-        `feature = registry.experimental()`,
+        `feature = registry_experimental()`,
         `future_top "opaque" { expression = var.unavailable }`,
     } {
         if !strings.Contains(next, fragment) { t.Fatalf("lost opaque content %q", fragment) }
