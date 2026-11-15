@@ -192,3 +192,35 @@ func TestSemanticDiffIgnoresWhitespaceAndComments(t *testing.T) {
 		t.Fatalf("expected one semantic edit, got %+v", diff)
 	}
 }
+
+func TestGraphPatchPreservesNestedCommentsWhenOnlyAttributesChange(t *testing.T) {
+	source := strings.Replace(example(t), `    tool      = "get_customer"`, `    # node-specific operator note
+    tool      = "get_customer"`, 1)
+	blocks, err := Parse(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var original string
+	for _, b := range blocks {
+		if b.Type == "pipeline" && len(b.Labels) == 1 && b.Labels[0] == "customer_summary" {
+			original = source[b.Start:b.End]
+		}
+	}
+	if original == "" {
+		t.Fatal("pipeline not found")
+	}
+	modified := strings.Replace(original, `tool      = "get_customer"`, `tool      = "get_customer_public"`, 1)
+	next, err := ReplaceBlock(source, "pipeline", "customer_summary", modified)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(next, "# node-specific operator note") {
+		t.Fatal("original nested comment was lost")
+	}
+	if strings.Replace(next, `tool      = "get_customer_public"`, `tool      = "get_customer"`, 1) != source {
+		t.Fatal("graph patch rewrote unrelated source bytes")
+	}
+	if _, err := Decode(next); err != nil {
+		t.Fatal(err)
+	}
+}

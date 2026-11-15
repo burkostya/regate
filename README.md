@@ -1,8 +1,8 @@
 # Regate
 
-**Regate** is an experimental, HTTP-only **MCP gateway and virtual-tool composition engine** written in Go, with a declarative HCL-like configuration, programmable HTTP/MCP hooks, a management MCP endpoint and a SvelteKit + Svelte Flow console.
+**Regate** is an experimental, HTTP-only **MCP gateway and virtual-tool composition engine** written in Go, with a declarative HCL2 configuration, programmable HTTP/MCP hooks, a management MCP endpoint and a SvelteKit + Svelte Flow console.
 
-> **Release status: engineering prototype (v0.1), not production-ready and not the complete agreed v1.** The working Go prototype deliberately uses a **restricted HCL-like parser**, a **small safe expression language (not CEL)**, a **hand-written subset of MCP over HTTP (not the official Go SDK)**, and a file-backed store (not SQLite). The Svelte application is authored but has **not been dependency-installed or compiled in the offline build environment**. See [Implemented and missing](docs/release-status.md) before any deployment.
+> **Release status: engineering prototype (v0.1), not production-ready and not the complete agreed v1.** The compiler now parses **HCL2/cty** and compiles bounded **CEL** into a typed IR, but **cross-port JSON Schema verification is still incomplete**. MCP transport remains a hand-written subset (not the official Go SDK), and persistence is file-backed (not SQLite). SvelteKit type checking/build passes GitHub CI; browser end-to-end testing remains outstanding. See [Implemented and missing](docs/release-status.md) before any deployment.
 
 ## What you can experiment with now
 
@@ -16,7 +16,7 @@
 
 ## Requirements
 
-Backend: Go **1.23+**, no external Go dependencies for the prototype. Frontend: Node 22+, npm and connectivity to npm for its dependencies. Real MCP adapters require compliant upstream servers; the demo includes local fixtures.
+Backend: Go **1.25+**, using pinned HCL2, cty and CEL modules (see `go.mod`/`go.sum`). Frontend: Node 22+, npm and connectivity to npm for its dependencies. Real MCP adapters require compliant upstream servers; the demo includes local fixtures.
 
 ## Run a complete local demonstration
 
@@ -79,7 +79,7 @@ npm run dev
 
 Open `http://127.0.0.1:5173`, enter `REGATE_ADMIN_TOKEN`. The Vite development proxy sends `/api/*` to `http://127.0.0.1:8080`; override with `REGATE_PROXY` if Regate runs at another address. The token lives only in memory in the page in this prototype.
 
-> **Frontend build unverified:** package registries were unreachable in the execution environment in which this project was generated. `npm install`, `npm run check` and `npm run build` are required when connectivity is available. Do not assume the frontend is working without these checks.
+> **Frontend CI:** `npm install`, `npm run check` and `npm run build` passed in GitHub Actions. This does **not** establish end-to-end browser behavior or production readiness; browser interaction tests are still required.
 
 ## Optional container image (for controlled local experiments)
 
@@ -105,11 +105,11 @@ The Go tests cover parser and expression safety, HTTP MCP end-to-end flow, decis
 
 ## Configuration contract
 
-See [HCL subset contract](docs/contracts/hcl.md) and [architecture](docs/architecture/overview.md). Example: [examples/regate.hcl](examples/regate.hcl).
+See [HCL2/CEL compiler contract](docs/contracts/hcl.md) and [architecture](docs/architecture/overview.md). Example: [examples/regate.hcl](examples/regate.hcl).
 
 Configuration has two representations:
 
-1. **Source**: HCL-like text, saved as immutable revisions and editable drafts. Initial `-config` file bootstraps a *new* state directory; later restarts use persisted active revision.
+1. **Source**: HCL2 text, saved as immutable revisions and editable drafts. Initial `-config` file bootstraps a *new* state directory; later restarts use persisted active revision.
 2. **Layout**: separate JSON node coordinates for Svelte Flow. It never participates in execution.
 
 The Go runtime evaluates DAGs. A node can return a JSON value or an MCP result payload. Interceptors are scoped by surface/tool and configured in HCL. Explicit `on_request`, `before_call`, `after_call`, `before_response`, `on_error` stages are supported for selected runtime paths. `on_error` is observational and cannot override a denial.
@@ -131,7 +131,7 @@ See [security notes](docs/security.md) and [release status](docs/release-status.
 ## Project layout
 
 - `cmd/regate` — gateway CLI; `cmd/regate-demo` — local sample upstream and HTTP hooks.
-- `internal/config` — restricted parser, AST, config validation, source patching.
+- `internal/config` — HCL2/cty parsing, strict validation, typed IR, semantic diff and source-preserving patches.
 - `internal/expr` — bounded evaluator, demo masking function.
 - `internal/engine` — DAG execution, MCP/HTTP actions and effect journal calls.
 - `internal/mcp` — experimental HTTP MCP client.

@@ -84,7 +84,10 @@ validation of remote content is a separate v1 requirement.
 ### Source-preserving edits and semantic diffs
 
 `regate_graph_patch` replaces one explicitly named pipeline block without
-changing any bytes outside it. `regate_attribute_patch` (and REST
+changing any bytes outside it. When the original and replacement blocks
+have the same nested structure and attribute keys, it patches **only changed
+attribute expressions**, preserving operator comments and unsupported text
+inside the pipeline as well. `regate_attribute_patch` (and REST
 `POST /api/attribute-patch`) replaces **only an existing attribute expression**
 in a draft. The required `path` is a slash-separated sequence of block type
 and label, e.g. `pipeline/customer_summary/node/fetch`, plus `attribute` and
@@ -92,9 +95,11 @@ and label, e.g. `pipeline/customer_summary/node/fetch`, plus `attribute` and
 syntax errors and any change that makes the whole configuration invalid.
 
 The source retains comments, whitespace and opaque content outside the edit.
-Replacing a whole block does not retain comments *inside that block*; new
-attributes also currently require replacing the containing block. These
-limits are deliberate, visible and still subject to full v1 acceptance.
+A **structural** graph replacement (adding/removing/reordering nodes, edges
+or attributes) falls back to replacing the entire named block: comments
+inside that block are not guaranteed to survive. Introducing new attributes
+currently also requires block replacement. These limits are visible and
+remain in scope for full v1 acceptance.
 
 `regate_diff` and `regate_impact_analyze` provide structural summaries and
 `semantic_changes` with stable paths for added/removed/changed executable

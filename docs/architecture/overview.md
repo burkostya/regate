@@ -23,7 +23,7 @@ flowchart TB
   Runtime --> Journal[Effects, traces, suspended state, tasks]
 ```
 
-**Implemented prototype note:** IR is represented by `config.Pipeline`/node/edge data structures, not yet a distinct, typed, immutable compiler IR. The runtime holds the active revision in a process-local R/W lock; longer-running runs capture their revision at start. The durable store is local disk files, not SQLite.
+**Implemented prototype note:** a distinct `config.PipelineIR` holds typed output categories, static dependencies and precompiled CEL expressions. Dynamic remote JSON Schemas still require runtime verification. The runtime holds the active revision in a process-local R/W lock; longer-running runs capture their revision at start. The durable store is local disk files, not SQLite.
 
 ## Domain model
 

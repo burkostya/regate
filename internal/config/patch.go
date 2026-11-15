@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
@@ -36,6 +38,16 @@ func ReplaceBlock(source, typ, label, replacement string) (string, error) {
 		return "", fmt.Errorf("replacement must contain only %s %q", typ, label)
 	}
 	next := source[:found.Start] + replacement + source[found.End:]
+	// If the graph retains the same labeled blocks/attributes, change only
+	// differing expressions. This preserves comments and unsupported editor
+	// decorations *inside* the target pipeline, not merely outside it.
+	if edits, compatible := expressionEdits(found, nb[0], replacement); compatible {
+		next = source
+		sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
+		for _, edit := range edits {
+			next = next[:edit.start] + edit.value + next[edit.end:]
+		}
+	}
 	if _, err := Decode(next); err != nil {
 		return "", err
 	}
@@ -92,4 +104,42 @@ func SetAttribute(source string, path []BlockSelector, name, expression string) 
 		return "", err
 	}
 	return next, nil
+}
+
+type expressionEdit struct {
+	start, end int
+	value      string
+}
+
+// expressionEdits returns an all-or-nothing patch set for structurally
+// equivalent HCL blocks. Structural edits fall back to whole-block
+// replacement; callers should use attribute_patch where possible.
+func expressionEdits(old, desired *Block, replacement string) ([]expressionEdit, bool) {
+	if old.Type != desired.Type || !reflect.DeepEqual(old.Labels, desired.Labels) || len(old.Attrs) != len(desired.Attrs) || len(old.Children) != len(desired.Children) {
+		return nil, false
+	}
+	edits := []expressionEdit{}
+	for key, newValue := range desired.Attrs {
+		oldValue, ok := old.Attrs[key]
+		if !ok {
+			return nil, false
+		}
+		if reflect.DeepEqual(oldValue, newValue) {
+			continue
+		}
+		left, okLeft := old.AttrRanges[key]
+		right, okRight := desired.AttrRanges[key]
+		if !okLeft || !okRight {
+			return nil, false
+		}
+		edits = append(edits, expressionEdit{start: left.Start, end: left.End, value: replacement[right.Start:right.End]})
+	}
+	for i, newChild := range desired.Children {
+		nested, ok := expressionEdits(old.Children[i], newChild, replacement)
+		if !ok {
+			return nil, false
+		}
+		edits = append(edits, nested...)
+	}
+	return edits, true
 }
