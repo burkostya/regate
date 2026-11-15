@@ -13,7 +13,7 @@ func TestIncomingSDKCatalogChangesAfterActivation(t *testing.T) {
     svc, server, _ := fixture(t)
     draft, err := svc.Store.DraftCreate()
     if err != nil { t.Fatal(err) }
-    _, active := svc.Current()
+    active, _ := svc.Current()
     source := strings.Replace(active.Source, `tool "get_customer_direct"`, `tool "crm_lookup"`, 1)
     if source == active.Source { t.Fatal("test fixture has no source tool to rename") }
     if _, err := svc.Store.DraftUpdate(draft.ID, source); err != nil { t.Fatal(err) }
