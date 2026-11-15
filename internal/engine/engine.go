@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/burkostya/regate/internal/config"
+    "github.com/burkostya/regate/internal/identity"
 	"github.com/burkostya/regate/internal/expr"
 	"github.com/burkostya/regate/internal/mcp"
 	"github.com/burkostya/regate/internal/netguard"
@@ -29,6 +30,14 @@ type Runtime struct {
 
 func New(store *storage.Store) *Runtime {
 	return &Runtime{Store: store, connections: map[string]*mcp.Conn{}}
+}
+// connFor obtains a target-audience-specific delegated credential when the
+// upstream requires RFC8693 exchange. It must not cache delegated bearers.
+func (r *Runtime) connFor(ctx context.Context,cfg *config.Config,u config.Upstream) (*mcp.Conn,error) {
+    if u.OAuthExchange=="" {return r.conn(u),nil}
+    token,err:=identity.Exchange(ctx,cfg.OAuth[u.OAuthExchange],u.OAuthAudience,u.OAuthScopes)
+    if err!=nil {return nil,err}
+    return mcp.NewConnWithToken(u.URL,token,time.Duration(u.TimeoutMS)*time.Millisecond),nil
 }
 func (r *Runtime) conn(u config.Upstream) *mcp.Conn {
 	key := u.URL + "/" + u.AuthEnv
@@ -49,7 +58,9 @@ func (r *Runtime) Discover(ctx context.Context, cfg *config.Config, upstream str
 	if err := checkOutbound(u.URL); err != nil {
 		return nil, err
 	}
-	return r.conn(u).ListTools(ctx)
+	conn,err:=r.connFor(ctx,cfg,u)
+    if err!=nil {return nil,err}
+    return conn.ListTools(ctx)
 }
 
 // DiscoverCatalog retrieves the full advertised MCP catalog under one SDK
@@ -58,7 +69,9 @@ func (r *Runtime) DiscoverCatalog(ctx context.Context, cfg *config.Config, upstr
     u,ok:=cfg.Upstreams[upstream]
     if !ok {return mcp.Catalog{},fmt.Errorf("unknown upstream %s",upstream)}
     if err:=checkOutbound(u.URL);err!=nil {return mcp.Catalog{},err}
-    return r.conn(u).DiscoverCatalog(ctx)
+    conn,err:=r.connFor(ctx,cfg,u)
+    if err!=nil {return mcp.Catalog{},err}
+    return conn.DiscoverCatalog(ctx)
 }
 func checkOutbound(raw string) error { return netguard.ValidateURL(raw) }
 
@@ -176,7 +189,7 @@ func (r *Runtime) Run(ctx context.Context, revision string, cfg *config.Config, 
 			if tool.ReadOnly {
 				effect = "read"
 			}
-			raw, e := r.mcpCall(ctx, u, remote, safeArgs, out.RunID, "proxy", effect)
+			raw, e := r.mcpCall(ctx, cfg, u, remote, safeArgs, out.RunID, "proxy", effect)
 			err = e
 			out.MCP = raw
 			out.Value = raw["structuredContent"]
@@ -565,7 +578,7 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 		if kind == "" {
 			kind = "unknown"
 		}
-		ret.mcp, ret.error = r.mcpCall(ctx, u, n.Str("tool"), args, runID, n.Name, kind)
+		ret.mcp, ret.error = r.mcpCall(ctx, cfg, u, n.Str("tool"), args, runID, n.Name, kind)
 		if ret.error == nil {
 			ret.value = ret.mcp["structuredContent"]
 			if ret.value == nil {
@@ -607,17 +620,19 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 	}
 	return ret
 }
-func (r *Runtime) mcpCall(ctx context.Context, u config.Upstream, tool string, args map[string]any, runID, node, effect string) (map[string]any, error) {
-	if err := checkOutbound(u.URL); err != nil {
-		return nil, err
-	}
-	id := storage.ID()
+func (r *Runtime) mcpCall(ctx context.Context,cfg *config.Config,u config.Upstream,tool string,args map[string]any,runID,node,effect string)(map[string]any,error) {
+    if err:=checkOutbound(u.URL);err!=nil {return nil,err}
+    // Acquire and verify the target token before any dispatching effect is
+    // journaled. Authorization failure means no external write was attempted.
+    conn,err:=r.connFor(ctx,cfg,u)
+    if err!=nil{return nil,err}
+    id:=storage.ID()
 	if effect != "read" && r.Store != nil {
 		if e := r.Store.Effect(storage.Effect{ID: id, RunID: runID, Node: node, Operation: u.Name + "." + tool, Status: "dispatching"}); e != nil {
 			return nil, e
 		}
 	}
-	raw, e := r.conn(u).CallTool(ctx, tool, args)
+	raw, e := conn.CallTool(ctx, tool, args)
 	if effect != "read" && r.Store != nil {
 		state := "confirmed"
 		reason := ""
@@ -647,7 +662,7 @@ func (r *Runtime) runHook(ctx context.Context, h config.Hook, cfg *config.Config
 		if !ok {
 			args = map[string]any{"input": value}
 		}
-		raw, e := r.mcpCall(ctx, u, h.Tool, args, storage.ID(), "hook:"+h.Name, "unknown")
+		raw, e := r.mcpCall(ctx, cfg, u, h.Tool, args, storage.ID(), "hook:"+h.Name, "unknown")
 		if e != nil {
 			return nil, e
 		}
@@ -670,7 +685,11 @@ func (r *Runtime) runHook(ctx context.Context, h config.Hook, cfg *config.Config
 			return nil, e
 		}
 		request.Header.Set("Content-Type", "application/json")
-		if h.AuthEnv != "" {
+		if h.OAuthExchange!="" {
+            token,err:=identity.Exchange(ctx,cfg.OAuth[h.OAuthExchange],h.OAuthAudience,h.OAuthScopes)
+            if err!=nil{return nil,err}
+            request.Header.Set("Authorization","Bearer "+token)
+        } else if h.AuthEnv != "" {
 			if token := os.Getenv(h.AuthEnv); token != "" {
 				request.Header.Set("Authorization", "Bearer "+token)
 			}
@@ -757,11 +776,11 @@ func (r *Runtime) Resume(ctx context.Context, cfg *config.Config, revision strin
 }
 
 // ReadResource forwards an MCP resources/read request, preserving the upstream content shape.
-func (r *Runtime) ReadResource(ctx context.Context, u config.Upstream, uri string) (map[string]any, error) {
-	if e := checkOutbound(u.URL); e != nil {
-		return nil, e
-	}
-	raw, e := r.conn(u).Call(ctx, "resources/read", map[string]any{"uri": uri})
+func (r *Runtime) ReadResource(ctx context.Context,cfg *config.Config,u config.Upstream,uri string)(map[string]any,error) {
+    if e:=checkOutbound(u.URL);e!=nil{return nil,e}
+    conn,err:=r.connFor(ctx,cfg,u)
+    if err!=nil {return nil,err}
+    raw, e := conn.Call(ctx, "resources/read", map[string]any{"uri": uri})
 	if e != nil {
 		return nil, e
 	}
