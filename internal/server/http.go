@@ -298,7 +298,7 @@ func (s *Service) mcp(w http.ResponseWriter, r *http.Request, surface string, ad
 		return
 	}
 	if latest && !admin && q.Method == "tools/call" && supportsTasks(q.Params) {
-		result, e := s.CreateTask(surface, str(q.Params, "name"), bearer(r), obj(q.Params, "arguments"))
+		result, e := s.CreateTask(r.Context(),surface, str(q.Params, "name"), bearer(r), obj(q.Params, "arguments"))
 		if e != nil {
 			rpcError(w, q.ID, -32000, e.Error())
 			return
