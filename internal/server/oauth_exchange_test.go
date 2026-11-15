@@ -13,7 +13,6 @@ import (
     "strings"
     "sync"
     "testing"
-    "time"
 )
 
 func TestDelegatedUpstreamTokenAudienceAndEffectBoundary(t *testing.T) {
