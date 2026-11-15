@@ -272,18 +272,21 @@ type extensionParams struct {
 }
 type skillListResult struct {
     sdk.ResultBase
+    ResultType string `json:"resultType,omitempty"`
     Skills []map[string]any `json:"skills"`
     TTLMS int `json:"ttlMs"`
     CacheScope string `json:"cacheScope"`
 }
 type skillGetResult struct {
     sdk.ResultBase
+    ResultType string `json:"resultType,omitempty"`
     Skill map[string]any `json:"skill"`
     TTLMS int `json:"ttlMs"`
     CacheScope string `json:"cacheScope"`
 }
 type taskExtensionResult struct {
     sdk.ResultBase
+    ResultType string `json:"resultType,omitempty"`
     TaskID string `json:"taskId,omitempty"`
     Status string `json:"status,omitempty"`
     StatusMessage string `json:"statusMessage,omitempty"`
@@ -297,13 +300,14 @@ type taskExtensionResult struct {
 }
 func registerSkills(srv *sdk.Server, s *Service) error {
     if err := sdk.AddReceivingCustomMethod(srv,"skills/list",func(ctx context.Context, _ *sdk.ServerSession, _ *extensionParams) (*skillListResult,error) {
-        return &skillListResult{Skills:s.Skills(), TTLMS:300000, CacheScope:"private"},nil
+        return &skillListResult{ResultType:"complete", Skills:s.Skills(), TTLMS:300000, CacheScope:"private"},nil
     }); err!=nil { return err }
     return sdk.AddReceivingCustomMethod(srv,"skills/get",func(ctx context.Context, _ *sdk.ServerSession,p *extensionParams) (*skillGetResult,error) {
         v,err:=s.Skill(p.URI)
         if err!=nil { return nil,err }
         var res skillGetResult
         if err:=remarshalSDK(v,&res); err!=nil {return nil,err}
+        res.ResultType = "complete"
         return &res,nil
     })
 }
@@ -321,6 +325,7 @@ func registerTaskMethods(srv *sdk.Server, s *Service) error {
             if err!=nil {return nil,err}
             var result taskExtensionResult
             if err:=remarshalSDK(v,&result); err!=nil {return nil,err}
+            result.ResultType = "complete"
             return &result,nil
         });err!=nil{return err}
     }
