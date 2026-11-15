@@ -11,6 +11,8 @@ import (
 
 	"github.com/burkostya/regate/internal/engine"
     "github.com/burkostya/regate/internal/expr"
+    "github.com/burkostya/regate/internal/identity"
+    "github.com/burkostya/regate/internal/config"
 	"github.com/burkostya/regate/internal/storage"
 )
 
@@ -32,9 +34,27 @@ func outcomeResult(out engine.Outcome, err error) map[string]any {
 	}
 	return map[string]any{"resultType": "complete", "content": []any{map[string]any{"type": "text", "text": fmt.Sprint(out.Value)}}, "structuredContent": out.Value, "isError": false}
 }
-func (s *Service) CreateTask(surface, tool, owner string, args map[string]any) (map[string]any, error) {
+func (s *Service) CreateTask(ctx context.Context, surface, tool, owner string, args map[string]any) (map[string]any, error) {
 	cfg, rev := s.Current()
-	task := storage.TaskRecord{TaskID: storage.ID(), Status: "working", StatusMessage: "Executing pipeline", OwnerDigest: fingerprint(owner), Surface: surface, Revision: rev.ID, TTLMS: 3600000, PollIntervalMS: 1000}
+    published,ok:=cfg.Surfaces[surface]
+    if !ok {return nil,fmt.Errorf("surface not found")}
+    var selected *config.Tool
+    for i:=range published.Tools {if published.Tools[i].Name==tool {selected=&published.Tools[i];break}}
+    if selected==nil {return nil,fmt.Errorf("tool not found")}
+    if published.OAuth!="" {
+        if _,verified:=identity.FromContext(ctx);!verified {return nil,identity.ErrInvalidToken}
+    }
+    if err:=identity.RequireScopes(ctx,selected.RequiredScopes);err!=nil {return nil,err}
+    if err:=cfg.ToolContracts[surface][tool].Input.Validate(args);err!=nil {
+        return nil,fmt.Errorf("invalid tool arguments")
+    }
+    task := storage.TaskRecord{
+        TaskID: storage.ID(),Status:"working",StatusMessage:"Executing pipeline",
+        OwnerDigest:fingerprint(owner),Surface:surface,Tool:tool,Revision:rev.ID,
+        RequiredScopes:append([]string(nil),selected.RequiredScopes...),
+        RedactPII:published.OAuth!="" && !selected.AllowUnmasked,
+        TTLMS:3600000,PollIntervalMS:1000,
+    }
 	if e := s.Store.TaskPut(task); e != nil {
 		return nil, e
 	}
@@ -62,7 +82,7 @@ func (s *Service) CreateTask(surface, tool, owner string, args map[string]any) (
 		} else {
 			current.Status = "completed"
 			current.StatusMessage = "Execution completed"
-			current.Result = outcomeResult(out, err)
+			current.Result = taskSafeResult(current,out,err)
 		}
 		_ = s.Store.TaskPut(current)
 	}()
@@ -70,6 +90,19 @@ func (s *Service) CreateTask(surface, tool, owner string, args map[string]any) (
 	result["resultType"] = "task"
 	return result, nil
 }
+// OAuth async tasks are stored with the sensitivity of the original tool.
+ // A successful task must not bypass the masking applied to synchronous calls.
+func taskSafeResult(task storage.TaskRecord,out engine.Outcome,err error) map[string]any {
+    if task.RedactPII && err!=nil {
+        return map[string]any{"content":[]any{map[string]any{"type":"text","text":"operation failed"}},"isError":true,"resultType":"complete"}
+    }
+    result:=outcomeResult(out,err)
+    if task.RedactPII {
+        if sanitized,ok:=expr.MaskPII(result).(map[string]any);ok{return sanitized}
+    }
+    return result
+}
+
 func (s *Service) TaskGet(id, owner string) (map[string]any, error) {
 	t, e := s.Store.TaskGet(id)
 	if e != nil {
@@ -133,7 +166,7 @@ func (s *Service) TaskUpdate(id, owner string, inputResponses map[string]any) (m
 			updated.InputRequests = map[string]any{"resume_next": map[string]any{"method": "elicitation/create", "params": map[string]any{"mode": "form", "message": "Additional continuation data", "requestedSchema": map[string]any{"type": "object"}}}}
 		} else {
 			updated.Status = "completed"
-			updated.Result = outcomeResult(out, err)
+			updated.Result = taskSafeResult(updated,out,err)
 		}
 		_ = s.Store.TaskPut(updated)
 	}()
