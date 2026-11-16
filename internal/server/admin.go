@@ -47,6 +47,8 @@ var AdminTools = map[string][]Arg{
     "regate_task_resume_grant": {{"task_id","Suspended delegated task ID",true},{"value","Explicit continuation input",false}},
 	"regate_revisions":        {},
 	"regate_effects":          {},
+    "regate_queue_key_usage": {},
+    "regate_queue_rewrap": {},
     "regate_effect_compensate": {
         {"effect_id","Previously resolved-applied effect to compensate",true},
         {"contract","Named HCL compensation contract",true},
@@ -164,6 +166,10 @@ func (s *Service) Admin(ctx context.Context, name string, args map[string]any) (
 		return s.Store.History(), nil
 	case "regate_effects":
 		return s.Store.Effects(), nil
+    case "regate_queue_key_usage":
+        return s.Store.QueueKeyUsage(ctx)
+    case "regate_queue_rewrap":
+        return s.Store.RewrapQueuedBatch(ctx,32)
     case "regate_effect_compensate":
         return s.Engine.CompensateMCP(ctx,cfg,
             str(args,"effect_id"),str(args,"contract"),obj(args,"intent"),

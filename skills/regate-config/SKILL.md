@@ -47,10 +47,16 @@ Regate is an HTTP-only MCP gateway controlled using a separate authenticated man
   `effect_id`, `adapter` and the original writer `intent`; the journal
   verifies its digest and the endpoint before any read. Never invent original
   arguments or claim an eventual-consistency not-found result is authoritative.
+- To rotate queued-input encryption keys, keep old and new
+  `REGATE_QUEUE_KEYS_JSON` keys installed, restart with the new `active`
+  ID, then call `regate_queue_key_usage` and `regate_queue_rewrap`
+  until old key counts reach zero. Rewrap never dispatches a task and
+  does not rotate OAuth grant keys. Review encrypted backups/WAL retention
+  before retiring an old key.
 - Do not share the management token with hooks or MCP upstreams.
 - The compiler uses HCL2/cty for static config and bounded CEL expressions inside pipeline node attributes; see `docs/contracts/hcl.md`. All executable attributes are closed-schema validated.
 - When a tool or operation is unsupported, report the exact limitation instead of inventing an outcome.
 
 ## Basic management tools
 
-`regate_status`, `regate_upstreams`, `regate_inspect`, `regate_config_get`, `regate_draft_create`, `regate_draft_get`, `regate_draft_patch`, `regate_graph_get`, `regate_graph_patch`, `regate_validate`, `regate_diff`, `regate_impact_analyze`, `regate_test`, `regate_activate`, `regate_rollback`, `regate_revisions`, `regate_pipeline_trace`, `regate_upstream_refresh`, `regate_resume`, `regate_effects`, `regate_effect_readback`, `regate_effect_decide`, `regate_effect_compensate`.
+`regate_status`, `regate_upstreams`, `regate_inspect`, `regate_config_get`, `regate_draft_create`, `regate_draft_get`, `regate_draft_patch`, `regate_graph_get`, `regate_graph_patch`, `regate_validate`, `regate_diff`, `regate_impact_analyze`, `regate_test`, `regate_activate`, `regate_rollback`, `regate_revisions`, `regate_pipeline_trace`, `regate_upstream_refresh`, `regate_resume`, `regate_effects`, `regate_effect_readback`, `regate_effect_decide`, `regate_effect_compensate`, `regate_queue_key_usage`, `regate_queue_rewrap`.

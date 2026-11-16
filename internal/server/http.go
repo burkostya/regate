@@ -138,6 +138,10 @@ func (s *Service) api(w http.ResponseWriter, r *http.Request) {
 		case "effects":
 			reply(w, 200, s.Store.Effects())
 			return
+        case "queue-key-usage":
+            usage,e:=s.Store.QueueKeyUsage(r.Context())
+            if e!=nil {errorJSON(w,400,e)} else {reply(w,200,usage)}
+            return
 		}
 		if strings.HasPrefix(p, "drafts/") {
 			d, e := s.Store.DraftGet(strings.TrimPrefix(p, "drafts/"))
@@ -188,7 +192,7 @@ func (s *Service) api(w http.ResponseWriter, r *http.Request) {
 			errorJSON(w, 400, e)
 			return
 		}
-		adminName := map[string]string{"drafts": "regate_draft_create", "draft-update": "regate_draft_patch", "validate": "regate_validate", "diff": "regate_diff", "impact": "regate_impact_analyze", "activate": "regate_activate", "rollback": "regate_rollback", "test": "regate_test", "simulate": "regate_simulate", "run": "regate_run", "discover": "regate_upstream_refresh", "effect-decide": "regate_effect_decide", "effect-readback": "regate_effect_readback", "effect-compensate": "regate_effect_compensate", "task-resume-grant": "regate_task_resume_grant", "resume": "regate_resume", "graph-patch": "regate_graph_patch", "attribute-patch": "regate_attribute_patch", "attribute-add": "regate_attribute_add"}[p]
+		adminName := map[string]string{"drafts": "regate_draft_create", "draft-update": "regate_draft_patch", "validate": "regate_validate", "diff": "regate_diff", "impact": "regate_impact_analyze", "activate": "regate_activate", "rollback": "regate_rollback", "test": "regate_test", "simulate": "regate_simulate", "run": "regate_run", "discover": "regate_upstream_refresh", "effect-decide": "regate_effect_decide", "effect-readback": "regate_effect_readback", "effect-compensate": "regate_effect_compensate", "task-resume-grant": "regate_task_resume_grant", "queue-rewrap": "regate_queue_rewrap", "resume": "regate_resume", "graph-patch": "regate_graph_patch", "attribute-patch": "regate_attribute_patch", "attribute-add": "regate_attribute_add"}[p]
 		if adminName != "" {
 			result, e := s.Admin(r.Context(), adminName, v)
 			if e != nil {

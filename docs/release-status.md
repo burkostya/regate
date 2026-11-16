@@ -342,3 +342,20 @@
 - Regression tests cover both interactive and grant-backed cases,
   ensuring a newly available slot cannot bypass committed waiting
   work even with OAuth capability rotation.
+
+#### Encrypted queue key rotation (PR #36)
+
+- Management-only `regate_queue_key_usage` and `regate_queue_rewrap`
+  (admin REST equivalents `GET /api/queue-key-usage` and
+  `POST /api/queue-rewrap`) allow operators to inventory queued ciphertext
+  key IDs and re-encrypt up to 32 queued records per request under a newly
+  activated AES-256-GCM key.
+- Rewrap is a leader-fenced, all-or-nothing SQL transaction, preserving
+  queue sequence, owner/revision binding and task status; corrupt
+  authenticated ciphertext or missing old keys block the whole batch.
+- Tests cover partial-batch migration, restart without the retired key,
+  rewrap rollback on corruption, lease-holder isolation, and admin-only
+  key inventory/rekey endpoints without key material disclosure.
+- Key-retirement is **not** archival key erasure. SQLite WAL pages and
+  snapshots must obey separate retention and key-backup policies; OAuth
+  grant vault rotation remains independent.

@@ -367,3 +367,35 @@ external action may be blindly retried.
 The backlog gate is not a priority system: urgent recovery requires an
 explicitly modeled operator policy or a separate authenticated
 priority lane rather than an accidental bypass.
+
+## Bounded encrypted queue key rewrap (PR #36)
+
+Queued input is encrypted under the active key in the
+`REGATE_QUEUE_KEYS_JSON` environment keyring. For operational key rotation,
+keep the previous key **and** the newly provisioned key loaded, set the
+new key ID as `active`, then restart the Regate worker so its new process
+loads both key IDs. Do not put the key bytes in HCL, MCP arguments or SQLite.
+
+The authenticated admin endpoint `regate_queue_key_usage` (or
+`GET /api/queue-key-usage`) reveals only the active key ID and a count
+of currently queued ciphertext rows per key. To rotate outstanding entries,
+call `regate_queue_rewrap` (or `POST /api/queue-rewrap`) repeatedly.
+Each call rewraps at most 32 **still-queued** records in one SQLite write
+transaction, authenticating their original queue metadata, owner digest,
+revision, TTL and scopes before decrypting and re-encrypting with a fresh
+nonce and the current key. It does **not** claim, execute, cancel or
+change an accepted task.
+
+A rewrap fails closed and rolls back its entire batch if any referenced
+old key is unavailable, metadata does not match the task, ciphertext fails
+AES-GCM verification or leadership is lost. Key counts can change
+concurrently because the queue worker may claim tasks normally. Once
+`remaining_old_key = 0`, verify the usage endpoint again. Only then
+may the old key be retired from the **live** keyring. Retiring a key also
+means historic SQLite snapshots or WAL pages encrypted under it may
+become unrecoverable; inventory backups and retention requirements first.
+
+This procedure does **not** rotate OAuth grant keys
+(`REGATE_GRANT_KEYS_JSON`). It does not erase ciphertext from historical
+backups or SQLite WAL pages. Key custody, offsite recovery, KMS
+attestation and cryptographic erasure remain deployment responsibilities.
