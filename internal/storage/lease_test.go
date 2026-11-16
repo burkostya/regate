@@ -116,6 +116,6 @@ func TestSQLiteExecutionLeaseSchemaMigrationFromVersionOne(t *testing.T) {
     if err=upgraded.AcquireExecutionLease();err!=nil{t.Fatal(err)}
     var version int
     if err=upgraded.db.QueryRow("PRAGMA user_version").Scan(&version);err!=nil{t.Fatal(err)}
-    if version!=2 {t.Fatalf("schema v1 not upgraded to v2: %d",version)}
+    if version!=3 {t.Fatalf("schema v1 not upgraded to v3: %d",version)}
     if len(upgraded.History())!=1 {t.Fatalf("existing revision lost: %v",upgraded.History())}
 }

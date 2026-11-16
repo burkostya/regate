@@ -187,3 +187,24 @@ requires a separately designed encrypted, revocable grant store with audited
 renewal, fencing, expiry, capability restrictions and recovery semantics.
 This milestone does not implement those guarantees.
 
+### Sealed task-grant vault (schema v3, inactive authorization)
+
+The SQLite store has an **internal-only** encrypted, per-task refresh credential
+vault. AES-256-GCM keys come exclusively from `REGATE_GRANT_KEYS_JSON` and
+are never part of HCL. Associated authenticated data binds task, issuer,
+audience, provider, revision, scopes digest, expiry and generation. Grants can
+be explicitly revoked and rewrapped onto a new active key.
+
+A refresh request is treated as a potentially non-idempotent remote effect:
+before contacting a provider, the vault durably marks the grant `refreshing`.
+If a response is lost or the process stops, it becomes `needs_reauth`;
+the old credential is **not** blindly used again. A successfully verified
+new credential must be written with compare-and-swap before effects resume.
+
+No external refresh-token admission endpoint or autonomous resume is enabled
+by this milestone. In particular, the existence of a sealed credential must
+**never** be treated as evidence that an OAuth issuer authorized its use.
+Interactive continuation (fresh caller bearer) is still the only enabled
+delegated execution mode. Key rotation is manual and actual secure erasure
+of historical encrypted records and backups requires operational controls.
+

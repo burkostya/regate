@@ -1,4 +1,4 @@
-# Regate SQLite durability contract (schema version 2)
+# Regate SQLite durability contract (schema version 3)
 
 SQLite is the authoritative on-disk store for revisions, active selection,
 drafts, graph layouts, MCP task records, suspended run checkpoints, execution
@@ -50,6 +50,50 @@ remain a separate acceptance gate.
 - A task that was `working` when a process stopped is marked `failed`
   with a reconciliation diagnostic, not resumed by re-executing an unknown
   write. A task suspended for input remains checkpointed separately.
+
+## Sealed delegated capability storage (schema v3)
+
+Schema v3 adds a task-scoped `task_grants` table without changing existing
+revision, task or effect history. It contains at most one credential per
+existing delegated task. Metadata binds the grant to the original task ID,
+owner digest, HCL revision, OAuth provider, issuer, Regate audience and the
+SHA-256 of its original required scopes. None of these bindings may silently
+expand when the configuration or task is edited.
+
+Only explicit provisioning of a refresh credential is supported by the
+storage layer. `REGATE_GRANT_KEYS_JSON` supplies AES-256-GCM keys in an
+environment-only keyring:
+
+```json
+{"active":"k2","keys":{"k1":"<base64-32-byte-key>","k2":"<base64-32-byte-key>"}}
+```
+
+The current key ID, per-grant cryptographically random nonce, ciphertext,
+generation and expiry are stored. The AES-GCM authenticated data covers the
+entire authorization binding, generation, expiry and key ID; changing any
+of them or modifying ciphertext causes decryption to fail. No raw refresh,
+access or exchanged token is stored in SQLite, task records, traces, HCL or
+MCP responses. A consistent `VACUUM INTO` backup contains ciphertext; the
+keyring must be backed up separately with appropriate KMS/secret controls.
+
+The one-time `BeginTaskGrantRefresh` operation changes `active` to
+`refreshing` inside a SQL transaction **before** the caller contacts the
+authorization server. The caller must independently verify any refreshed
+issuer, audience, subject and scope before atomically rotating the sealed
+credential using generation compare-and-swap. A network failure, lost
+refresh response, crash or leader takeover transitions the grant to
+`needs_reauth`, wipes its live ciphertext and forbids automatic replay.
+Explicit revocation similarly makes the grant unusable, and a late refresh
+completion cannot resurrect it. Key rotation requires both the old and new
+key at rewrap time; after all rows have been rewrapped, old keys can be
+retired. Historical SQLite WAL pages/backups may still contain encrypted
+versions until separately retained/erased.
+
+**This is a storage-layer milestone, not active unattended OAuth delegation.**
+No public endpoint provisions grants; no external OAuth refresh flow uses
+this table yet; no crashed task is automatically replayed. The caller must
+prove explicit authorization and configure grant renewal before encrypted
+secrets may permit new effects. These are separate acceptance stages.
 
 ## Legacy file import
 
@@ -140,8 +184,9 @@ remains immutable.
 - Encryption-at-rest, KMS rotation and secure erasure of historical PII/secret
   material (the SQLite file and backups must be protected by filesystem
   permissions and deployment controls).
-- Durable audience-restricted OAuth capability grants for asynchronously
-  resumed work; raw bearer tokens must not be persisted.
+- Protected, owner-verified OAuth refresh issuance and actual unattended
+  task scheduling/continuation are not yet connected to the sealed vault.
+  A grant cannot currently authorize effects by itself.
 
 These are part of issue #6 and the release/security acceptance gates. SQLite
 migration alone does **not** prove the entire Regate v1 durability contract.
