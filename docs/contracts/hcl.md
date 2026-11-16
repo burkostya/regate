@@ -74,13 +74,18 @@ SQLite waiting queue (default 0, maximum 4096). A queue requires a separate
 `REGATE_QUEUE_KEYS_JSON` keyring with 32-byte AES-256-GCM keys. Without keys
 the system must not persist queued arguments in plaintext.
 
-Pending storage support is currently restricted to non-OAuth tasks; an
-expired bearer cannot be reused to execute sensitive queued work.
-A queue entry stores original inputs encrypted, bound to task owner/revision
-and TTL, and is claimable in FIFO order by the future dispatcher. Until
-the dispatcher is wired into task start and service recovery,
-`max_queued_tasks` is only a declarative capacity; it does **not** imply
-that the current HTTP/MCP runtime will automatically queue and run requests.
+Deferred execution supports non-OAuth tasks without caller-delegated
+credentials or required scopes. An expired bearer cannot be reused to
+execute sensitive queued work. A queue entry stores original inputs
+encrypted, bound to task owner/revision, original trust requirements and
+TTL. The live dispatcher claims work in FIFO order when an active task slot
+is available, including after restart. A claimed task interrupted before
+completion is failed closed rather than automatically replayed.
+
+`max_queued_tasks` controls only admission and queue size; it does not
+promise cross-principal fairness, guaranteed delivery, or authorization to
+reissue an uncertain external effect. The queue requires
+`REGATE_QUEUE_KEYS_JSON` to be available when enabled.
 
 ### Compilation before activation
 

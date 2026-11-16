@@ -22,6 +22,8 @@ type Service struct {
 	rev           storage.Revision
 	catalog       map[string]catalogEntry
 	tasksMu       sync.Mutex
+    queueOnce sync.Once
+    queueWake chan struct{}
 	subscriptions subscriptionBus
 	inbound       *inboundMCP
 }
@@ -54,6 +56,10 @@ func New(stateDir, source string) (*Service, error) {
         _=store.Close()
 		return nil, fmt.Errorf("persisted active config: %w", e)
 	}
+    if cfg.MaxQueuedTasks>0 && !store.HasTaskQueueKeys() {
+        _=store.Close()
+        return nil,fmt.Errorf("start encrypted queue: %w",storage.ErrTaskQueueKeyUnavailable)
+    }
     if e=store.AcquireExecutionLease();e!=nil {
         _=store.Close()
         return nil,fmt.Errorf("start execution leader: %w",e)
@@ -64,6 +70,13 @@ func New(stateDir, source string) (*Service, error) {
         _=store.Close()
         return nil, fmt.Errorf("initialize MCP server: %w", e)
     }
+    depth,err:=store.QueueDepth(context.Background())
+    if err!=nil {_=store.Close();return nil,err}
+    if depth>0 && !store.HasTaskQueueKeys() {
+        _=store.Close()
+        return nil,fmt.Errorf("queued inputs require keys: %w",storage.ErrTaskQueueKeyUnavailable)
+    }
+    if cfg.MaxQueuedTasks>0 || depth>0 {svc.startQueueDispatcher()}
     return svc, nil
 }
 func (s *Service) Current() (*config.Config, storage.Revision) {
@@ -81,6 +94,9 @@ func (s *Service) Activate(id string) (storage.Revision, error) {
 	if e != nil {
 		return storage.Revision{}, e
 	}
+    if cfg.MaxQueuedTasks>0 && !s.Store.HasTaskQueueKeys() {
+        return storage.Revision{},storage.ErrTaskQueueKeyUnavailable
+    }
 	next, revision, e := s.inbound.prepare(s, cfg)
     if e != nil { return storage.Revision{}, fmt.Errorf("prepare MCP catalog: %w", e) }
     s.mu.Lock()
@@ -95,6 +111,7 @@ func (s *Service) Activate(id string) (storage.Revision, error) {
     s.rev = rev
     s.catalog = map[string]catalogEntry{}
     s.mu.Unlock()
+    if cfg.MaxQueuedTasks>0 {s.startQueueDispatcher()}
 	s.subscriptions.emit("notifications/tools/list_changed")
 	s.subscriptions.emit("notifications/resources/list_changed")
 	s.subscriptions.emit("notifications/prompts/list_changed")
@@ -109,6 +126,9 @@ func (s *Service) Rollback(target string) (storage.Revision, error) {
 	if e != nil {
 		return storage.Revision{}, e
 	}
+    if cfg.MaxQueuedTasks>0 && !s.Store.HasTaskQueueKeys() {
+        return storage.Revision{},storage.ErrTaskQueueKeyUnavailable
+    }
 	next, revision, e := s.inbound.prepare(s, cfg)
     if e != nil { return storage.Revision{}, fmt.Errorf("prepare MCP catalog: %w", e) }
     s.mu.Lock()
@@ -123,6 +143,7 @@ func (s *Service) Rollback(target string) (storage.Revision, error) {
     s.rev = rev
     s.catalog = map[string]catalogEntry{}
     s.mu.Unlock()
+    if cfg.MaxQueuedTasks>0 {s.startQueueDispatcher()}
 	s.subscriptions.emit("notifications/tools/list_changed")
 	s.subscriptions.emit("notifications/resources/list_changed")
 	s.subscriptions.emit("notifications/prompts/list_changed")
@@ -154,8 +175,21 @@ func (s *Service) Discover(ctx context.Context, name string, refresh bool) (cata
     return e,err
 }
 func (s *Service) Status() map[string]any {
-	cfg, rev := s.Current()
-	return map[string]any{"name": "regate", "version": "0.1.0", "revision": rev.ID, "listen": cfg.Listen, "upstreams": len(cfg.Upstreams), "surfaces": len(cfg.Surfaces), "pipelines": len(cfg.Pipelines), "hooks": len(cfg.Hooks), "policies": len(cfg.Policies), "http_only": true}
+    cfg,rev:=s.Current()
+    state:=map[string]any{
+        "name":"regate","version":"0.1.0","revision":rev.ID,"listen":cfg.Listen,
+        "upstreams":len(cfg.Upstreams),"surfaces":len(cfg.Surfaces),
+        "pipelines":len(cfg.Pipelines),"hooks":len(cfg.Hooks),
+        "policies":len(cfg.Policies),"http_only":true,
+        "max_active_tasks":cfg.MaxActiveTasks,"max_queued_tasks":cfg.MaxQueuedTasks,
+    }
+    if active,err:=s.Store.ActiveTaskCount(context.Background());err==nil {
+        state["active_tasks"]=active
+    }
+    if queued,err:=s.Store.QueueDepth(context.Background());err==nil {
+        state["queued_tasks"]=queued
+    }
+    return state
 }
 func (s *Service) Inspect(name string) map[string]any {
 	cfg, _ := s.Current()

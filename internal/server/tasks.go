@@ -114,14 +114,32 @@ func (s *Service) createTaskFor(ctx context.Context,cfg *config.Config,revision 
         RedactPII:published.OAuth!="" && !selected.AllowUnmasked,
         TTLMS:3600000,PollIntervalMS:1000,
     }
-	if e := s.Store.AdmitWorkingTask(ctx,task,cfg.MaxActiveTasks); e != nil {
+    // Only nondelegated, unscoped, non-OAuth requests can enter an encrypted
+    // waiting queue. Protected tasks still need a fresh user authorization or
+    // a specifically delegated task grant and therefore apply backpressure.
+    eligibleQueue:=cfg.MaxQueuedTasks>0 && published.OAuth=="" &&
+        !delegated && len(task.RequiredScopes)==0 && !task.RedactPII
+    if eligibleQueue {
+        queued,err:=s.Store.AdmitOrQueueTask(ctx,task,args,cfg.MaxActiveTasks,cfg.MaxQueuedTasks)
+        if err!=nil {cancel();return nil,err}
+        if queued {
+            cancel()
+            s.startQueueDispatcher()
+            committed,err:=s.Store.TaskGet(task.TaskID)
+            if err!=nil{return nil,err}
+            result:=committed.Public()
+            result["resultType"]="task"
+            return result,nil
+        }
+    } else if e:=s.Store.AdmitWorkingTask(ctx,task,cfg.MaxActiveTasks);e!=nil {
         cancel()
-		return nil, e
-	}
+        return nil,e
+    }
 	running.Store(task.TaskID, context.CancelFunc(cancel))
 	go func() {
 		defer cancel()
 		defer running.Delete(task.TaskID)
+        defer s.signalQueue()
 		out, err := s.Engine.Run(runctx, revision, cfg, surface, tool, args, false)
 		// Persist status under a per-task mutex to avoid races with cancel/update.
 		s.tasksMu.Lock()
@@ -259,6 +277,7 @@ func (s *Service) TaskUpdateWithContext(ctx context.Context,id, owner string, in
 	go func() {
 		defer cancel()
 		defer running.Delete(id)
+        defer s.signalQueue()
 		out, err := s.Engine.Resume(runctx, cfg, t.Revision, t.RunID, value)
 		s.tasksMu.Lock()
 		defer s.tasksMu.Unlock()
@@ -288,6 +307,13 @@ func (s *Service) TaskCancel(id, owner string) (map[string]any, error) {
 	if !allowedOwner(t, owner) {
 		return nil, fmt.Errorf("task not found")
 	}
+    if t.Status=="queued" {
+        if err:=s.Store.CancelQueuedTask(context.Background(),id,t.OwnerDigest);err!=nil {
+            return nil,err
+        }
+        s.signalQueue()
+        return map[string]any{},nil
+    }
 	if t.Status == "working" || t.Status == "input_required" {
 		if v, ok := running.Load(id); ok {
 			v.(context.CancelFunc)()
@@ -303,6 +329,7 @@ func (s *Service) TaskCancel(id, owner string) (map[string]any, error) {
         if t.Delegation!=nil {
             _=s.Store.RevokeTaskGrant(context.Background(),id,t.OwnerDigest)
         }
+        s.signalQueue()
 	}
 	return map[string]any{}, nil
 }
