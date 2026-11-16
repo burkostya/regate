@@ -18,7 +18,6 @@ import (
     "os"
     "path/filepath"
     "sort"
-    "strings"
     "sync"
     "time"
 
@@ -503,16 +502,11 @@ func safeName(s string)bool {
     return true
 }
 
-// Backup creates a consistent standalone SQLite snapshot without copying an
-// in-use WAL file. Its destination must not exist (no implicit overwrite).
+// Backup retains the established simple API while publishing only a
+// verified, complete snapshot with no-overwrite semantics.
 func (s *Store) Backup(destination string)error {
-    if strings.TrimSpace(destination)==""{return fmt.Errorf("empty backup path")}
-    absolute,err:=filepath.Abs(destination)
-    if err!=nil{return err}
-    if _,err=os.Stat(absolute);err==nil{return fmt.Errorf("backup already exists")}
-    if !errors.Is(err,os.ErrNotExist){return err}
-    if _,err=s.db.Exec("VACUUM INTO ?",absolute);err!=nil{return err}
-    return os.Chmod(absolute,0600)
+    _,err:=s.BackupVerified(destination)
+    return err
 }
 
 // SortEffects provides deterministic ordering for model checking and

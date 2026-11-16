@@ -2,7 +2,7 @@
 
 **Regate** is an experimental, HTTP-only **MCP gateway and virtual-tool composition engine** written in Go, with a declarative HCL2 configuration, programmable HTTP/MCP hooks, a management MCP endpoint and a SvelteKit + Svelte Flow console.
 
-> **Release status: engineering prototype (v0.1), not production-ready and not the complete agreed v1.** The compiler now parses **HCL2/cty** and compiles bounded **CEL** into a typed IR, but **cross-port JSON Schema verification is still incomplete**. Upstream MCP HTTP calls now use the official Go SDK, while inbound public/admin MCP transports are still a hand-written subset, and persistence is file-backed (not SQLite). SvelteKit type checking/build passes GitHub CI; browser end-to-end testing remains outstanding. See [Implemented and missing](docs/release-status.md) before any deployment.
+> **Release status: engineering prototype (v0.1), not production-ready and not the complete agreed v1.** The compiler parses **HCL2/cty** into a typed, bounded **CEL**-based IR; MCP client and inbound public/admin endpoints use the official Go SDK with narrow documented compatibility routes. SQLite stores revisions, effects, grants and bounded encrypted asynchronous queues. OAuth verification and RFC 8693 exchange, signed/typed effect reconciliation and explicitly authorized compensation are implemented in stages, but real-provider attestations, full JSON Schema interoperability, upstream idempotency/fencing, secure operational key lifecycle and browser end-to-end testing remain incomplete. See [Implemented and missing](docs/release-status.md) before deployment.
 
 ## What you can experiment with now
 
@@ -11,12 +11,33 @@
 - Discover upstream tools, proxy existing MCP tool results, publish local resources and prompts.
 - Inspect, draft, validate, diff, activate and roll back configuration through a **separate authenticated management MCP** and matching REST API.
 - Use stateless MCP `2026-07-28` discovery/tools/tasks/skills requests and local `subscriptions/listen` change notifications; legacy `initialize` has basic compatibility.
-- Run dry-run scenarios with mocks, inspect traces and file-backed effect journal; use durable task IDs and suspended-run checkpoints.
+- Run dry-run scenarios with mocks, inspect durable SQLite traces and effect journal; use task IDs, encrypted bounded queues and suspended-run checkpoints.
 - View/edit a graph and its HCL from a SvelteKit/Svelte Flow console (requires external npm dependencies).
 
 ## Requirements
 
 Backend: Go **1.25+**, using pinned HCL2, cty and CEL modules (see `go.mod`/`go.sum`). Frontend: Node 22+, npm and connectivity to npm for its dependencies. Real MCP adapters require compliant upstream servers; the demo includes local fixtures.
+
+## Verify a SQLite backup offline
+
+A Regate SQLite backup should be created through the server's
+`storage.Store.Backup` / `BackupVerified` API (WAL-consistent
+`VACUUM INTO`, verified and atomically published). To verify an existing
+snapshot without starting the server or requiring `REGATE_ADMIN_TOKEN`:
+
+```sh
+go run ./cmd/regate -verify-backup /path/to/regate.sqlite
+```
+
+The output is a non-secret JSON manifest including schema, current
+revision, record counts, file size and SHA-256. It does not include
+HCL source or encrypted task input. Save any required grant/queue
+encryption keys in separate protected key escrow; SQLite structural
+verification does not validate those external secrets or prove any
+remote resource state. A snapshot also includes the execution lease of
+its source; do not start a restored worker against the same upstream
+services until the original worker is stopped/fenced and the copied
+lease has expired.
 
 ## Run a complete local demonstration
 

@@ -3,21 +3,39 @@ package main
 import (
 	"context"
 	"flag"
+    "encoding/json"
 	"fmt"
 	"log"
+    "io"
 	"net"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/burkostya/regate/internal/server"
+    "github.com/burkostya/regate/internal/storage"
 )
+
+func verifyBackupToWriter(path string,w io.Writer)error {
+    manifest,err:=storage.VerifyBackup(path)
+    if err!=nil{return err}
+    return json.NewEncoder(w).Encode(manifest)
+}
 
 func main() {
 	file := flag.String("config", "examples/regate.hcl", "HCL configuration source")
 	state := flag.String("state", ".state", "persistent state directory")
 	listen := flag.String("listen", "", "override HTTP listen address")
+    verifyBackup:=flag.String("verify-backup","","verify standalone SQLite backup and print non-secret JSON manifest")
 	flag.Parse()
+    if *verifyBackup!="" {
+        // Verification is intentionally read-only and works without a
+        // running Regate service, admin bearer or live configuration.
+        if err:=verifyBackupToWriter(*verifyBackup,os.Stdout);err!=nil {
+            log.Fatal(err)
+        }
+        return
+    }
 	b, e := os.ReadFile(*file)
 	if e != nil {
 		log.Fatal(e)

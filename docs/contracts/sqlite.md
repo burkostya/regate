@@ -120,11 +120,46 @@ their lifecycle is operator-managed.
 
 ## Backup, verification and limitations
 
-`Store.Backup(path)` uses `VACUUM INTO` to produce a consistent standalone
-SQLite snapshot while the source database is WAL-backed. It does not overwrite
-an existing backup. An operator should verify that a backup can be opened and
-read by SQLite; filesystem snapshots of only the main DB file while WAL is
-active are **not** adequate.
+`Store.Backup(path)` (and `Store.BackupVerified(path)`) use
+`VACUUM INTO` to produce a consistent standalone SQLite snapshot while the
+source database is WAL-backed. The snapshot is created in a new private
+(`0700`) staging directory, set to `0600`, synced and **verified before
+publication**. Publishing via a no-overwrite hard link is atomic: an
+existing destination, including a dangling symlink, is never replaced.
+Failures clean the staging directory without exposing an incomplete final
+backup. The staging directory and final path must share a filesystem.
+
+`VerifyBackup(path)` checks SQLite `PRAGMA integrity_check` and
+`foreign_key_check`, the expected current schema, nonempty and
+digest-consistent immutable HCL revision history, effect-current to
+latest-event projection consistency, and basic task/queue/grant table
+presence. It returns a non-secret manifest (revision ID, table counts,
+file size and SHA-256). It neither runs migrations nor invokes task
+recovery. Files with unsafe permissions or symlinks are refused.
+
+Offline verification is available without a running Regate service or admin
+bearer:
+
+```sh
+go run ./cmd/regate -verify-backup /secure/backups/regate.sqlite
+```
+
+Store the reported SHA-256 in an independently protected backup inventory.
+A verified SQLite file is **not** proof that remote effects were reconciled,
+or that the external `REGATE_GRANT_KEYS_JSON` /
+`REGATE_QUEUE_KEYS_JSON` encryption keys are available for restore.
+Keep the necessary key versions in a separately protected KMS/secret backup,
+and test disaster recovery in an isolated environment. Filesystem snapshots
+of only the main DB file while WAL is active are **not** adequate.
+
+The snapshot preserves any active SQLite execution-leader lease as of backup
+time. A restored copy must **not** start external execution while the
+original worker may still be alive or its lease is valid. An observer may
+inspect the copy without taking leadership. Only after the original
+environment has been fenced/stopped and the copied lease has expired may
+the new worker promote itself; takeover then marks interrupted tasks
+`failed` and dispatched but unconfirmed effects `unknown`. Merely
+restoring to another state directory is **not** remote-service fencing.
 
 Tests cover restart, preserved ambiguous effects, task fail-closed recovery,
 consistent backup, transactional import including all state domains, corrupt

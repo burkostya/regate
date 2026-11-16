@@ -375,3 +375,25 @@
   tasks, tamper-induced rollback, ownership-turn cleanup and lease fencing.
 - Historical WAL/backup retention and cryptographic erasure are still
   operational security gates. Issue #6 remains open.
+
+#### Verified and atomically published SQLite backup (PR #38)
+
+- `Store.BackupVerified` creates a WAL-consistent `VACUUM INTO` copy inside a
+  temporary `0700` directory, forces `0600` file permissions,
+  verifies it, syncs it and publishes through an atomic no-overwrite
+  hard link. Failed or racing publishers cannot expose partial snapshots.
+- Read-only `VerifyBackup` checks SQLite page integrity, foreign keys,
+  immutable revision digest/parent chain and append-only effect journal
+  projections, then returns a non-secret SHA-256/count manifest.
+  Corrupt, world-readable or symlink snapshots are rejected.
+- `regate -verify-backup PATH` permits offline verification without
+  starting a Regate service, importing an HCL source, acquiring an
+  execution lease, mutating tasks or supplying an admin bearer.
+- Tests include all persisted state domains, concurrent backup publishers,
+  encrypted grants/queue snapshot, deliberate revision/effect corruption,
+  truncation, unsafe permissions, symlinks and offline CLI output. A copied
+  *live lease* blocks premature restored-worker promotion; only after
+  original worker fencing and lease expiry is fail-closed recovery allowed.
+- Structural backup validation is **not** resource proof, guarantee of
+  external keyring availability, independent KMS/retention compliance or
+  a completed disaster-recovery drill. #6 remains open.
