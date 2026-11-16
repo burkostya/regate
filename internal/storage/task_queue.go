@@ -62,11 +62,18 @@ func queuedAAD(task TaskRecord,keyID string)[]byte {
         Revision string `json:"revision"`
         Surface string `json:"surface"`
         Tool string `json:"tool"`
+        CreatedNS int64 `json:"created_ns"`
+        TTLMS int64 `json:"ttl_ms"`
+        ScopesDigest string `json:"scopes_digest"`
+        RedactPII bool `json:"redact_pii"`
         Key string `json:"key"`
     }{
         Domain:"regate/task-queue/aes-256-gcm/v1",
         TaskID:task.TaskID,Owner:task.OwnerDigest,Revision:task.Revision,
-        Surface:task.Surface,Tool:task.Tool,Key:keyID,
+        Surface:task.Surface,Tool:task.Tool,
+        CreatedNS:task.CreatedAt.UnixNano(),TTLMS:task.TTLMS,
+        ScopesDigest:digestTaskScopes(task.RequiredScopes),
+        RedactPII:task.RedactPII,Key:keyID,
     })
     return data
 }
