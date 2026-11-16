@@ -58,9 +58,10 @@ migration rollback, and conflicting writers.
 
 ### Not yet supported by this milestone
 
-- Verified read-back reconciliation adapters and policy-based compensation
-  for arbitrary external effects; unknown outcomes require a deliberate
-  reconciliation workflow.
+- Configurable verified external read-back adapters and policy-based
+  compensation for arbitrary resources. A typed readback verification
+  interface, stable effect IDs and operator-resolution journal now exist
+  (PR #21), but verified adapters must still be supplied per resource.
 - Execution leases, crash-safe preemption and multi-instance scheduling;
   operations that require coordination across live workers need fencing.
 - Encryption-at-rest, KMS rotation and secure erasure of historical PII/secret

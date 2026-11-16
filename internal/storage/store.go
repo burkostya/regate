@@ -60,9 +60,11 @@ type Effect struct {
     RunID string `json:"run_id"`
     Node string `json:"node"`
     Operation string `json:"operation"`
+    IntentDigest string `json:"intent_digest,omitempty"`
     Status string `json:"status"`
     At time.Time `json:"at"`
     Reason string `json:"reason,omitempty"`
+    Resolution *EffectResolution `json:"resolution,omitempty"`
 }
 
 // The single-connection pool makes all store-level operations serial without

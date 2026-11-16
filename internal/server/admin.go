@@ -12,6 +12,7 @@ import (
 
 	"github.com/burkostya/regate/internal/config"
 	"github.com/burkostya/regate/internal/engine"
+    "github.com/burkostya/regate/internal/storage"
 )
 
 type Arg struct {
@@ -45,6 +46,12 @@ var AdminTools = map[string][]Arg{
 	"regate_resume":           {{"run_id", "Suspended run", true}, {"value", "Resume result", false}},
 	"regate_revisions":        {},
 	"regate_effects":          {},
+    "regate_effect_decide": {
+        {"effect_id", "Unknown effect ID", true},
+        {"actor", "Operator or service identity (audited statement)", true},
+        {"verdict", "applied or absent", true},
+        {"reason", "Reason for explicit operator decision; secrets are masked", true},
+    },
 }
 
 func AdminDefs() []map[string]any {
@@ -144,6 +151,12 @@ func (s *Service) Admin(ctx context.Context, name string, args map[string]any) (
 		return s.Store.History(), nil
 	case "regate_effects":
 		return s.Store.Effects(), nil
+    case "regate_effect_decide":
+        id:=str(args,"effect_id")
+        current,err:=s.Store.EffectGet(id)
+        if err!=nil{return nil,err}
+        if current.Status!="unknown" {return nil,storage.ErrEffectUnresolved}
+        return s.Store.ResolveByOperator(id,str(args,"actor"),str(args,"verdict"),str(args,"reason"))
 	case "regate_hook_inspect":
 		h, ok := cfg.Hooks[str(args, "name")]
 		if !ok {
