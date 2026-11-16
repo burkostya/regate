@@ -299,3 +299,19 @@ inspection, rather than being silently skipped. Production priority
 policies, external remote fencing, secure key lifecycle and chaos/load
 verification remain required. Ciphertext in WAL/backups needs retention
 controls.
+
+## FIFO precedence at admission (PR #33)
+
+The active slot and queue depth are inspected under the **same SQLite write
+transaction** when a new eligible task arrives. If an older encrypted entry
+exists, the new task joins behind it even when an active slot has just become
+free but the dispatcher has not yet claimed the head. If that bounded queue
+is full, the newcomer is rejected rather than barging ahead. Disabling
+`max_queued_tasks` in a later HCL revision stops **new** queue admissions
+and also rejects otherwise-eligible fresh work until the previously
+committed backlog drains; accepted older tasks retain their place.
+
+This enforces FIFO among nondelegated queue-eligible jobs across activation
+boundaries. It does not schedule OAuth-protected jobs with expired subject
+tokens, nor claim user-level weighted fairness or strict order of completion
+once parallel workers are enabled.

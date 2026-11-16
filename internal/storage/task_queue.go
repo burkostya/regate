@@ -142,17 +142,20 @@ func (s *Store) AdmitOrQueueTask(ctx context.Context,task TaskRecord,
     if err=s.checkExecutionLeaseTx(tx);err!=nil{return false,err}
     count,err:=workingTaskCountTx(tx)
     if err!=nil{return false,err}
+    // FIFO precedence must hold even when a slot becomes free between
+    // queue admission and a dispatcher claim. New work may not cut ahead of
+    // earlier, already accepted waiting work.
+    var waiting int
+    if err=tx.QueryRow("SELECT COUNT(*) FROM task_queue").Scan(&waiting);err!=nil{return false,err}
     queued:=false
     var keyID string
     var nonce,ciphertext []byte
-    if count>=maxActive {
+    if count>=maxActive || waiting>0 {
         if maxQueued==0 {return false,ErrTaskCapacity}
         if s.queueKeys==nil {return false,ErrTaskQueueKeyUnavailable}
-        if task.Delegation!=nil || len(task.RequiredScopes)!=0 {
+        if task.Delegation!=nil || len(task.RequiredScopes)!=0 || task.RedactPII {
             return false,ErrTaskCapacity
         }
-        var waiting int
-        if err=tx.QueryRow("SELECT COUNT(*) FROM task_queue").Scan(&waiting);err!=nil{return false,err}
         if waiting>=maxQueued{return false,ErrTaskQueueFull}
         queued=true
         task.Status="queued"

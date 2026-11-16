@@ -298,3 +298,15 @@
 - Still outstanding: fairness per principal, priority and quota scheduling,
   provider-enforced idempotency/fencing, sensitive-data retention,
   real load/chaos/security audit and full v1 release scenarios.
+
+#### FIFO queue admission precedence (PR #33)
+
+- New queue-eligible tasks cannot skip previously accepted encrypted FIFO
+  entries just because execution capacity opens before the dispatcher claims
+  the old head; capacity and queue depth are read in one SQL transaction.
+- Queue overflow is rejected rather than bypassing earlier work. Disabling
+  queue admission in a later revision leaves existing accepted work intact,
+  and blocks new eligible tasks until that backlog drains.
+- Regression tests cover order of dequeue, freed-slot races, full queue
+  handling and HCL queue-disable semantics. Per-principal fairness and
+  priority queues are separate remaining issues.
