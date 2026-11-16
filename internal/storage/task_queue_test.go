@@ -167,14 +167,14 @@ func TestTaskQueueRejectsTamperingAndExpiredWork(t *testing.T){
     }
     awaiting:=capacityTask(s,"working")
     busy:=capacityTask(s,"working")
-    if _,err=s.AdmitOrQueueTask(context.Background(),busy,map[string]any{},1,3);err!=nil{t.Fatal(err)}
-    if _,err=s.AdmitOrQueueTask(context.Background(),awaiting,
+    if _,err:=s.AdmitOrQueueTask(context.Background(),busy,map[string]any{},1,3);err!=nil{t.Fatal(err)}
+    if _,err:=s.AdmitOrQueueTask(context.Background(),awaiting,
         map[string]any{"secret":"protected"},1,3);err!=nil{t.Fatal(err)}
-    if _,err=s.db.Exec("UPDATE task_queue SET revision=? WHERE task_id=?",
+    if _,err:=s.db.Exec("UPDATE task_queue SET revision=? WHERE task_id=?",
         "tampered-revision",awaiting.TaskID);err!=nil{t.Fatal(err)}
     busy.Status="completed"
-    if err=s.TaskPut(busy);err!=nil{t.Fatal(err)}
-    if _,_,err=s.ClaimNextQueued(context.Background(),1);!errors.Is(err,ErrTaskQueueKeyUnavailable){
+    if err:=s.TaskPut(busy);err!=nil{t.Fatal(err)}
+    if _,_,err:=s.ClaimNextQueued(context.Background(),1);!errors.Is(err,ErrTaskQueueKeyUnavailable){
         t.Fatalf("tampered queue metadata accepted: %v",err)
     }
     waiting,err:=s.TaskGet(awaiting.TaskID)
