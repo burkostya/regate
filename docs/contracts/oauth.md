@@ -245,3 +245,39 @@ failed task, repeat an unknown effect or ignore cancellation and revocation.
 The next acceptance stage must enforce grant state again at each actual
 effect boundary, atomically rotate the refresh credential before execution
 and refuse unsafe crash recovery.
+
+### Explicit grant-backed delegated continuation (PR #29)
+
+Regate now exposes an **admin-authorized, explicit** continuation of an
+already-suspended delegated task, using a previously provisioned sealed
+refresh credential: `regate_task_resume_grant` or
+`POST /api/task-resume-grant`. This is not an unattended scheduler or a
+general mechanism to restart failed work. The task must remain
+`input_required`, with its original durable checkpoint and active grant;
+an expired/unknown/revoked grant or a failed or completed task is rejected.
+
+Admission atomically reserves the checkpoint's task (`working`,
+`refreshing_grant`) and grant (`refreshing`) **before** contacting the OAuth
+provider. Two concurrent resumptions cannot consume the same checkpoint.
+After a fresh, verified refresh response, the rotated credential is
+encrypted and committed with generation-CAS before a new access token is
+used for target-audience RFC 8693 exchange. The new bearer exists in memory
+only and is bound by its expiry and the task execution deadline.
+
+Every delegated MCP/HTTP effect admission checks that the original task
+is still active and that its exact grant generation remains active.
+Cancellation or explicit grant revocation fences subsequent effects; an
+already in-flight remote request cannot be revoked without the upstream's
+own idempotency/fencing guarantees. Unknown external writes are still
+never retried. If the refresh response is missing/invalid, or the process
+crashes during rotation, the task fails closed, the grant becomes
+`needs_reauth`, and the old checkpoint is retained for inspection.
+
+The administrator does not receive the refreshed token or impersonate a
+user: the server validates the owner from the IdP's signed or introspected
+resource-audience access token, and the effective authorization remains
+bound to the task's original issuer, audience, subject, scopes and HCL
+revision. This **explicit** continuation is not automatic cross-process
+recovery. Automatic durable scheduling, stronger revocation guarantees,
+secure credential key lifecycle and real-provider verification remain
+release gates.
