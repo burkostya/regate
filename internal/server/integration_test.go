@@ -145,6 +145,7 @@ func fixture(t *testing.T) (*Service, *httptest.Server, *mockWorld) {
 	if e != nil {
 		t.Fatal(e)
 	}
+    t.Cleanup(func(){_ = svc.Store.Close()})
 	api := httptest.NewServer(svc.Handler())
 	t.Cleanup(api.Close)
 	return svc, api, world
@@ -476,10 +477,12 @@ func TestUnknownEffectJournalAndTraceRestart(t *testing.T) {
 	if len(first) == 0 {
 		t.Fatal("no traces before restart")
 	}
-	restarted, err := New(state, source)
+	if err := svc.Store.Close();err != nil {t.Fatal(err)}
+    restarted, err := New(state, source)
 	if err != nil {
 		t.Fatal(err)
 	}
+    defer restarted.Store.Close()
 	if len(restarted.Store.Traces()) != len(first) {
 		t.Fatal("traces not restored after restart")
 	}
