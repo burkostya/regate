@@ -10,6 +10,8 @@ import (
     "fmt"
     "strings"
     "time"
+
+    "github.com/burkostya/regate/internal/expr"
 )
 
 var ErrEffectAlreadyAttempted = errors.New("effect already dispatched or resolved; no automatic replay")
@@ -180,7 +182,7 @@ func (s *Store) ResolveByOperator(id,actor,verdict,reason string)(Effect,error) 
     if err!=nil{return Effect{},err}
     evidence:=EffectResolution{
         Kind:"operator",Verdict:verdict,Verifier:actor,
-        Reason:reason,At:time.Now().UTC(),
+        Reason:expr.RedactDiagnostic(reason),At:time.Now().UTC(),
     }
     return s.recordResolution(current,evidence)
 }
