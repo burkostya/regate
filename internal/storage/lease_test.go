@@ -33,6 +33,8 @@ func TestSQLiteExecutionLeaseRejectsSecondActiveWorker(t *testing.T) {
     task:=TaskRecord{TaskID:ID(),Status:"working",OwnerDigest:"owner",
         Surface:"support",Revision:rev.ID,TTLMS:3600000}
     if err=leader.TaskPut(task);err!=nil{t.Fatal(err)}
+    pending,err:=leader.BeginEffect("live-run","create","crm.create",map[string]any{"id":3})
+    if err!=nil{t.Fatal(err)}
     // The first observer opened before TaskPut. A fresh observer still cannot
     // run automatic recovery while this leader is alive.
     third,err:=New(dir,initSource())
@@ -47,11 +49,15 @@ func TestSQLiteExecutionLeaseRejectsSecondActiveWorker(t *testing.T) {
         t.Fatalf("released execution lease could not be acquired: %v",err)
     }
     if err=observer.CheckExecutionLease(context.Background());err!=nil {t.Fatal(err)}
-    // An explicit new owner recovers orphan tasks on takeover. Nothing is
-    // replayed: it only marks the previously working task failed.
-    if err=observer.RecoverInterruptedTasks();err!=nil{t.Fatal(err)}
+    // Acquisition itself recovers orphaned work atomically under its new
+    // fencing epoch, even though this observer opened before the old
+    // leader released the lease.
     recovered,err:=observer.TaskGet(task.TaskID)
     if err!=nil || recovered.Status!="failed" {t.Fatalf("takeover recovery incorrect: %#v %v",recovered,err)}
+    effect,err:=observer.EffectGet(pending.ID)
+    if err!=nil || effect.Status!="unknown" {
+        t.Fatalf("abandoned dispatch was not marked unknown during takeover: %#v %v",effect,err)
+    }
 }
 
 func TestSQLiteFencingEpochRejectsOldWorkerAfterTakeover(t *testing.T) {
