@@ -220,7 +220,7 @@ func TestVaultV2MigrationPreservesExistingTasks(t *testing.T){
     defer up.Close()
     var version int
     if err=up.db.QueryRow("PRAGMA user_version").Scan(&version);err!=nil{t.Fatal(err)}
-    if version!=4 {t.Fatalf("v2 did not migrate to v4: %d",version)}
+    if version!=5 {t.Fatalf("v2 did not migrate to v5: %d",version)}
     if _,err=up.TaskGet(task.TaskID);err!=nil{t.Fatalf("task lost during v3 migration: %v",err)}
 }
 func TestVaultConcurrentGrantAdmissionSingleWinner(t *testing.T){
