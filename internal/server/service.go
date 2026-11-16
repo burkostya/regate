@@ -46,15 +46,24 @@ func New(stateDir, source string) (*Service, error) {
 	}
 	rev, active, e := store.Active()
 	if e != nil {
+        _=store.Close()
 		return nil, e
 	}
 	cfg, e := config.Decode(active)
 	if e != nil {
+        _=store.Close()
 		return nil, fmt.Errorf("persisted active config: %w", e)
 	}
+    if e=store.AcquireExecutionLease();e!=nil {
+        _=store.Close()
+        return nil,fmt.Errorf("start execution leader: %w",e)
+    }
 	svc := &Service{Store: store, Engine: engine.New(store), cfg: cfg, rev: rev, catalog: map[string]catalogEntry{}}
     svc.inbound, e = newInboundMCP(svc, cfg, rev.ID)
-    if e != nil { return nil, fmt.Errorf("initialize MCP server: %w", e) }
+    if e != nil {
+        _=store.Close()
+        return nil, fmt.Errorf("initialize MCP server: %w", e)
+    }
     return svc, nil
 }
 func (s *Service) Current() (*config.Config, storage.Revision) {
