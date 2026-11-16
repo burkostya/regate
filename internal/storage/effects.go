@@ -64,7 +64,25 @@ func (s *Store) EffectGet(id string)(Effect,error) {
 //
 // This intentionally prefers a false "unknown" to duplicate writes after a
 // crash between journaling and actually sending the network packet.
+// TargetDigest binds evidence to the actual remote endpoint, not merely a
+// human-readable upstream alias. It is domain-separated and never stores URLs.
+func TargetDigest(transport,endpoint string)string {
+    h:=sha256.Sum256([]byte(transport+"\\x00"+endpoint))
+    return hex.EncodeToString(h[:])
+}
+
 func (s *Store) BeginEffect(runID,node,operation string,arguments any)(Effect,error) {
+    return s.BeginEffectBound(runID,node,operation,"",arguments)
+}
+
+// BeginEffectBound is the admission barrier for resource-bound MCP/HTTP writes.
+// Legacy entries with no target fingerprint remain blocked from automatic
+// replay, but cannot be automatically reconciled with a new bound adapter.
+func (s *Store) BeginEffectBound(runID,node,operation,targetDigest string,arguments any)(Effect,error) {
+    if targetDigest!="" {
+        if len(targetDigest)!=64{return Effect{},ErrInvalidEvidence}
+        if _,err:=hex.DecodeString(targetDigest);err!=nil{return Effect{},ErrInvalidEvidence}
+    }
     if runID=="" || node=="" || operation=="" {return Effect{},fmt.Errorf("effect identity incomplete")}
     digest,err:=DigestIntent(arguments)
     if err!=nil{return Effect{},err}
@@ -78,14 +96,14 @@ func (s *Store) BeginEffect(runID,node,operation string,arguments any)(Effect,er
     if err==nil {
         var old Effect
         if json.Unmarshal([]byte(stored),&old)!=nil{return Effect{},fmt.Errorf("corrupt effect journal")}
-        if old.IntentDigest!="" && old.IntentDigest!=digest {
+        if (old.IntentDigest!="" && old.IntentDigest!=digest) || old.TargetDigest!=targetDigest {
             return Effect{},fmt.Errorf("%w: run %s node %s",ErrEffectConflict,runID,node)
         }
         return Effect{},fmt.Errorf("%w: %s status %s",ErrEffectAlreadyAttempted,id,old.Status)
     }
     if !errors.Is(err,sql.ErrNoRows){return Effect{},err}
     e:=Effect{ID:id,RunID:runID,Node:node,Operation:operation,
-        IntentDigest:digest,Status:"dispatching",At:time.Now().UTC()}
+        IntentDigest:digest,TargetDigest:targetDigest,Status:"dispatching",At:time.Now().UTC()}
     if err=writeEffectTx(tx,e);err!=nil{return Effect{},err}
     if err=tx.Commit();err!=nil{return Effect{},err}
     return e,nil
