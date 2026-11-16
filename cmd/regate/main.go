@@ -6,6 +6,7 @@ import (
     "encoding/json"
 	"fmt"
 	"log"
+    "io"
 	"net"
 	"os"
 	"os/signal"
@@ -14,6 +15,12 @@ import (
 	"github.com/burkostya/regate/internal/server"
     "github.com/burkostya/regate/internal/storage"
 )
+
+func verifyBackupToWriter(path string,w io.Writer)error {
+    manifest,err:=storage.VerifyBackup(path)
+    if err!=nil{return err}
+    return json.NewEncoder(w).Encode(manifest)
+}
 
 func main() {
 	file := flag.String("config", "examples/regate.hcl", "HCL configuration source")
@@ -24,9 +31,7 @@ func main() {
     if *verifyBackup!="" {
         // Verification is intentionally read-only and works without a
         // running Regate service, admin bearer or live configuration.
-        manifest,err:=storage.VerifyBackup(*verifyBackup)
-        if err!=nil {log.Fatal(err)}
-        if err=json.NewEncoder(os.Stdout).Encode(manifest);err!=nil {
+        if err:=verifyBackupToWriter(*verifyBackup,os.Stdout);err!=nil {
             log.Fatal(err)
         }
         return
