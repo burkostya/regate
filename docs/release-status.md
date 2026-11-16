@@ -20,7 +20,7 @@
 | Immutable revision history + drafts | SQLite transactional implementation (PR #20); complete v1 validation pending | Atomic conflict/rollback/restart, cross-connection and legacy-import tests |
 | Dry-run with explicit mocks | Partial implementation | REST API path |
 | Effect journal (`dispatching`, `confirmed`, `unknown`) | SQLite MCP/HTTP admission, positive-only MCP readback and explicit one-time operator-approved MCP compensation. Provider-verified semantics pending (#6) | Restart, no-replay, admin auth, readback/compensation success/unknown and concurrency tests |
-| Async MCP tasks, cancellation, checkpoint and resume | Partial implementation | Task integration test |
+| Async MCP tasks, cancellation, checkpoint and resume | Partial; live OAuth token exchange for async work and owner-bound reauthentication on resume without persisting bearer. Autonomous durable grants and crash resume remain unimplemented | OAuth delegation and restart/fail-closed integration tests |
 | Subscription change notification | Implemented subset | SSE activation test |
 | Outbound HTTP DNS/IP safety guard | Implemented initial fail-closed guard | `internal/netguard` unit tests (DNS rebinding / mixed DNS / loopback) |
 | Admin skills + `skills/list`, `skills/get` / `skill://` resources | Implemented subset | Admin skill test |
@@ -162,3 +162,25 @@
   response does not prove restoration. Provider-specific effect verification,
   remote idempotency/fencing and durable scoped OAuth grants remain open.
   Full issue #6 remains unfinished.
+
+#### Interactive OAuth delegated async tasks (PR #26)
+
+- Verified OAuth subjects may launch MCP asynchronous tasks that require
+  target-audience token exchange, as long as the verified inbound bearer remains
+  live **only in memory**. Execution is bounded by the token expiry (with
+  safety margin) and the task deadline. No inbound or exchanged access
+  token or refresh credential is stored in the task, checkpoint or journal.
+- SQLite stores only provider, issuer, audience, hashed owner identity,
+  immutable original revision and the union of required surface/tool scopes.
+  Public `tasks/get`, `tasks/update` and `tasks/cancel` re-check owner
+  and the original scopes on the current inbound request.
+- After user-input suspension, `tasks/update` supplies a newly verified bearer
+  of the same issuer/audience/subject and sufficient scopes, and the original
+  revision is used for continuation. The context-free compatibility method
+  refuses delegated resumes. Invalid/expired/revoked-scope or wrong-owner
+  tokens cannot resume the task.
+- **Not** autonomous durable OAuth delegation. Process crashes and abandoned
+  in-flight tasks still fail closed; a suspended task requires interactive
+  reauthorization to continue. Durable unattended encrypted capability grants,
+  provider revocation enforcement, KMS/rotation, cross-process task scheduling,
+  remote fencing and production provider integration remain open in #5/#6.
