@@ -13,6 +13,7 @@ import (
 // available. The caller must not create a task handle or dispatch external
 // effects on rejection; this is explicit backpressure, not a hidden queue.
 var ErrTaskCapacity = errors.New("asynchronous task concurrency limit reached")
+var ErrTaskBacklog = errors.New("previously accepted queued tasks have admission precedence")
 var ErrTaskTransition = errors.New("task cannot transition from its current state")
 
 const DefaultMaxActiveTasks = 32
@@ -27,6 +28,11 @@ func validTaskLimit(limit int)error {
 func workingTaskCountTx(tx *sql.Tx)(int,error) {
     var n int
     err:=tx.QueryRow("SELECT COUNT(*) FROM tasks WHERE status='working'").Scan(&n)
+    return n,err
+}
+func pendingTaskCountTx(tx *sql.Tx)(int,error) {
+    var n int
+    err:=tx.QueryRow("SELECT COUNT(*) FROM task_queue").Scan(&n)
     return n,err
 }
 func (s *Store) ActiveTaskCount(ctx context.Context)(int,error) {
@@ -88,6 +94,12 @@ func (s *Store) ClaimTaskContinuation(ctx context.Context,task TaskRecord,limit 
     count,err:=workingTaskCountTx(tx)
     if err!=nil{return err}
     if count>=limit{return ErrTaskCapacity}
+    // A resumed checkpoint must not jump ahead of encrypted jobs that were
+    // admitted while this task awaited user input. Both checks share the
+    // same SQLite write transaction as its status-CAS.
+    backlog,err:=pendingTaskCountTx(tx)
+    if err!=nil{return err}
+    if backlog>0{return ErrTaskBacklog}
     task.LastUpdatedAt=time.Now().UTC()
     raw,err:=json.Marshal(task)
     if err!=nil{return err}
