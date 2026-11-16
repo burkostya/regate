@@ -277,11 +277,25 @@ unknown external effect. Expired tasks are failed without dispatch, and
 cancellation deletes the sealed payload in the same SQL transaction.
 Failed authenticated decryption stops the claim and preserves evidence.
 
-**This milestone is storage only:** the service task dispatcher is not yet
-connected to automatically claim queued work. It is not correct to claim
-user-facing scheduling, FIFO fairness across principals, distributed task
-execution or guaranteed eventual delivery from this migration alone.
-A subsequent stage must connect the SQLite queue to the HTTP/MCP task
-lifecycle, respect revocation and cancellation and test capacity under
-restart/load. Ciphertext in WAL/backups remains subject to key-retention
-policy and operational secure erasure.
+The service dispatcher now claims entries automatically while it holds
+the SQLite execution lease. It checks capacity before each claim and uses
+the task's original immutable HCL revision and encrypted original inputs.
+The dispatcher runs at startup even after the current HCL disables new queue
+admission, provided old entries remain. Slot release and periodic wakeups
+allow further FIFO claims. Cancellation removes queued ciphertext and
+prevents dispatch; a checked-out task carries a SQLite working-state guard
+at MCP and HTTP side-effect boundaries.
+
+A queue can be enabled only if the dedicated encryption keys are available;
+the service fails closed on startup or activation otherwise. OAuth-protected
+and delegated tasks remain ineligible for deferred storage, because their
+user grants cannot be inferred from a past access token. An already claimed
+task interrupted after a crash is failed rather than blindly replayed.
+
+This is an operational **bounded encrypted FIFO queue** for nondelegated
+work, not a durable fair scheduler across users or a general exactly-once
+executor. Corrupt or undecryptable entries block the queue pending operator
+inspection, rather than being silently skipped. Production priority
+policies, external remote fencing, secure key lifecycle and chaos/load
+verification remain required. Ciphertext in WAL/backups needs retention
+controls.
