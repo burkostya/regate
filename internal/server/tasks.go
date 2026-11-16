@@ -120,7 +120,8 @@ func (s *Service) createTaskFor(ctx context.Context,cfg *config.Config,revision 
     eligibleQueue:=published.OAuth=="" &&
         !delegated && len(task.RequiredScopes)==0 && !task.RedactPII
     if eligibleQueue {
-        queued,err:=s.Store.AdmitOrQueueTask(ctx,task,args,cfg.MaxActiveTasks,cfg.MaxQueuedTasks)
+        queued,err:=s.Store.AdmitOrQueueTaskWithOwnerLimit(ctx,task,args,
+            cfg.MaxActiveTasks,cfg.MaxQueuedTasks,cfg.MaxQueuedPerOwner)
         if err!=nil {cancel();return nil,err}
         if queued {
             cancel()
