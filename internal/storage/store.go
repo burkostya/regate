@@ -234,6 +234,7 @@ func (s *Store) initialize(initial string) error {
     if err!=nil{return err}
     if !live {
         if err=recoverDispatches(tx);err!=nil{return err}
+        if err=recoverRefreshingGrantsTx(tx);err!=nil{return err}
     }
     return tx.Commit()
 }
