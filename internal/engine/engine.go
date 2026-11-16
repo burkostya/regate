@@ -61,6 +61,7 @@ func New(store *storage.Store) *Runtime {
 // connFor obtains a target-audience-specific delegated credential when the
 // upstream requires RFC8693 exchange. It must not cache delegated bearers.
 func (r *Runtime) connFor(ctx context.Context,cfg *config.Config,u config.Upstream) (*mcp.Conn,error) {
+    if err:=r.CheckQueuedTaskExecution(ctx);err!=nil{return nil,err}
     if err:=r.CheckGrantExecution(ctx);err!=nil{return nil,err}
     if u.OAuthExchange=="" {return r.conn(u),nil}
     token,err:=identity.Exchange(ctx,cfg.OAuth[u.OAuthExchange],u.OAuthAudience,u.OAuthScopes)
@@ -139,6 +140,7 @@ var ErrDenied = errors.New("policy denied")
 
 func (r *Runtime) Run(ctx context.Context, revision string, cfg *config.Config, surface, toolName string, args map[string]any, dry bool) (Outcome, error) {
 	out := Outcome{RunID: storage.ID(), Revision: revision, Status: "running"}
+    if err:=r.CheckQueuedTaskExecution(ctx);err!=nil{return out,err}
     ctx=withEffectScope(ctx,out.RunID)
 	s, ok := cfg.Surfaces[surface]
 	if !ok {
@@ -660,6 +662,7 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 	return ret
 }
 func (r *Runtime) mcpCall(ctx context.Context,cfg *config.Config,u config.Upstream,tool string,args map[string]any,runID,node,effect string)(map[string]any,error) {
+    if err:=r.CheckQueuedTaskExecution(ctx);err!=nil{return nil,err}
     if err:=r.CheckGrantExecution(ctx);err!=nil{return nil,err}
     if err:=checkOutbound(u.URL);err!=nil {return nil,err}
     // Acquire and verify the target token before any dispatching effect is
@@ -680,6 +683,14 @@ func (r *Runtime) mcpCall(ctx context.Context,cfg *config.Config,u config.Upstre
     }
     if r.Store!=nil {
         if err=r.Store.RequireExecutionLeader(ctx);err!=nil{return nil,err}
+    }
+    if err=r.CheckQueuedTaskExecution(ctx);err!=nil {
+        if effect!="read" {
+            if e:=r.Store.CompleteEffect(attempt.ID,"unknown","queued task cancelled before dispatch");e!=nil {
+                return nil,e
+            }
+        }
+        return nil,err
     }
     if err=r.CheckGrantExecution(ctx);err!=nil {
         if effect!="read" {
@@ -710,6 +721,7 @@ func (r *Runtime) runHook(ctx context.Context, h config.Hook, cfg *config.Config
 		return value, nil
 	}
     if h.Transport!="builtin" {
+        if err:=r.CheckQueuedTaskExecution(ctx);err!=nil{return nil,err}
         if err:=r.CheckGrantExecution(ctx);err!=nil{return nil,err}
     }
     if h.Transport!="builtin" && r.Store!=nil {
@@ -783,6 +795,9 @@ func (r *Runtime) runHook(ctx context.Context, h config.Hook, cfg *config.Config
             return cause
         }
         if err=r.Store.RequireExecutionLeader(ctx);err!=nil {
+            return nil,complete("unknown",err)
+        }
+        if err=r.CheckQueuedTaskExecution(ctx);err!=nil {
             return nil,complete("unknown",err)
         }
         if err=r.CheckGrantExecution(ctx);err!=nil {
@@ -877,6 +892,7 @@ func (r *Runtime) Resume(ctx context.Context, cfg *config.Config, revision strin
 
 // ReadResource forwards an MCP resources/read request, preserving the upstream content shape.
 func (r *Runtime) ReadResource(ctx context.Context,cfg *config.Config,u config.Upstream,uri string)(map[string]any,error) {
+    if e:=r.CheckQueuedTaskExecution(ctx);e!=nil{return nil,e}
     if e:=r.CheckGrantExecution(ctx);e!=nil{return nil,e}
     if e:=checkOutbound(u.URL);e!=nil{return nil,e}
     conn,err:=r.connFor(ctx,cfg,u)
