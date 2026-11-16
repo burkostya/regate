@@ -23,6 +23,8 @@ type TaskRecord struct {
     TaskID string `json:"taskId"`
     Status string `json:"status"`
     StatusMessage string `json:"statusMessage,omitempty"`
+    // Internal continuation barrier, never exposed by Public.
+    Phase string `json:"execution_phase,omitempty"`
     OwnerDigest string `json:"owner_digest"`
     Surface string `json:"surface"`
     Tool string `json:"tool,omitempty"`
