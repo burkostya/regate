@@ -103,8 +103,8 @@ func TestFairOwnerTurnsPersistAcrossRestart(t *testing.T) {
     third.Status="completed"
     if err=restarted.TaskPut(third);err!=nil{t.Fatal(err)}
     fourth,args,err:=restarted.ClaimNextQueued(ctx,1)
-    if err!=nil || args["label"]!="B2" {
-        t.Fatalf("owner FIFO was lost after restart: %#v %v",args,err)
+    if err!=nil || fourth.OwnerDigest!="owner-B" || args["label"]!="B2" {
+        t.Fatalf("owner FIFO was lost after restart: %#v %#v %v",fourth,args,err)
     }
 }
 
