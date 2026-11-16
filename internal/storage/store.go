@@ -137,7 +137,7 @@ func (s *Store) initialize(initial string) error {
     defer tx.Rollback()
     var version int
     if err=tx.QueryRow("PRAGMA user_version").Scan(&version);err!=nil{return err}
-    if version>4 {return fmt.Errorf("database schema version %d is newer than Regate",version)}
+    if version>5 {return fmt.Errorf("database schema version %d is newer than Regate",version)}
     if version==0 {
         for _,stmt:=range []string{
             `CREATE TABLE IF NOT EXISTS revisions (
@@ -235,6 +235,26 @@ func (s *Store) initialize(initial string) error {
             created_ns INTEGER NOT NULL
         )`);err!=nil{return fmt.Errorf("SQLite v4 task_queue migration: %w",err)}
         if _,err=tx.Exec("PRAGMA user_version=4");err!=nil{return err}
+    }
+    if version<5 {
+        for _,stmt:=range []string{
+            `CREATE TABLE IF NOT EXISTS task_queue_turns (
+                owner_digest TEXT PRIMARY KEY,
+                last_turn INTEGER NOT NULL CHECK(last_turn > 0)
+            )`,
+            `CREATE TABLE IF NOT EXISTS task_queue_clock (
+                name TEXT PRIMARY KEY,
+                turn INTEGER NOT NULL CHECK(turn >= 0)
+            )`,
+            `INSERT OR IGNORE INTO task_queue_clock(name,turn) VALUES('default',0)`,
+            `CREATE INDEX IF NOT EXISTS task_queue_owner_seq
+                ON task_queue(owner_digest,seq)`,
+            "PRAGMA user_version=5",
+        }{
+            if _,err=tx.Exec(stmt);err!=nil{
+                return fmt.Errorf("SQLite v5 fair queue migration: %w",err)
+            }
+        }
     }
     var count int
     if err=tx.QueryRow("SELECT COUNT(*) FROM revisions").Scan(&count);err!=nil{return err}
