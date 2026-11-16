@@ -21,7 +21,7 @@ func TestQueueSchemaV3UpgradePreservesTasksAndGrants(t *testing.T) {
     defer upgraded.Close()
     var version int
     if err=upgraded.db.QueryRow("PRAGMA user_version").Scan(&version);err!=nil{t.Fatal(err)}
-    if version!=4 {t.Fatalf("schema version not upgraded: %d",version)}
+    if version!=5 {t.Fatalf("schema version not upgraded to v5: %d",version)}
     existing,err:=upgraded.TaskGet(task.TaskID)
     if err!=nil || existing.OwnerDigest!=task.OwnerDigest {
         t.Fatalf("v4 migration erased persisted task: %#v %v",existing,err)
