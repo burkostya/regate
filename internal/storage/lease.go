@@ -71,6 +71,7 @@ func (s *Store) AcquireExecutionLease()error {
     // not solely based on the earlier startup snapshot.
     if err=recoverDispatches(tx);err!=nil{return err}
     if err=recoverInterruptedTasksTx(tx);err!=nil{return err}
+    if err=recoverRefreshingGrantsTx(tx);err!=nil{return err}
     if err=tx.Commit();err!=nil{return err}
 
     s.mu.Lock()
