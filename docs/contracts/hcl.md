@@ -82,6 +82,9 @@ TTL. The live dispatcher claims work in FIFO order **within each owner**
 and alternates owners by least-recently-served turn whenever an active task
 slot becomes available, including after restart. A claimed task interrupted
 before completion is failed closed rather than automatically replayed.
+Queued inputs must have a positive TTL of at most 24 hours. The
+dispatcher authenticates and removes expired ciphertext even while
+all execution slots are occupied, without replaying any external action.
 
 `regate.max_queued_per_owner = N` limits encrypted waiting tasks from one
 owner (default 32, accepted range 1–4096), independently of
