@@ -139,6 +139,7 @@ func TestInboundCancelledRequestStopsBeforeProtectedEffects(t *testing.T) {
     cfg:=strings.ReplaceAll(string(source),"http://127.0.0.1:9091",upstream.URL)
     svc,err:=New(t.TempDir(),cfg)
     if err!=nil {t.Fatal(err)}
+    defer svc.Store.Close()
     api:=httptest.NewServer(svc.Handler())
     defer api.Close()
 
