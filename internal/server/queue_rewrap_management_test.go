@@ -62,8 +62,16 @@ func TestQueueKeyManagementRequiresAdminBearerAndNeverReturnsKeyBytes(t *testing
         map[string]any{"name":"regate_queue_rewrap","arguments":map[string]any{}})
     defer public.Body.Close()
     raw,_:=io.ReadAll(public.Body)
-    if public.StatusCode==http.StatusOK &&
-        strings.Contains(string(raw),"\"rewrapped\":1"){
-        t.Fatal("public surface invoked privileged key rotation")
+    if public.StatusCode==http.StatusOK {
+        var envelope map[string]any
+        if err:=json.Unmarshal(raw,&envelope);err!=nil {
+            t.Fatalf("invalid public rejection response: %v",err)
+        }
+        if envelope["error"]==nil {
+            result,ok:=envelope["result"].(map[string]any)
+            if ok && result["isError"]!=true {
+                t.Fatal("public surface invoked privileged queue key management")
+            }
+        }
     }
 }
