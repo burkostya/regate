@@ -46,6 +46,13 @@ var AdminTools = map[string][]Arg{
 	"regate_resume":           {{"run_id", "Suspended run", true}, {"value", "Resume result", false}},
 	"regate_revisions":        {},
 	"regate_effects":          {},
+    "regate_effect_compensate": {
+        {"effect_id","Previously resolved-applied effect to compensate",true},
+        {"contract","Named HCL compensation contract",true},
+        {"intent","Exact original write argument object",true},
+        {"actor","Operator identity (audited assertion)",true},
+        {"reason","Explicit compensation approval reason (stored as digest)",true},
+    },
     "regate_effect_readback": {
         {"effect_id","Unknown target-bound effect ID",true},
         {"adapter","Named HCL readback contract",true},
@@ -156,6 +163,10 @@ func (s *Service) Admin(ctx context.Context, name string, args map[string]any) (
 		return s.Store.History(), nil
 	case "regate_effects":
 		return s.Store.Effects(), nil
+    case "regate_effect_compensate":
+        return s.Engine.CompensateMCP(ctx,cfg,
+            str(args,"effect_id"),str(args,"contract"),obj(args,"intent"),
+            str(args,"actor"),str(args,"reason"))
     case "regate_effect_readback":
         return s.Engine.ReconcileMCP(ctx,cfg,
             str(args,"effect_id"),str(args,"adapter"),obj(args,"intent"))
