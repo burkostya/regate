@@ -194,3 +194,27 @@ remains immutable.
 
 These are part of issue #6 and the release/security acceptance gates. SQLite
 migration alone does **not** prove the entire Regate v1 durability contract.
+
+## Grant-bound continuation and crash semantics (PR #29)
+
+The `BeginTaskGrantContinuation` transaction couples the original
+`input_required` checkpoint, its durable task record and the matching
+`active` encrypted OAuth grant. It atomically changes both the task to
+`working` with `refreshing_grant` phase and the grant to
+`refreshing`. This is a write-ahead authorization barrier, not an
+idempotent refresh retry.
+
+The provider's verified, rotated refresh token must reach the vault with
+generation-CAS before the original immutable pipeline is continued.
+A lost token-rotation response, crash during refresh or revoked grant
+fails closed and cannot trigger another refresh. A resumed worker carries
+only the task/grant generation in its context; the actual access bearer
+is transient and each external effect checks the current SQLite generation.
+Cancellation revokes the grant and stops subsequent effects.
+The original checkpoint cannot run simultaneously in another worker.
+An interrupted `working` task is still marked failed on leader takeover;
+no automatic replay is admitted.
+
+These mechanisms do not revoke already in-flight external calls and do
+not provide an unattended durable task scheduler, provider-enforced
+fencing or independently verified compensation.
