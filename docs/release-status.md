@@ -222,3 +222,24 @@
   consumed during task continuation. Provider-specific refresh rotation
   recovery, crash-safe continuation and effect-level revocation enforcement
   are outstanding. Issues #5/#6 remain open.
+
+#### Explicit grant-backed OAuth continuation (PR #29)
+
+- One admin-authorized resume attempt for an `input_required` delegated
+  task must transactionally reserve both its checkpoint and the sealed
+  refresh credential. All providers, owners, scopes and HCL revisions are
+  fixed to their creation-time contracts.
+- The refreshed Regate-audience token is independently verified before
+  re-sealing the rotated refresh credential. Only an in-memory validated
+  access token can then issue target-audience RFC 8693 exchanges, and
+  every external effect checks active task/grant generation.
+- Cancellation and revocation prevent subsequent protected effects. Unknown
+  remote results remain unknown; failed/crashed refresh and task recovery
+  do not retry automatically.
+- Integration tests cover real SDK MCP input-required task, resource
+  audience exchanges, authenticated admin resume, checkpoint no-replay,
+  grant cancellation and crash/epoch admission.
+- **Still open:** automated continuation scheduler, full process-failure
+  resume/reconciliation, real-IdP interop, cross-service idempotency/fencing,
+  bounded durable work queues and full production security acceptance.
+  Issue #6 must remain open.

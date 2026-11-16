@@ -35,6 +35,7 @@ func TestOAuthTaskGrantProvisionOwnerBindingAndRevocation(t *testing.T) {
     var mode atomic.Value
     mode.Store("valid")
     var exchanges atomic.Int64
+    var upstreamExchanges atomic.Int64
     idp:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
         switch r.URL.Path {
         case "/jwks":
@@ -44,30 +45,55 @@ func TestOAuthTaskGrantProvisionOwnerBindingAndRevocation(t *testing.T) {
                 "e":base64.RawURLEncoding.EncodeToString(big.NewInt(int64(private.PublicKey.E)).Bytes()),
             }}})
         case "/token":
-            exchanges.Add(1)
             name,secret,valid:=r.BasicAuth()
             if !valid || name!="regate-client" || secret!="exchange-secret" ||
-                r.ParseForm()!=nil || r.Form.Get("grant_type")!="refresh_token" ||
-                r.Form.Get("scope")!="surface:read crm:write" ||
-                r.Form.Get("refresh_token")!="supplied-once" {
-                http.Error(w,"bad refresh request",401);return
+                r.ParseForm()!=nil {
+                http.Error(w,"bad OAuth client",401);return
             }
-            subject:="test-user"
-            if mode.Load().(string)=="wrong-owner" {subject="different-user"}
-            access:=signedTestJWTSubject(t,private,issuer,audience,
-                "surface:read crm:write",subject)
-            json.NewEncoder(w).Encode(map[string]any{
-                "access_token":access,"refresh_token":"rotated-sensitive-refresh",
-                "token_type":"Bearer","expires_in":3600,
-                "refresh_token_expires_in":86400,
-                "scope":"surface:read crm:write",
-            })
+            switch r.Form.Get("grant_type") {
+            case "refresh_token":
+                exchanges.Add(1)
+                refresh:=r.Form.Get("refresh_token")
+                if r.Form.Get("scope")!="surface:read crm:write" ||
+                    (refresh!="supplied-once" && refresh!="rotated-sensitive-refresh") {
+                    http.Error(w,"bad refresh request",401);return
+                }
+                subject:="test-user"
+                if mode.Load().(string)=="wrong-owner" {subject="different-user"}
+                access:=signedTestJWTSubject(t,private,issuer,audience,
+                    "surface:read crm:write",subject)
+                rotated:="rotated-sensitive-refresh"
+                if refresh=="rotated-sensitive-refresh" {rotated="rotated-final-refresh"}
+                json.NewEncoder(w).Encode(map[string]any{
+                    "access_token":access,"refresh_token":rotated,
+                    "token_type":"Bearer","expires_in":3600,
+                    "refresh_token_expires_in":86400,
+                    "scope":"surface:read crm:write",
+                })
+            case "urn:ietf:params:oauth:grant-type:token-exchange":
+                upstreamExchanges.Add(1)
+                if r.Form.Get("audience")!="https://crm.test/resource" ||
+                    r.Form.Get("scope")!="crm:write" ||
+                    r.Form.Get("subject_token_type")!="urn:ietf:params:oauth:token-type:access_token" {
+                    http.Error(w,"bad token exchange",401);return
+                }
+                delegated:=signedTestJWTSubject(t,private,issuer,
+                    "https://crm.test/resource","crm:write","test-user")
+                json.NewEncoder(w).Encode(map[string]any{
+                    "access_token":delegated,"token_type":"Bearer",
+                    "issued_token_type":"urn:ietf:params:oauth:token-type:access_token",
+                    "expires_in":3600,
+                })
+            default:
+                http.Error(w,"unexpected grant type",400)
+            }
         default:
             http.NotFound(w,r)
         }
     }))
     defer idp.Close()
-    backend:=httptest.NewServer(&mockWorld{})
+    world:=&mockWorld{}
+    backend:=httptest.NewServer(world)
     defer backend.Close()
 
     source,err:=os.ReadFile("../../examples/regate.hcl")
@@ -204,12 +230,60 @@ pipeline "deferred_customer" {
     if bytes.Contains(db,[]byte("rotated-sensitive-refresh")) ||
         bytes.Contains(db,[]byte("supplied-once")) {t.Fatal("refresh token written in SQLite plaintext")}
 
+    // Admin can explicitly resume through the sealed task grant but cannot
+    // reuse the admin bearer as an upstream OAuth subject token.
+    unauthorizedAdmin:=jsonPost(t,api.URL+"/api/task-resume-grant","",
+        map[string]any{"task_id":taskID,"value":map[string]any{"approval":true}})
+    unauthorizedAdmin.Body.Close()
+    if unauthorizedAdmin.StatusCode!=http.StatusUnauthorized {
+        t.Fatal("anonymous grant resume permitted")
+    }
+    begin:=decode(t,jsonPost(t,api.URL+"/api/task-resume-grant","admin-test-secret",
+        map[string]any{"task_id":taskID,"value":map[string]any{"approval":true}}))
+    if begin["status"]!="working" {t.Fatalf("grant continuation not admitted: %#v",begin)}
+    if exchanges.Load()!=2 {
+        t.Fatalf("unexpected refresh rotation count: %d",exchanges.Load())
+    }
+    deadline:=time.Now().Add(6*time.Second)
+    complete:=false
+    for time.Now().Before(deadline) {
+        polled:=decode(t,latestCall(t,api.URL+"/mcp/support",subjectBearer,
+            "tasks/get",112,map[string]any{"taskId":taskID}))
+        taskState:=polled["result"].(map[string]any)
+        if taskState["status"]=="completed" {
+            res:=taskState["result"].(map[string]any)
+            if res["isError"]==true {t.Fatalf("grant continuation failed: %#v",res)}
+            complete=true
+            break
+        }
+        time.Sleep(10*time.Millisecond)
+    }
+    if !complete {t.Fatal("grant continuation never completed")}
+    if upstreamExchanges.Load()!=1 {
+        t.Fatalf("expected one audience-specific exchange, got %d",upstreamExchanges.Load())
+    }
+    world.mu.Lock()
+    targetAuth:=world.lastAuth
+    world.mu.Unlock()
+    if !strings.HasPrefix(targetAuth,"Bearer eyJ") ||
+        strings.Contains(targetAuth,subjectBearer) {
+        t.Fatal("Regate subject token leaked or missing audience-bound exchange")
+    }
+    replay:=jsonPost(t,api.URL+"/api/task-resume-grant","admin-test-secret",
+        map[string]any{"task_id":taskID,"value":map[string]any{"approval":true}})
+    replay.Body.Close()
+    if replay.StatusCode!=http.StatusBadRequest || exchanges.Load()!=2 {
+        t.Fatal("same checkpoint reexecuted with a refreshed grant")
+    }
+
     revoked:=decode(t,latestCall(t,api.URL+"/mcp/support",subjectBearer,
         "tasks/grants/revoke",108,map[string]any{"taskId":taskID}))
     if revoked["result"].(map[string]any)["state"]!="revoked" {t.Fatal("revoke did not acknowledge")}
     if _,_,err=svc.Store.BeginTaskGrantRefresh(context.Background(),taskID,record.OwnerDigest);
-        err!=storage.ErrGrantRefreshPending {t.Fatalf("revoked grant reopened: %v",err)}
-    if exchanges.Load()!=1 {t.Fatal("revocation triggered an unexpected token request")}
+        err!=storage.ErrGrantUnavailable && err!=storage.ErrGrantRefreshPending {
+        t.Fatalf("revoked grant reopened: %v",err)
+    }
+    if exchanges.Load()!=2 {t.Fatal("revocation triggered an unexpected token request")}
 
     // A resource server must not expose delegated credential provisioning on
     // the management bearer path, regardless of its administrator privileges.
