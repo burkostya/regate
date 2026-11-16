@@ -219,7 +219,7 @@ func TestOAuthTaskCannotBypassToolScopeAndMasking(t *testing.T) {
     if bytes.Contains(printed,[]byte("alice@example.com")) {t.Fatalf("async result leaked PII: %s",printed)}
     stored,err:=svc.Store.TaskGet(id)
     if err!=nil {t.Fatal(err)}
-    if !stored.RedactPII || len(stored.RequiredScopes)!=1 || stored.RequiredScopes[0]!="crm:read" {
+    if !stored.RedactPII || len(stored.RequiredScopes)!=2 || stored.RequiredScopes[0]!="surface:read" || stored.RequiredScopes[1]!="crm:read" {
         t.Fatalf("async task lost auth/redaction contract: %#v",stored)
     }
     // A refreshed credential issued for the same principal must retain task
