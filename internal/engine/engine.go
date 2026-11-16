@@ -673,7 +673,7 @@ func (r *Runtime) mcpCall(ctx context.Context,cfg *config.Config,u config.Upstre
         // The same logical run/node/operation has a stable journal identity.
         // SQLite admission is atomic across workers: unknown results and
         // attempts already in flight cannot be silently dispatched again.
-        attempt,err=r.Store.BeginEffect(runID,node,u.Name+"."+tool,args)
+        attempt,err=r.Store.BeginEffectBound(runID,node,u.Name+"."+tool,storage.TargetDigest("mcp",u.URL),args)
         if err!=nil{return nil,err}
     }
     if r.Store!=nil {
@@ -757,8 +757,8 @@ func (r *Runtime) runHook(ctx context.Context, h config.Hook, cfg *config.Config
         scope,err:=requireEffectScope(ctx)
         if err!=nil{return nil,err}
         endpointDigest:=sha256.Sum256([]byte(h.URL))
-        attempt,err:=r.Store.BeginEffect(scope.runID,scope.node,
-            fmt.Sprintf("http.POST:%x",endpointDigest),
+        attempt,err:=r.Store.BeginEffectBound(scope.runID,scope.node,
+            fmt.Sprintf("http.POST:%x",endpointDigest),storage.TargetDigest("http",h.URL),
             map[string]any{"url":h.URL,"body":json.RawMessage(body)})
         if err!=nil{return nil,err}
         complete:=func(status string,cause error) error {
