@@ -82,6 +82,21 @@ Tests cover restart, preserved ambiguous effects, task fail-closed recovery,
 consistent backup, transactional import including all state domains, corrupt
 migration rollback, and conflicting writers.
 
+## HTTP effects and stable hook steps
+
+Effect journaling covers MCP calls, HTTP `http.call` nodes, external HTTP
+interceptors and HTTP Decision hooks. A remote HTTP POST that may have
+committed before the reply was lost remains `unknown`, with the same stable
+run/step/endpoint identity after restart. The journal stores only digests,
+not request bodies or URLs. A policy `deny` from a valid HTTP response
+confirms the request's transport outcome; it does not mean Regate permitted
+the protected action.
+
+This protects against replay of the same logical step, **not** against a new
+independent client request or an external system ignoring idempotency/fencing
+contracts. HTTP 5xx and malformed responses remain uncertain until
+authoritative read-back or operator reconciliation.
+
 ### Not yet supported by this milestone
 
 - Configurable verified external read-back adapters and policy-based
