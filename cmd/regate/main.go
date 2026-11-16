@@ -22,6 +22,12 @@ func main() {
 	if e != nil {
 		log.Fatal(e)
 	}
+    // Fail before acquiring SQLite execution leadership if essential admin
+    // authentication is not configured. log.Fatal calls os.Exit and bypasses
+    // defer, so fatal paths after startup must release the lease explicitly.
+    if os.Getenv("REGATE_ADMIN_TOKEN")=="" {
+        log.Fatal("REGATE_ADMIN_TOKEN is required; refusing management MCP without authentication")
+    }
 	srv, e := server.New(*state, string(b))
 	if e != nil {
 		log.Fatal(e)
@@ -34,18 +40,19 @@ func main() {
 	}
 	host, _, e := net.SplitHostPort(addr)
 	if e != nil {
+        _=srv.Store.Close()
 		log.Fatal(e)
 	}
-	if os.Getenv("REGATE_ADMIN_TOKEN") == "" {
-		log.Fatal("REGATE_ADMIN_TOKEN is required; refusing to expose management MCP without authentication")
-	}
+	
 	if ip := net.ParseIP(host); (ip == nil || !ip.IsLoopback()) && host != "localhost" && os.Getenv("REGATE_PUBLIC_TOKEN") == "" {
+        _=srv.Store.Close()
 		log.Fatal("non-loopback listen requires REGATE_PUBLIC_TOKEN")
 	}
 	log.Println(fmt.Sprintf("Regate config loaded: %s", srv.DebugConfig()))
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 	if e = srv.Serve(ctx, addr); e != nil {
+        _=srv.Store.Close()
 		log.Fatal(e)
 	}
 }
