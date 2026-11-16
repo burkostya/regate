@@ -17,6 +17,7 @@ import (
 )
 
 var ErrTaskQueueFull = errors.New("asynchronous task waiting queue is full")
+var ErrTaskQueueExpired = errors.New("queued task expired before dispatch")
 var ErrTaskQueueKeyUnavailable = errors.New("task queue encryption key unavailable")
 const taskQueueKeyEnv = "REGATE_QUEUE_KEYS_JSON"
 const maxQueueArgumentBytes = 1 << 20
@@ -197,6 +198,23 @@ func (s *Store) ClaimNextQueued(ctx context.Context,maxActive int)(TaskRecord,ma
         task.Surface!=surface || task.Tool!=tool ||
         task.Status!="queued" || task.Phase!="queued" {
         return TaskRecord{},nil,ErrTaskQueueKeyUnavailable
+    }
+    if task.TTLMS>0 && time.Since(task.CreatedAt)>time.Duration(task.TTLMS)*time.Millisecond {
+        // Do not execute a request whose original authorization/TTL has
+        // expired while it was waiting. Close the task and remove its
+        // encrypted input in the same transaction.
+        task.Status="failed"
+        task.Phase=""
+        task.StatusMessage="Queued task expired before execution"
+        task.Error=map[string]any{"code":-32000,"message":"Queued task expired"}
+        task.LastUpdatedAt=time.Now().UTC()
+        expiredRaw,err:=json.Marshal(task)
+        if err!=nil{return TaskRecord{},nil,err}
+        if _,err=tx.Exec("UPDATE tasks SET status='failed',record=? WHERE task_id=? AND status='queued'",
+            string(expiredRaw),id);err!=nil{return TaskRecord{},nil,err}
+        if _,err=tx.Exec("DELETE FROM task_queue WHERE task_id=?",id);err!=nil{return TaskRecord{},nil,err}
+        if err=tx.Commit();err!=nil{return TaskRecord{},nil,err}
+        return TaskRecord{},nil,ErrTaskQueueExpired
     }
     args,err:=s.queueKeys.open(task,keyID,nonce,ciphertext)
     if err!=nil{return TaskRecord{},nil,err}
