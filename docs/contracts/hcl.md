@@ -97,6 +97,22 @@ across parallel workers. It never authorizes reissuing an unknown external
 effect. The queue requires `REGATE_QUEUE_KEYS_JSON` to be available
 when enabled.
 
+### Queue encryption key rotation
+
+Queue encryption keys are supplied separately from HCL through
+`REGATE_QUEUE_KEYS_JSON`, with an `active` key ID and a map of retained
+32-byte base64 AES-GCM keys. After adding a new active key while retaining
+the old one, restart the worker and call the administrator's
+`regate_queue_key_usage` and `regate_queue_rewrap` tools until no
+queued entries reference the old key. Rewrapping checks the original
+owner, revision, TTL and authenticated ciphertext before committing a
+fresh nonce; a damaged batch is rolled back without changing task state.
+
+Do not remove old keys until no *live* queue rows require them **and**
+historical backup/recovery requirements have been reviewed. These tools
+are available only through authenticated management MCP/REST, not from
+public task surfaces.
+
 ### Compilation before activation
 
 `Decode → HCL2 parse → cty value evaluation → closed schema validation →
