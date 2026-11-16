@@ -182,6 +182,7 @@ func (s *Service) Status() map[string]any {
         "pipelines":len(cfg.Pipelines),"hooks":len(cfg.Hooks),
         "policies":len(cfg.Policies),"http_only":true,
         "max_active_tasks":cfg.MaxActiveTasks,"max_queued_tasks":cfg.MaxQueuedTasks,
+        "max_queued_per_owner":cfg.MaxQueuedPerOwner,
     }
     if active,err:=s.Store.ActiveTaskCount(context.Background());err==nil {
         state["active_tasks"]=active
