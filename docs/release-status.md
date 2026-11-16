@@ -359,3 +359,19 @@
 - Key-retirement is **not** archival key erasure. SQLite WAL pages and
   snapshots must obey separate retention and key-backup policies; OAuth
   grant vault rotation remains independent.
+
+#### Authenticated expiry sweep for encrypted queued input (PR #37)
+
+- `SweepExpiredQueued` scans the bounded SQLite queue under the execution
+  lease, validates task/owner/revision/TTL bindings and verifies each expired
+  input's AES-GCM authenticity **before** deleting any ciphertext.
+- Expired entries are atomically marked failed and removed (including
+  obsolete per-owner fairness turns). A corrupt ciphertext or metadata
+  mismatch rolls back the whole bounded batch instead of dropping evidence.
+- The dispatcher runs this sweep even at full active-task capacity, so
+  abandoned expired jobs cannot monopolize waiting slots indefinitely.
+  New deferred input must have positive TTL no greater than 24 hours.
+- Tests cover bounded sweeps, saturation, no remote execution of expired
+  tasks, tamper-induced rollback, ownership-turn cleanup and lease fencing.
+- Historical WAL/backup retention and cryptographic erasure are still
+  operational security gates. Issue #6 remains open.
