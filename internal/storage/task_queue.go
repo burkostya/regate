@@ -5,14 +5,12 @@ import (
     "crypto/aes"
     "crypto/cipher"
     "crypto/rand"
-    "database/sql"
     "encoding/base64"
     "encoding/json"
     "errors"
     "fmt"
     "io"
     "os"
-    "strings"
     "time"
 )
 
