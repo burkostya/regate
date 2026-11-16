@@ -101,11 +101,11 @@ func (s *Service) createTaskFor(ctx context.Context,cfg *config.Config,revision 
             Provider:published.OAuth,Issuer:provider.Issuer,Audience:provider.Audience,
         }
     }
-    runctx,cancel,err:=taskExecutionContext(ctx,delegated)
-    if err!=nil{return nil,err}
     if err:=cfg.ToolContracts[surface][tool].Input.Validate(args);err!=nil {
         return nil,fmt.Errorf("invalid tool arguments")
     }
+    runctx,cancel,err:=taskExecutionContext(ctx,delegated)
+    if err!=nil{return nil,err}
     task := storage.TaskRecord{
         TaskID: storage.ID(),Status:"working",StatusMessage:"Executing pipeline",
         OwnerDigest:fingerprint(ownerIdentity(ctx,owner)),Surface:surface,Tool:tool,Revision:revision,
