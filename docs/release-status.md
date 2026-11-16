@@ -243,3 +243,20 @@
   resume/reconciliation, real-IdP interop, cross-service idempotency/fencing,
   bounded durable work queues and full production security acceptance.
   Issue #6 must remain open.
+
+#### SQLite bounded async admission (PR #30)
+
+- `regate.max_active_tasks` (default 32, maximum 1024) caps concurrent
+  active async work globally, including user-driven resumes and grant-backed
+  continuations, independently of per-pipeline node parallelism.
+- Initial task admission and `input_required → working` transition use
+  SQLite transaction/leader fencing with atomic capacity validation. Overload
+  does **not** create a task handle, queue unlimited input, or dispatch an
+  external effect. Cancellation/completion release slots.
+- Regression tests cover concurrent admission, slot release, second-resume
+  rejection, observer denial, bounded grant continuation, bad HCL limits
+  and live MCP backend overload/recovery.
+- This adds **bounded active execution and immediate backpressure**, not a
+  durable bounded waiting queue or fair scheduler. Encrypted queued-input
+  storage, fairness, leases across process failures, retry reconciliation
+  and load-chaos acceptance remain open in #6/#9.
