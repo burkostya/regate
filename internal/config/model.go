@@ -11,6 +11,7 @@ type Config struct {
 	Listen        string                             `json:"listen"`
     MaxActiveTasks int `json:"max_active_tasks"`
     MaxQueuedTasks int `json:"max_queued_tasks"`
+    MaxQueuedPerOwner int `json:"max_queued_per_owner"`
     OAuth         map[string]OAuth                    `json:"oauth,omitempty"`
 	Upstreams     map[string]Upstream                `json:"upstreams"`
 	Hooks         map[string]Hook                    `json:"hooks"`
@@ -165,7 +166,7 @@ func Decode(src string) (*Config, error) {
 	if err = ValidateBlockSchema(blocks); err != nil {
 		return nil, err
 	}
-	c := &Config{Listen: "127.0.0.1:8080", MaxActiveTasks:32, OAuth: map[string]OAuth{}, Upstreams: map[string]Upstream{}, Hooks: map[string]Hook{}, Readbacks: map[string]Readback{}, Compensations: map[string]Compensation{}, Policies: map[string]Policy{}, Pipelines: map[string]Pipeline{}, Surfaces: map[string]Surface{}, Source: src}
+	c := &Config{Listen: "127.0.0.1:8080", MaxActiveTasks:32, MaxQueuedPerOwner:32, OAuth: map[string]OAuth{}, Upstreams: map[string]Upstream{}, Hooks: map[string]Hook{}, Readbacks: map[string]Readback{}, Compensations: map[string]Compensation{}, Policies: map[string]Policy{}, Pipelines: map[string]Pipeline{}, Surfaces: map[string]Surface{}, Source: src}
 	seen := map[string]bool{}
 	for _, b := range blocks {
 		name := ""
@@ -187,6 +188,7 @@ func Decode(src string) (*Config, error) {
 			}
             c.MaxActiveTasks=b.Int("max_active_tasks",32)
             c.MaxQueuedTasks=b.Int("max_queued_tasks",0)
+            c.MaxQueuedPerOwner=b.Int("max_queued_per_owner",32)
 		case "oauth":
             c.OAuth[name] = OAuth{Name:name,Issuer:b.String("issuer"), Audience:b.String("audience"),JWKSURL:b.String("jwks_url"),
                 IntrospectionURL:b.String("introspection_url"),ClientIDEnv:b.String("client_id_env"),ClientSecretEnv:b.String("client_secret_env"),
@@ -290,6 +292,9 @@ func validateScopeList(v []string) error {
 func (c *Config) Validate() error {
     if c.MaxQueuedTasks<0 || c.MaxQueuedTasks>4096 {
         return fmt.Errorf("regate max_queued_tasks must be between 0 and 4096")
+    }
+    if c.MaxQueuedPerOwner<1 || c.MaxQueuedPerOwner>4096 {
+        return fmt.Errorf("regate max_queued_per_owner must be between 1 and 4096")
     }
     if c.MaxActiveTasks<1 || c.MaxActiveTasks>1024 {
         return fmt.Errorf("regate max_active_tasks must be between 1 and 1024")
