@@ -16,6 +16,7 @@ var blockAttributes = map[string]map[string]string{
 	"upstream":    {"url": "string", "auth_env": "string", "timeout_ms": "positive-int", "trust_level": "string", "oauth_exchange": "string", "oauth_audience": "string", "oauth_scopes": "string-list"},
 	"hook":        {"transport": "string", "url": "string", "upstream": "string", "tool": "string", "auth_env": "string", "contract": "string", "on_error": "string", "timeout_ms": "positive-int", "trust_level": "string", "oauth_exchange": "string", "oauth_audience": "string", "oauth_scopes": "string-list"},
 	"policy":      {"decision_hook": "string", "scope": "string"},
+    "readback":    {"write_operation":"string","upstream":"string","read_tool":"string","intent_pointer":"string","read_argument":"string","result_pointer":"string","safe_read":"bool"},
 	"pipeline":    {"entry": "string", "timeout_ms": "positive-int", "concurrency": "positive-int"},
 	"surface":     {"path": "string", "oauth": "string", "required_scopes": "string-list"},
 	"tool":        {"description": "string", "pipeline": "string", "source": "string", "input_schema": "object", "output_schema": "object", "read_only": "bool", "required_scopes": "string-list", "data_classification": "string", "allow_unmasked": "bool"},
@@ -45,7 +46,7 @@ var nestedBlocks = map[string]map[string]bool{
 	"surface":  {"tool": true, "resource": true, "prompt": true},
 }
 var requiredBlockAttrs = map[string][]string{
-	"oauth": {"issuer", "audience"}, "upstream": {"url"}, "hook": {"transport", "contract"}, "pipeline": {"entry"},
+	"oauth": {"issuer", "audience"}, "readback": {"write_operation","upstream","read_tool","intent_pointer","read_argument","result_pointer","safe_read"}, "upstream": {"url"}, "hook": {"transport", "contract"}, "pipeline": {"entry"},
 	"surface": {"path"}, "node": {"kind"}, "edge": {"from", "to"},
 }
 
@@ -61,7 +62,7 @@ func validateBlock(b *Block, parent string, top bool) error {
 	where := fmt.Sprintf("%s %s at line %d", b.Type, strings.Join(b.Labels, ":"), b.Line)
 	if top {
 		switch b.Type {
-		case "regate", "oauth", "upstream", "hook", "policy", "pipeline", "surface", "interceptor":
+		case "regate", "oauth", "upstream", "hook", "policy", "readback", "pipeline", "surface", "interceptor":
 		default:
 			return fmt.Errorf("%s: unknown top-level block", where)
 		}
