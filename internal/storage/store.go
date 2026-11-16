@@ -74,6 +74,11 @@ type Store struct {
     Dir string
     db *sql.DB
     mu sync.RWMutex
+    leaseOwner string
+    leaseEpoch int64
+    leaseLost bool
+    leaseStop chan struct{}
+    leaseDone chan struct{}
 }
 const databaseName = "regate.sqlite"
 
@@ -91,16 +96,23 @@ func New(dir,initial string) (*Store,error) {
         _=db.Close()
         return nil,err
     }
-    // A previously running task has no durable execution lease after a
-    // process crash. Never restart it blindly: its external outcome may
-    // require reconciliation. The effect log is recovered independently.
-    if err=s.RecoverInterruptedTasks();err!=nil {
-        _=db.Close()
-        return nil,err
+    // The observer must not mark tasks from a live worker as interrupted.
+    // Only when no execution lease is active may startup reconcile orphaned
+    // records. A live service obtains its own lease before accepting requests.
+    live,err:=s.liveExecutionLease()
+    if err!=nil {_=db.Close();return nil,err}
+    if !live {
+        if err=s.RecoverInterruptedTasks();err!=nil {
+            _=db.Close()
+            return nil,err
+        }
     }
     return s,nil
 }
-func (s *Store) Close() error {return s.db.Close()}
+func (s *Store) Close() error {
+    s.releaseExecutionLease()
+    return s.db.Close()
+}
 
 func (s *Store) initialize(initial string) error {
     for _,statement:=range []string{
@@ -115,7 +127,7 @@ func (s *Store) initialize(initial string) error {
     defer tx.Rollback()
     var version int
     if err=tx.QueryRow("PRAGMA user_version").Scan(&version);err!=nil{return err}
-    if version>1 {return fmt.Errorf("database schema version %d is newer than Regate",version)}
+    if version>2 {return fmt.Errorf("database schema version %d is newer than Regate",version)}
     if version==0 {
         for _,stmt:=range []string{
             `CREATE TABLE IF NOT EXISTS revisions (
@@ -171,6 +183,15 @@ func (s *Store) initialize(initial string) error {
             if _,err:=tx.Exec(stmt);err!=nil{return fmt.Errorf("SQLite schema migration: %w",err)}
         }
     }
+    if version<2 {
+        if _,err=tx.Exec(`CREATE TABLE IF NOT EXISTS execution_leases (
+            name TEXT PRIMARY KEY,
+            holder TEXT NOT NULL,
+            epoch INTEGER NOT NULL CHECK(epoch > 0),
+            deadline_ns INTEGER NOT NULL
+        )`);err!=nil{return err}
+        if _,err=tx.Exec("PRAGMA user_version=2");err!=nil{return err}
+    }
     var count int
     if err=tx.QueryRow("SELECT COUNT(*) FROM revisions").Scan(&count);err!=nil{return err}
     if count==0 {
@@ -181,9 +202,13 @@ func (s *Store) initialize(initial string) error {
             if _,err=activateTx(tx,initial,"");err!=nil{return err}
         }
     }
-    // Crash during a non-idempotent dispatch does NOT mean it failed. Preserve
-    // the uncertain effect; external read-back or an operator must resolve it.
-    if err=recoverDispatches(tx);err!=nil{return err}
+    // Observer processes must not transition a live worker's dispatching
+    // effects into UNKNOWN. A crashed/expired lease can be recovered.
+    live,err:=leaseLiveTx(tx,time.Now().UnixNano())
+    if err!=nil{return err}
+    if !live {
+        if err=recoverDispatches(tx);err!=nil{return err}
+    }
     return tx.Commit()
 }
 func activateTx(tx *sql.Tx,source,parent string)(Revision,error) {
