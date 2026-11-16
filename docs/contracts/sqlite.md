@@ -1,4 +1,4 @@
-# Regate SQLite durability contract (schema version 4)
+# Regate SQLite durability contract (schema version 5)
 
 SQLite is the authoritative on-disk store for revisions, active selection,
 drafts, graph layouts, MCP task records, suspended run checkpoints, execution
@@ -268,8 +268,9 @@ or unencrypted queue fails before a task handle is issued. OAuth-delegated or
 scope-bearing tasks cannot be deferred without a distinct authorized
 capability grant — a bearer must never be reused after expiration.
 
-The internal `ClaimNextQueued` operation picks the oldest eligible entry
-and atomically moves its task to `working`, deleting the encrypted queue
+The internal `ClaimNextQueued` operation picks an eligible owner using a
+persisted least-recently-served rotation, then selects that owner's oldest
+entry, atomically moving its task to `working` and deleting the encrypted queue
 entry before effects may be dispatched. Unclaimed entries survive clean
 restarts and leadership takeovers. An already claimed but interrupted task
 becomes `failed` as usual; it cannot be automatically repeated after an
@@ -282,7 +283,7 @@ the SQLite execution lease. It checks capacity before each claim and uses
 the task's original immutable HCL revision and encrypted original inputs.
 The dispatcher runs at startup even after the current HCL disables new queue
 admission, provided old entries remain. Slot release and periodic wakeups
-allow further FIFO claims. Cancellation removes queued ciphertext and
+allow further per-owner FIFO claims. Cancellation removes queued ciphertext and
 prevents dispatch; a checked-out task carries a SQLite working-state guard
 at MCP and HTTP side-effect boundaries.
 
@@ -292,9 +293,9 @@ and delegated tasks remain ineligible for deferred storage, because their
 user grants cannot be inferred from a past access token. An already claimed
 task interrupted after a crash is failed rather than blindly replayed.
 
-This is an operational **bounded encrypted FIFO queue** for nondelegated
-work, not a durable fair scheduler across users or a general exactly-once
-executor. Corrupt or undecryptable entries block the queue pending operator
+This is an operational **bounded encrypted per-owner FIFO queue**
+for nondelegated work, not an identity-verified fair scheduler or a general
+exactly-once executor. Corrupt or undecryptable entries block the queue pending operator
 inspection, rather than being silently skipped. Production priority
 policies, external remote fencing, secure key lifecycle and chaos/load
 verification remain required. Ciphertext in WAL/backups needs retention
@@ -311,7 +312,37 @@ is full, the newcomer is rejected rather than barging ahead. Disabling
 and also rejects otherwise-eligible fresh work until the previously
 committed backlog drains; accepted older tasks retain their place.
 
-This enforces FIFO among nondelegated queue-eligible jobs across activation
-boundaries. It does not schedule OAuth-protected jobs with expired subject
-tokens, nor claim user-level weighted fairness or strict order of completion
-once parallel workers are enabled.
+This preserves an earlier accepted backlog before newly admitted work
+at the admission boundary. Dispatch uses per-owner FIFO with alternating
+owners, **not** a single global FIFO across different owners. It does not
+schedule OAuth-protected jobs with expired subject tokens, nor claim
+identity-verified weighted fairness or strict order of completion once
+parallel workers are enabled.
+
+## Durable unweighted owner fairness (schema v5 / PR #34)
+
+Schema v5 introduces a monotonic `task_queue_clock` and a bounded
+`task_queue_turns` table for the owners that still have queued work. The
+claim transaction selects the owner whose last served turn is oldest;
+among that owner's jobs it chooses the smallest queue sequence. An owner
+without a previous turn is treated as waiting longest, ordered by the
+earliest queued sequence. This yields deterministic, unweighted
+round-robin **between owners** and strict FIFO **within one owner**.
+The turn update, task claim, ciphertext deletion and capacity transition
+commit together, so a restart does not reset the rotation. When the last
+waiting task from an owner is claimed, cancelled or expires, its turn row is
+deleted to prevent unbounded scheduling metadata growth.
+
+A separate `regate.max_queued_per_owner` limit (default 32, range 1–4096)
+caps each owner's waiting backlog. Both this and the existing global queue
+limit are checked under the same write transaction, and overflow is
+rejected *before* persisting task input. A different owner may continue
+to queue even after one owner reaches its quota.
+
+Owner is the Regate task-owner digest, not a proof of real-world identity:
+if public clients can create many bearer aliases, the quota is not
+anti-Sybil protection. The release still requires authenticated principal
+identities, quotas across all entrypoints, advanced fairness/priority
+policy, remote adapter fencing and operational load testing. This
+milestone does not add a default priority order or guarantee that work
+completes in the exact dispatch order.
