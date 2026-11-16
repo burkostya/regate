@@ -184,3 +184,23 @@
   reauthorization to continue. Durable unattended encrypted capability grants,
   provider revocation enforcement, KMS/rotation, cross-process task scheduling,
   remote fencing and production provider integration remain open in #5/#6.
+
+#### Sealed delegated grant storage milestone (PR #27)
+
+- SQLite v3 `task_grants` encrypts explicitly provisioned refresh credentials
+  with AES-256-GCM from a versioned environment-only keyring. The authenticated
+  data binds original task, owner, issuer, audience, provider, revision,
+  scopes, generation and expiry; plaintext tokens never enter the journal,
+  HCL, task record or task response.
+- The grant is one-per-task with transactional admission, CAS rotation,
+  explicit revoke, key rewrap and fail-closed `needs_reauth` recovery after
+  an interrupted refresh attempt. Tests include wrong owner, scope drift,
+  ciphertext tampering, migration, backup, concurrent provisioning, key
+  retirement, revocation racing rotation and restart.
+- **No external grant-issuance or unattended execution flow exists yet.**
+  A sealed string is not automatically an authenticated OAuth grant. Next
+  stages must verify refresh tokens against the authority, bind real
+  provider-specific renewal, make revocation effective at effect boundaries,
+  and schedule only proven-safe continuations after crash/restart.
+- Issue #6 stays open, including provider-specific read-back/compensation
+  guarantees, external fencing and full production hardening.
