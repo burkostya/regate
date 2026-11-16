@@ -65,6 +65,12 @@ func (s *Store) AcquireExecutionLease()error {
             WHERE name=?`,owner,epoch,now+int64(leaseLifetime),executionLeaseName)
     }
     if err!=nil{return err}
+    // Leader promotion and abandoned-work recovery share one transaction.
+    // An observer might have opened the DB while the previous lease was
+    // alive, then acquired leadership after it expired; recover at promotion,
+    // not solely based on the earlier startup snapshot.
+    if err=recoverDispatches(tx);err!=nil{return err}
+    if err=recoverInterruptedTasksTx(tx);err!=nil{return err}
     if err=tx.Commit();err!=nil{return err}
 
     s.mu.Lock()
