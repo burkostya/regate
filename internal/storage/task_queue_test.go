@@ -2,6 +2,7 @@ package storage
 
 import (
     "bytes"
+    "database/sql"
     "context"
     "encoding/json"
     "errors"
@@ -75,7 +76,7 @@ func TestEncryptedQueueAdmissionFIFOAndCapacity(t *testing.T) {
     if depth,err:=s.QueueDepth(context.Background());err!=nil || depth!=0 {
         t.Fatalf("cancellation retained ciphertext: %d %v",depth,err)
     }
-    if _,_,err=s.ClaimNextQueued(context.Background(),2);!errors.Is(err,os.ErrNotExist) && err==nil {
+    if _,_,err=s.ClaimNextQueued(context.Background(),2);!errors.Is(err,sql.ErrNoRows) {
         t.Fatal("cancelled queued task was reclaimed")
     }
 }
