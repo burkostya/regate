@@ -4,7 +4,6 @@ import (
     "bytes"
     "context"
     "crypto/rand"
-    "database/sql"
     "encoding/base64"
     "encoding/json"
     "errors"
@@ -272,6 +271,4 @@ func TestGrantDoesNotAppearInPublicTaskResponse(t *testing.T){
     if bytes.Contains(raw,[]byte("grant")) || bytes.Contains(raw,[]byte("secret")) {
         t.Fatalf("grant data exposed in public task: %s",raw)
     }
-    // External access to store/database is not a substitute for OAuth authorization.
-    _=sql.ErrNoRows
 }
