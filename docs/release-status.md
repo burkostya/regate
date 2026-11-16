@@ -19,7 +19,7 @@
 | Management MCP and REST endpoints | Implemented subset, official SDK inbound implementation (#15; conformance pending) | Auth + draft/activate/conflict/rollback, SDK client interoperability and skills tests |
 | Immutable revision history + drafts | SQLite transactional implementation (PR #20); complete v1 validation pending | Atomic conflict/rollback/restart, cross-connection and legacy-import tests |
 | Dry-run with explicit mocks | Partial implementation | REST API path |
-| Effect journal (`dispatching`, `confirmed`, `unknown`) | SQLite MCP and HTTP POST admission; positive-only HCL-configured MCP readback bound to endpoint/intent. Vendor-verified readback and compensation pending (#6) | Restart, no-replay, positive/mismatched readback, admin auth and lost-response tests |
+| Effect journal (`dispatching`, `confirmed`, `unknown`) | SQLite MCP/HTTP admission, positive-only MCP readback and explicit one-time operator-approved MCP compensation. Provider-verified semantics pending (#6) | Restart, no-replay, admin auth, readback/compensation success/unknown and concurrency tests |
 | Async MCP tasks, cancellation, checkpoint and resume | Partial implementation | Task integration test |
 | Subscription change notification | Implemented subset | SSE activation test |
 | Outbound HTTP DNS/IP safety guard | Implemented initial fail-closed guard | `internal/netguard` unit tests (DNS rebinding / mixed DNS / loopback) |
@@ -145,3 +145,20 @@
   vendor proof. No negative consistency semantics, remote idempotency/fencing,
   revision-pinned attestation, durable encrypted OAuth grants or compensation
   are provided by this milestone. Issue #6 remains open.
+
+#### Operator-approved MCP compensation milestone (PR #25)
+
+- A strict HCL `compensation` block maps one applied original write operation
+  to an explicitly enabled inverse tool at the exact original MCP endpoint.
+- The authenticated admin must supply the original intent, an actor and a
+  reason. The source must be `resolved_applied` with matching intent and
+  target digests, not merely `confirmed` or `unknown`.
+- Every inverse is a separately journaled effect linked to the original.
+  A stable inverse ID admits at most one attempt per original source even
+  across concurrent admins and crashes. Unknown outcomes never replay.
+- Administrative MCP `regate_effect_compensate` and
+  REST `POST /api/effect-compensate` are protected by admin bearer.
+- Compensation is **not** automatically executed, and a confirmed inverse
+  response does not prove restoration. Provider-specific effect verification,
+  remote idempotency/fencing and durable scoped OAuth grants remain open.
+  Full issue #6 remains unfinished.
