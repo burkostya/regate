@@ -28,6 +28,14 @@ func subjectToken(ctx context.Context) string {
     return token
 }
 
+// HasLiveSubjectToken is an in-memory capability check. No bearer or
+// refresh token is persisted in a task or journal record.
+func HasLiveSubjectToken(ctx context.Context) bool {
+    principal,ok:=FromContext(ctx)
+    return ok && subjectToken(ctx)!="" && !principal.ExpiresAt.IsZero() &&
+        time.Until(principal.ExpiresAt)>2*time.Second
+}
+
 var ErrTokenExchange = errors.New("delegated OAuth authorization unavailable")
 const tokenExchangeGrant = "urn:ietf:params:oauth:grant-type:token-exchange"
 const accessTokenType = "urn:ietf:params:oauth:token-type:access_token"
@@ -38,7 +46,7 @@ const accessTokenType = "urn:ietf:params:oauth:token-type:access_token"
 func Exchange(ctx context.Context,provider config.OAuth,targetAudience string,neededScopes []string) (string,error) {
     principal,ok:=FromContext(ctx)
     original:=subjectToken(ctx)
-    if !ok || original=="" || principal.Issuer!=provider.Issuer ||
+    if !ok || !HasLiveSubjectToken(ctx) || original=="" || principal.Issuer!=provider.Issuer ||
         targetAudience=="" || len(neededScopes)==0 || provider.TokenEndpoint=="" ||
         principal.Subject=="" {
         return "",ErrTokenExchange
