@@ -72,6 +72,7 @@ func (s *Store) BeginEffect(runID,node,operation string,arguments any)(Effect,er
     tx,err:=s.db.BeginTx(context.Background(),nil)
     if err!=nil{return Effect{},err}
     defer tx.Rollback()
+    if err=s.checkExecutionLeaseTx(tx);err!=nil{return Effect{},err}
     var stored string
     err=tx.QueryRow("SELECT record FROM effect_current WHERE effect_id=?",id).Scan(&stored)
     if err==nil {
