@@ -277,3 +277,24 @@
   hook the queue into user-facing task admission or automatic dispatch.
   Next milestone must implement a bounded worker dispatcher and live tests
   for recovery and HTTP/MCP task lifecycle. No v1 or #6 closure.
+
+#### Live SQLite FIFO async task dispatcher (PR #32)
+
+- Start a bounded dispatcher after SQLite execution leadership; admitted
+  nondelegated queued work is claimed oldest-first using the original
+  immutable HCL revision when an active task slot is available.
+- The dispatcher resumes unclaimed encrypted work after server restart.
+  Claimed tasks interrupted during execution fail closed and are not
+  re-queued without explicit reconciliation; expiry and cancellation
+  discard sealed inputs without external effects.
+- Each claimed task carries a transient SQLite-backed status/owner guard
+  into MCP/HTTP effect dispatch, preventing calls initiated after
+  cancellation or lost execution leadership.
+- The queue requires `REGATE_QUEUE_KEYS_JSON` on startup and activation.
+  No OAuth-scoped/delegated requests are silently deferred without
+  resource-specific authorization.
+- Tests exercise bounded backlog, live SDK MCP dispatch, FIFO/cancel,
+  encrypted backup, crash recovery and fail-closed startup without keys.
+- Still outstanding: fairness per principal, priority and quota scheduling,
+  provider-enforced idempotency/fencing, sensitive-data retention,
+  real load/chaos/security audit and full v1 release scenarios.
