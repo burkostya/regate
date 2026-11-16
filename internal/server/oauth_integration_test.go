@@ -88,6 +88,7 @@ func oauthFixture(t *testing.T) (*Service,*httptest.Server,*mockWorld,*rsa.Priva
     required_scopes = ["docs:read"]`,1)
     svc,err:=New(t.TempDir(),src)
     if err!=nil {t.Fatalf("OAuth configuration invalid: %v",err)}
+    t.Cleanup(func(){_ = svc.Store.Close()})
     srv:=httptest.NewServer(svc.Handler())
     t.Cleanup(srv.Close)
     return svc,srv,world,private
