@@ -632,25 +632,30 @@ func (r *Runtime) mcpCall(ctx context.Context,cfg *config.Config,u config.Upstre
     // journaled. Authorization failure means no external write was attempted.
     conn,err:=r.connFor(ctx,cfg,u)
     if err!=nil{return nil,err}
-    id:=storage.ID()
-	if effect != "read" && r.Store != nil {
-		if e := r.Store.Effect(storage.Effect{ID: id, RunID: runID, Node: node, Operation: u.Name + "." + tool, Status: "dispatching"}); e != nil {
-			return nil, e
-		}
-	}
-	raw, e := conn.CallTool(ctx, tool, args)
-	if effect != "read" && r.Store != nil {
-		state := "confirmed"
-		reason := ""
-		if e != nil {
-			state = "unknown"
-			reason = expr.RedactDiagnostic(e.Error())
-		}
-		if ee := r.Store.Effect(storage.Effect{ID: id, RunID: runID, Node: node, Operation: u.Name + "." + tool, Status: state, Reason: reason}); ee != nil {
-			return nil, ee
-		}
-	}
-	return raw, e
+    var attempt storage.Effect
+    if effect!="read" {
+        if r.Store==nil {return nil,fmt.Errorf("durable effect journal required before external write")}
+        // The same logical run/node/operation has a stable journal identity.
+        // SQLite admission is atomic across workers: unknown results and
+        // attempts already in flight cannot be silently dispatched again.
+        attempt,err=r.Store.BeginEffect(runID,node,u.Name+"."+tool,args)
+        if err!=nil{return nil,err}
+    }
+    raw,e:=conn.CallTool(ctx,tool,args)
+    if effect!="read" {
+        state:="confirmed"
+        reason:=""
+        if e!=nil {
+            state="unknown"
+            reason=expr.RedactDiagnostic(e.Error())
+        }
+        if err:=r.Store.CompleteEffect(attempt.ID,state,reason);err!=nil {
+            // Never return success when the remote action completed but
+            // durability of its outcome could not be established.
+            return nil,fmt.Errorf("effect outcome not durable: %w",err)
+        }
+    }
+    return raw,e
 }
 func (r *Runtime) runHook(ctx context.Context, h config.Hook, cfg *config.Config, value any, dry bool) (any, error) {
 	if dry {
