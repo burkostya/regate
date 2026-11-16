@@ -30,6 +30,27 @@ idempotency key. Shared run groups and external idempotency keys require
 explicit contracts; do not claim exactly-once external execution from this
 milestone alone.
 
+## HTTP POST and hook identity
+
+HTTP `http.call` nodes and HTTP/Decision hooks are treated as **writes**:
+a POST is not automatically read-only merely because its response is used as a
+transform or a policy decision. A SHA-256 hash of the endpoint URL and the
+canonical request body identifies the intent without persisting the raw URL,
+credentials or arguments. Before calling the HTTP endpoint, Regate requires an
+active SQLite execution lease and atomically journals `dispatching`.
+
+A fully parsed HTTP 200 JSON object completes the effect as `confirmed`.
+An HTTP failure, lost connection, malformed response or leader loss after the
+barrier completes as `unknown`, never as safe-to-retry. A known application
+decision such as `deny` is recorded as a completed *external request* and
+then enforced locally; confirmation does not imply authorization.
+
+Hooks now use the parent run identity and a stable hierarchical step key
+(`run / node / interceptor stage and name`). This prevents an accidentally
+fresh random ID from bypassing the write barrier when the same logical step is
+retried during a resume. Independent client requests still have distinct run
+identities; remote idempotency keys remain a separate contract.
+
 ## Reconciliation
 
 `ResolveWithReadback` accepts a trusted in-process `ReadbackVerifier`
