@@ -117,7 +117,7 @@ func (s *Service) createTaskFor(ctx context.Context,cfg *config.Config,revision 
     // Only nondelegated, unscoped, non-OAuth requests can enter an encrypted
     // waiting queue. Protected tasks still need a fresh user authorization or
     // a specifically delegated task grant and therefore apply backpressure.
-    eligibleQueue:=cfg.MaxQueuedTasks>0 && published.OAuth=="" &&
+    eligibleQueue:=published.OAuth=="" &&
         !delegated && len(task.RequiredScopes)==0 && !task.RedactPII
     if eligibleQueue {
         queued,err:=s.Store.AdmitOrQueueTask(ctx,task,args,cfg.MaxActiveTasks,cfg.MaxQueuedTasks)
