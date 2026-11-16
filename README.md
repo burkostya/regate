@@ -34,7 +34,10 @@ revision, record counts, file size and SHA-256. It does not include
 HCL source or encrypted task input. Save any required grant/queue
 encryption keys in separate protected key escrow; SQLite structural
 verification does not validate those external secrets or prove any
-remote resource state.
+remote resource state. A snapshot also includes the execution lease of
+its source; do not start a restored worker against the same upstream
+services until the original worker is stopped/fenced and the copied
+lease has expired.
 
 ## Run a complete local demonstration
 
