@@ -391,6 +391,7 @@ type extensionParams struct {
     URI string `json:"uri,omitempty"`
     TaskID string `json:"taskId,omitempty"`
     InputResponses map[string]any `json:"inputResponses,omitempty"`
+    RefreshToken string `json:"refreshToken,omitempty"`
 }
 type skillListResult struct {
     sdk.ResultBase
@@ -420,6 +421,59 @@ type taskExtensionResult struct {
     Error map[string]any `json:"error,omitempty"`
     InputRequests map[string]any `json:"inputRequests,omitempty"`
 }
+// Only an OAuth-authenticated task owner can provision, inspect or revoke
+// a sealed refresh grant. This method family is not registered on admin MCP.
+type grantExtensionResult struct {
+    sdk.ResultBase
+    ResultType string `json:"resultType,omitempty"`
+    TaskID string `json:"taskId"`
+    State string `json:"state"`
+    ExpiresAt string `json:"expiresAt,omitempty"`
+    Generation int64 `json:"generation,omitempty"`
+}
+func registerGrantMethods(srv *sdk.Server,s *Service,surface string)error {
+    for _,name:=range []string{"tasks/grants/provision","tasks/grants/status","tasks/grants/revoke"} {
+        operation:=name
+        if err:=sdk.AddReceivingCustomMethod(srv,operation,
+            func(ctx context.Context,_ *sdk.ServerSession,p *extensionParams)(*grantExtensionResult,error) {
+                if p==nil || p.TaskID=="" {
+                    return nil,&jsonrpc.Error{Code:-32602,Message:"invalid grant request"}
+                }
+                owner,_:=ctx.Value(sdkOwnerKey{}).(string)
+                owner=ownerIdentity(ctx,owner)
+                out:=&grantExtensionResult{ResultType:"complete",TaskID:p.TaskID}
+                switch operation {
+                case "tasks/grants/provision":
+                    if len(p.RefreshToken)==0 || len(p.RefreshToken)>8192 {
+                        return nil,&jsonrpc.Error{Code:-32602,Message:"invalid grant credential"}
+                    }
+                    meta,err:=s.ProvisionTaskGrant(ctx,surface,p.TaskID,owner,p.RefreshToken)
+                    if err!=nil {
+                        return nil,&jsonrpc.Error{Code:-32602,Message:"grant provisioning unavailable"}
+                    }
+                    out.State=meta.State
+                    out.Generation=meta.Generation
+                    out.ExpiresAt=meta.ExpiresAt.Format(time.RFC3339Nano)
+                case "tasks/grants/status":
+                    meta,err:=s.TaskGrantState(ctx,surface,p.TaskID,owner)
+                    if err!=nil {
+                        return nil,&jsonrpc.Error{Code:-32602,Message:"grant not found"}
+                    }
+                    out.State=meta.State
+                    out.Generation=meta.Generation
+                    out.ExpiresAt=meta.ExpiresAt.Format(time.RFC3339Nano)
+                case "tasks/grants/revoke":
+                    if err:=s.RevokeTaskGrant(ctx,surface,p.TaskID,owner);err!=nil {
+                        return nil,&jsonrpc.Error{Code:-32602,Message:"grant not found"}
+                    }
+                    out.State="revoked"
+                }
+                return out,nil
+            });err!=nil{return err}
+    }
+    return nil
+}
+
 func registerSkills(srv *sdk.Server, s *Service) error {
     if err := sdk.AddReceivingCustomMethod(srv,"skills/list",func(ctx context.Context, _ *sdk.ServerSession, _ *extensionParams) (*skillListResult,error) {
         return &skillListResult{ResultType:"complete", Skills:s.Skills(), TTLMS:300000, CacheScope:"private"},nil
@@ -460,6 +514,7 @@ func registerTaskMethods(srv *sdk.Server, s *Service, surface string, admin bool
             return &result,nil
         });err!=nil{return err}
     }
+    if !admin {return registerGrantMethods(srv,s,surface)}
     return nil
 }
 
