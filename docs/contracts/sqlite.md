@@ -97,12 +97,25 @@ independent client request or an external system ignoring idempotency/fencing
 contracts. HTTP 5xx and malformed responses remain uncertain until
 authoritative read-back or operator reconciliation.
 
+## Endpoint-bound positive reconciliation
+
+New MCP writes bind the effect to a SHA-256 `target_digest` of their original
+remote endpoint. An explicitly configured, read-only MCP lookup can resolve
+`unknown` only when both that target and the canonical digest of the exact
+original write arguments match the stored journal entry. The response identity
+must match the original intent. Only `resolved_applied` is supported by this
+MCP adapter: absence or an inconclusive read leaves `unknown`.
+
+Imported, legacy or unbound journal entries are never retroactively assigned
+a target, and can only be handled by a separately audited operator decision
+or an independently verified legacy-resource adapter.
+
 ### Not yet supported by this milestone
 
-- Configurable verified external read-back adapters and policy-based
-  compensation for arbitrary resources. A typed readback verification
-  interface, stable effect IDs and operator-resolution journal now exist
-  (PR #21), but verified adapters must still be supplied per resource.
+- The MCP adapter supports only an operator-asserted read-only positive
+  identity lookup. Verified vendor-specific read semantics, authoritative
+  negative consistency, HTTP readback and policy-driven compensation for
+  arbitrary resources remain outstanding.
 - Multi-instance fair scheduling, crash-safe preemption and remote adapter
   fencing of effects already dispatched. Local SQLite leader leasing and
   epoch-based refusal of new operations are implemented (PR #22).
