@@ -19,7 +19,10 @@ late heartbeat, stale `Close` and subsequent external effects are fenced.
 A database observer must **not** convert another worker's live
 `dispatching` effects into `unknown`, nor fail its running tasks. Startup
 recovery of abandoned effects and tasks happens only when the previous lease
-is absent or expired. No task is automatically replayed after takeover.
+is absent or expired. Promotion of a new worker epoch and recovery of all
+abandoned `dispatching`/ `working` records share **one SQL transaction**:
+this also covers observers that opened the database before the prior lease
+expired. No task is automatically replayed after takeover.
 The CLI releases leadership on graceful shutdown and on fatal validation
 paths after startup.
 
