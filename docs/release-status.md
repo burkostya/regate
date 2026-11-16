@@ -124,3 +124,9 @@
 - Only `dispatching → confirmed/unknown` is accepted for an active attempt. Reconciliation provides explicit operator decisions and a typed trusted resource read-back interface with required evidence digest; a negative outcome needs authoritative consistency attestation.
 - Management MCP and admin REST expose explicit operator decisions and audit the provenance separately from verified read-back. Existing event versions remain append-only.
 - Remaining: real resource-specific verified read-back adapters, idempotency keys shared with upstream APIs, compensation and durable worker leases/capability grants. Do not claim exactly-once effects across independent requests.
+
+#### SQLite execution lease and fencing milestone (PR #22)
+
+- Schema v2 adds an exclusive execution lease with expiry, heartbeat and monotonically increasing epoch. The Regate MCP service refuses to start as a second live leader for the same state directory.
+- An observer may inspect SQLite but cannot mark a live leader's tasks/effects interrupted, and cannot dispatch external effects while that leader's lease is active. Old workers lose the right to perform new actions after fencing/takeover.
+- Startup migration from SQLite schema v1 is tested; CLI releases the lease on normal and fatal paths. Outstanding v1 requirements include remote-effect fencing/idempotency, durable OAuth capability grants and full reconciliation adapters.
