@@ -127,6 +127,9 @@ func (r *Runtime) Run(ctx context.Context, revision string, cfg *config.Config, 
 	if !found {
 		return out, fmt.Errorf("tool not found")
 	}
+    if r.Store!=nil {
+        if err:=r.Store.CheckExecutionLease(ctx);err!=nil{return out,err}
+    }
     if err:=enforceDataTrust(cfg,surface,tool);err!=nil {
         out.Status="denied"
         out.Error="untrusted destination"
@@ -632,6 +635,9 @@ func (r *Runtime) mcpCall(ctx context.Context,cfg *config.Config,u config.Upstre
     // journaled. Authorization failure means no external write was attempted.
     conn,err:=r.connFor(ctx,cfg,u)
     if err!=nil{return nil,err}
+    if r.Store!=nil {
+        if err=r.Store.CheckExecutionLease(ctx);err!=nil{return nil,err}
+    }
     var attempt storage.Effect
     if effect!="read" {
         if r.Store==nil {return nil,fmt.Errorf("durable effect journal required before external write")}
@@ -640,6 +646,9 @@ func (r *Runtime) mcpCall(ctx context.Context,cfg *config.Config,u config.Upstre
         // attempts already in flight cannot be silently dispatched again.
         attempt,err=r.Store.BeginEffect(runID,node,u.Name+"."+tool,args)
         if err!=nil{return nil,err}
+    }
+    if r.Store!=nil {
+        if err=r.Store.CheckExecutionLease(ctx);err!=nil{return nil,err}
     }
     raw,e:=conn.CallTool(ctx,tool,args)
     if effect!="read" {
@@ -661,6 +670,9 @@ func (r *Runtime) runHook(ctx context.Context, h config.Hook, cfg *config.Config
 	if dry {
 		return value, nil
 	}
+    if h.Transport!="builtin" && r.Store!=nil {
+        if err:=r.Store.CheckExecutionLease(ctx);err!=nil{return nil,err}
+    }
 	switch h.Transport {
 	case "builtin":
 		if h.Name == "mask_pii" || h.Contract == "transform" {
@@ -754,6 +766,9 @@ func decide(value any) (any, error) {
 	return nil, ErrDenied
 }
 func (r *Runtime) Resume(ctx context.Context, cfg *config.Config, revision string, runID string, value any) (Outcome, error) {
+    if r.Store!=nil {
+        if err:=r.Store.CheckExecutionLease(ctx);err!=nil{return Outcome{},err}
+    }
 	var cp Checkpoint
 	if e := r.Store.GetSuspended(runID, &cp); e != nil {
 		return Outcome{}, e
