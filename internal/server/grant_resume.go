@@ -62,7 +62,7 @@ func (s *Service) ResumeTaskWithGrant(ctx context.Context,
         return nil,storage.ErrGrantUnavailable
     }
     reserved,refreshToken,err:=s.Store.BeginTaskGrantContinuation(
-        ctx,taskID,task.OwnerDigest)
+        ctx,taskID,task.OwnerDigest,cfg.MaxActiveTasks)
     s.tasksMu.Unlock()
     if err!=nil {return nil,err}
 
