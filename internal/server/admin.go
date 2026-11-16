@@ -44,6 +44,7 @@ var AdminTools = map[string][]Arg{
 	"regate_upstream_refresh": {{"name", "Upstream name", true}},
 	"regate_run":              {{"surface", "Surface", true}, {"tool", "Tool", true}, {"arguments", "Arguments", false}},
 	"regate_resume":           {{"run_id", "Suspended run", true}, {"value", "Resume result", false}},
+    "regate_task_resume_grant": {{"task_id","Suspended delegated task ID",true},{"value","Explicit continuation input",false}},
 	"regate_revisions":        {},
 	"regate_effects":          {},
     "regate_effect_compensate": {
@@ -260,6 +261,8 @@ func (s *Service) Admin(ctx context.Context, name string, args map[string]any) (
 			return out, e
 		}
 		return out, nil
+	case "regate_task_resume_grant":
+        return s.ResumeTaskWithGrant(ctx,str(args,"task_id"),args["value"])
 	case "regate_resume":
 		// Resume against its original immutable revision rather than today's config.
 		var cp engine.Checkpoint
