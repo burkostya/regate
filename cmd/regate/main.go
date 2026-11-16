@@ -26,6 +26,7 @@ func main() {
 	if e != nil {
 		log.Fatal(e)
 	}
+    defer srv.Store.Close()
 	cfg, _ := srv.Current()
 	addr := cfg.Listen
 	if *listen != "" {
