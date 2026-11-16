@@ -276,8 +276,9 @@ pipeline "deferred_customer" {
     if noScope["error"]==nil {t.Fatal("revoked crm scope resumed delegated task")}
     other:=signedTestJWTSubject(t,private,issuer,regateAudience,
         "surface:read crm:read","other-user")
-    noOwner:=decode(t,latestCall(t,api.URL+"/mcp/support",other,"tasks/update",63,update))
-    if noOwner["error"]==nil {t.Fatal("another principal resumed delegated task")}
+    noOwner:=latestCall(t,api.URL+"/mcp/support",other,"tasks/update",63,update)
+    noOwner.Body.Close()
+    if noOwner.StatusCode<400 {t.Fatal("another principal resumed delegated task")}
     // Nondelegated compatibility API has no OAuth context and must be
     // unable to continue a delegated task despite a matching owner digest.
     storedTask,err:=svc.Store.TaskGet(suspendedID)
