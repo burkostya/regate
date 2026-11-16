@@ -68,8 +68,10 @@ func (s *Store) TaskGet(id string)(TaskRecord,error) {
     return task,nil
 }
 func (t TaskRecord) Public() map[string]any {
+    publicStatus:=t.Status
+    if publicStatus=="queued" {publicStatus="working"} // MCP task status compatibility
     out:=map[string]any{
-        "taskId":t.TaskID,"status":t.Status,
+        "taskId":t.TaskID,"status":publicStatus,
         "createdAt":t.CreatedAt.Format(time.RFC3339Nano),
         "lastUpdatedAt":t.LastUpdatedAt.Format(time.RFC3339Nano),
         "ttlMs":t.TTLMS,"pollIntervalMs":t.PollIntervalMS,
