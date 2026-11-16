@@ -38,7 +38,7 @@ func TestGrantContinuationAtomicallyReservesTaskAndCredential(t *testing.T){
         task.TaskID,task.OwnerDigest,32);!errors.Is(err,ErrGrantUnavailable) {
         t.Fatalf("second continuation admitted: %v",err)
     }
-    if _,err=s.TaskGrantState(context.Background(),task.TaskID,task.OwnerDigest,32);err!=nil{
+    if _,err=s.TaskGrantState(context.Background(),task.TaskID,task.OwnerDigest);err!=nil{
         t.Fatal(err)
     }
     refreshed,err:=s.FinishTaskGrantRefresh(context.Background(),reservation,
@@ -54,7 +54,7 @@ func TestGrantContinuationAtomicallyReservesTaskAndCredential(t *testing.T){
         task.OwnerDigest,reservation.Generation);!errors.Is(err,ErrGrantUnavailable) {
         t.Fatalf("stale grant generation accepted: %v",err)
     }
-    if err=s.RevokeTaskGrant(context.Background(),task.TaskID,task.OwnerDigest,32);err!=nil{t.Fatal(err)}
+    if err=s.RevokeTaskGrant(context.Background(),task.TaskID,task.OwnerDigest);err!=nil{t.Fatal(err)}
     if err=s.RequireActiveTaskGrant(context.Background(),task.TaskID,
         task.OwnerDigest,refreshed.Generation);!errors.Is(err,ErrGrantUnavailable) {
         t.Fatalf("revoked grant was still executable: %v",err)
@@ -73,7 +73,7 @@ func TestGrantContinuationRejectsMissingCheckpointBeforeCredentialRotation(t *te
         task.TaskID,task.OwnerDigest,32);!errors.Is(err,ErrGrantUnavailable) {
         t.Fatalf("missing checkpoint spent refresh credential: %v",err)
     }
-    state,err:=s.TaskGrantState(context.Background(),task.TaskID,task.OwnerDigest,32)
+    state,err:=s.TaskGrantState(context.Background(),task.TaskID,task.OwnerDigest)
     if err!=nil || state.State!="active" {
         t.Fatalf("missing checkpoint altered refresh state: %#v %v",state,err)
     }
