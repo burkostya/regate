@@ -152,6 +152,15 @@ Keep the necessary key versions in a separately protected KMS/secret backup,
 and test disaster recovery in an isolated environment. Filesystem snapshots
 of only the main DB file while WAL is active are **not** adequate.
 
+The snapshot preserves any active SQLite execution-leader lease as of backup
+time. A restored copy must **not** start external execution while the
+original worker may still be alive or its lease is valid. An observer may
+inspect the copy without taking leadership. Only after the original
+environment has been fenced/stopped and the copied lease has expired may
+the new worker promote itself; takeover then marks interrupted tasks
+`failed` and dispatched but unconfirmed effects `unknown`. Merely
+restoring to another state directory is **not** remote-service fencing.
+
 Tests cover restart, preserved ambiguous effects, task fail-closed recovery,
 consistent backup, transactional import including all state domains, corrupt
 migration rollback, and conflicting writers.
