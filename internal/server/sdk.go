@@ -434,10 +434,10 @@ func registerSkills(srv *sdk.Server, s *Service) error {
     })
 }
 func registerTaskMethods(srv *sdk.Server, s *Service, surface string, admin bool) error {
-    methods:=[]struct{name string; fn func(string,string,map[string]any)(map[string]any,error)}{
-        {"tasks/get",func(id,owner string,_ map[string]any)(map[string]any,error){return s.TaskGet(id,owner)}},
-        {"tasks/update",func(id,owner string,r map[string]any)(map[string]any,error){return s.TaskUpdate(id,owner,r)}},
-        {"tasks/cancel",func(id,owner string,_ map[string]any)(map[string]any,error){return s.TaskCancel(id,owner)}},
+    methods:=[]struct{name string; fn func(context.Context,string,string,map[string]any)(map[string]any,error)}{
+        {"tasks/get",func(_ context.Context,id,owner string,_ map[string]any)(map[string]any,error){return s.TaskGet(id,owner)}},
+        {"tasks/update",func(ctx context.Context,id,owner string,r map[string]any)(map[string]any,error){return s.TaskUpdateWithContext(ctx,id,owner,r)}},
+        {"tasks/cancel",func(_ context.Context,id,owner string,_ map[string]any)(map[string]any,error){return s.TaskCancel(id,owner)}},
     }
     for _,method:=range methods {
         fn:=method.fn
@@ -452,7 +452,7 @@ func registerTaskMethods(srv *sdk.Server, s *Service, surface string, admin bool
                 if err!=nil || record.Surface!=surface {return nil,&jsonrpc.Error{Code:-32602,Message:"task not found"}}
                 if err:=identity.RequireScopes(ctx,record.RequiredScopes);err!=nil {return nil,&jsonrpc.Error{Code:-32001,Message:"insufficient task scope"}}
             }
-            v,err:=fn(p.TaskID,owner,p.InputResponses)
+            v,err:=fn(ctx,p.TaskID,owner,p.InputResponses)
             if err!=nil {return nil,&jsonrpc.Error{Code:-32602,Message:"task not found"}}
             var result taskExtensionResult
             if err:=remarshalSDK(v,&result); err!=nil {return nil,err}
