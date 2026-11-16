@@ -97,6 +97,42 @@ func TestDelegatedUpstreamTokenAudienceAndEffectBoundary(t *testing.T) {
       exchange_client_secret_env = "REGATE_OAUTH_EXCHANGE_SECRET"
     }
     `,issuer,idp.URL+"/jwks",regateAudience,idp.URL+"/token")+hcl
+    // A pipeline that intentionally suspends before calling a delegated
+    // upstream lets us exercise the new-bearer resume path end to end.
+    hcl=strings.Replace(hcl,`  tool "get_customer_direct" {`,`
+  tool "deferred_customer" {
+    pipeline = "deferred_customer"
+    required_scopes = ["crm:read"]
+    data_classification = "restricted"
+  }
+  tool "get_customer_direct" {`,1)
+    hcl+=`
+pipeline "deferred_customer" {
+  entry = "wait"
+  node "wait" {
+    kind = "suspend"
+  }
+  node "fetch" {
+    kind = "mcp.call"
+    upstream = "crm"
+    tool = "get_customer"
+    effect = "read"
+    arguments = { customer_id = "input.customer_id" }
+  }
+  node "result" {
+    kind = "output"
+    value = "nodes.fetch.value"
+  }
+  edge {
+    from = "wait"
+    to = "fetch"
+  }
+  edge {
+    from = "fetch"
+    to = "result"
+  }
+}
+`
     svc,err:=New(t.TempDir(),hcl)
     if err!=nil {t.Fatal(err)}
     defer svc.Store.Close()
@@ -208,4 +244,74 @@ func TestDelegatedUpstreamTokenAudienceAndEffectBoundary(t *testing.T) {
     world.mu.Unlock()
     if writesAfter!=writesBefore {t.Fatal("invalid async delegation reached upstream")}
 
+    // Suspend under one bearer, then resume with a different verified
+    // bearer for the same subject. The subject token must not be persisted.
+    mu.Lock()
+    variant="valid"
+    mu.Unlock()
+    deferred:=map[string]any{
+        "name":"deferred_customer",
+        "arguments":map[string]any{"customer_id":"C1"},
+        "_meta":async["_meta"],
+    }
+    started:=decode(t,latestCall(t,api.URL+"/mcp/support",origin,"tools/call",60,deferred))
+    if started["error"]!=nil {t.Fatalf("deferred task start denied: %#v",started)}
+    suspendedID:=started["result"].(map[string]any)["taskId"].(string)
+    deadline=time.Now().Add(4*time.Second)
+    ready:=false
+    for time.Now().Before(deadline) {
+        state:=decode(t,latestCall(t,api.URL+"/mcp/support",origin,"tasks/get",61,map[string]any{"taskId":suspendedID}))
+        if state["result"].(map[string]any)["status"]=="input_required" {ready=true;break}
+        time.Sleep(10*time.Millisecond)
+    }
+    if !ready {t.Fatal("delegated pipeline did not suspend")}
+    update:=map[string]any{
+        "taskId":suspendedID,
+        "inputResponses":map[string]any{
+            "resume":map[string]any{"action":"accept","content":map[string]any{"approved":true}},
+        },
+    }
+    lostScope:=signedTestJWT(t,private,issuer,regateAudience,"surface:read")
+    noScope:=decode(t,latestCall(t,api.URL+"/mcp/support",lostScope,"tasks/update",62,update))
+    if noScope["error"]==nil {t.Fatal("revoked crm scope resumed delegated task")}
+    other:=signedTestJWTSubject(t,private,issuer,regateAudience,
+        "surface:read crm:read","other-user")
+    noOwner:=decode(t,latestCall(t,api.URL+"/mcp/support",other,"tasks/update",63,update))
+    if noOwner["error"]==nil {t.Fatal("another principal resumed delegated task")}
+    // Nondelegated compatibility API has no OAuth context and must be
+    // unable to continue a delegated task despite a matching owner digest.
+    storedTask,err:=svc.Store.TaskGet(suspendedID)
+    if err!=nil{t.Fatal(err)}
+    if _,err=svc.TaskUpdate(suspendedID,"oauth:"+issuer+"\\x00"+regateAudience+"\\x00"+"test-user",
+        update["inputResponses"].(map[string]any));err==nil {
+        t.Fatal("context-free task update bypassed fresh credential")
+    }
+    afterDenied,err:=svc.Store.TaskGet(suspendedID)
+    if err!=nil || afterDenied.Status!="input_required" {t.Fatalf("rejected resume mutated task: %#v %v",afterDenied,err)}
+    _=storedTask
+    fresh:=signedTestJWT(t,private,issuer,regateAudience,
+        "surface:read crm:read other:scope")
+    resumed:=decode(t,latestCall(t,api.URL+"/mcp/support",fresh,"tasks/update",64,update))
+    if resumed["error"]!=nil {t.Fatalf("valid new bearer could not resume: %#v",resumed)}
+    deadline=time.Now().Add(4*time.Second)
+    resumedOK:=false
+    for time.Now().Before(deadline) {
+        data:=decode(t,latestCall(t,api.URL+"/mcp/support",fresh,"tasks/get",65,map[string]any{"taskId":suspendedID}))
+        task:=data["result"].(map[string]any)
+        if task["status"]=="completed" {
+            result:=task["result"].(map[string]any)
+            if result["isError"]==true {t.Fatalf("continued exchange failed: %#v",task)}
+            resumedOK=true
+            break
+        }
+        time.Sleep(10*time.Millisecond)
+    }
+    if !resumedOK {t.Fatal("resumed delegated execution did not complete")}
+    record,err:=svc.Store.TaskGet(suspendedID)
+    if err!=nil{t.Fatal(err)}
+    serialized,_=json.Marshal(record)
+    if strings.Contains(string(serialized),origin) || strings.Contains(string(serialized),fresh) {
+        t.Fatal("resumed bearer persisted in task state")
+    }
+}
 }
