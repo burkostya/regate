@@ -118,7 +118,7 @@ func TestGrantBoundContinuationDoesNotOversubscribe(t *testing.T) {
     if err!=nil || approved.State!="refreshing" || token!="sealed-refresh" {
         t.Fatalf("grant continuation could not acquire released slot: %#v %v",approved,err)
     }
-    if n,err=s.ActiveTaskCount(context.Background());err!=nil || n!=1 {
+    if n,err:=s.ActiveTaskCount(context.Background());err!=nil || n!=1 {
         t.Fatalf("grant continuation double counted: %d %v",n,err)
     }
 }
