@@ -46,6 +46,11 @@ var AdminTools = map[string][]Arg{
 	"regate_resume":           {{"run_id", "Suspended run", true}, {"value", "Resume result", false}},
 	"regate_revisions":        {},
 	"regate_effects":          {},
+    "regate_effect_readback": {
+        {"effect_id","Unknown target-bound effect ID",true},
+        {"adapter","Named HCL readback contract",true},
+        {"intent","Exact original writer argument object (never persisted)",true},
+    },
     "regate_effect_decide": {
         {"effect_id", "Unknown effect ID", true},
         {"actor", "Operator or service identity (audited statement)", true},
@@ -66,7 +71,7 @@ func AdminDefs() []map[string]any {
 		required := []string{}
 		for _, arg := range AdminTools[name] {
 			typ := "string"
-			if arg.Name == "arguments" || arg.Name == "value" {
+			if arg.Name == "arguments" || arg.Name == "value" || arg.Name == "intent" {
 				typ = "object"
 			}
 			props[arg.Name] = map[string]any{"type": typ, "description": arg.Description}
@@ -151,6 +156,9 @@ func (s *Service) Admin(ctx context.Context, name string, args map[string]any) (
 		return s.Store.History(), nil
 	case "regate_effects":
 		return s.Store.Effects(), nil
+    case "regate_effect_readback":
+        return s.Engine.ReconcileMCP(ctx,cfg,
+            str(args,"effect_id"),str(args,"adapter"),obj(args,"intent"))
     case "regate_effect_decide":
         id:=str(args,"effect_id")
         current,err:=s.Store.EffectGet(id)
