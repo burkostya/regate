@@ -77,19 +77,50 @@ The resolution event is appended; earlier event versions remain immutable.
 A resolved attempt still cannot be automatically redispatched. Starting a
 new run after an operator decision is a separate intentional action.
 
+## Resource-bound MCP positive read-back
+
+A top-level HCL `readback` declaration configures a trusted read-only MCP
+lookup to reconcile an `unknown` write. Each newly dispatched MCP effect
+carries a `target_digest` identifying the actual upstream URL (SHA-256,
+without persisting the raw URL). The readback adapter may run only if the
+stored target and `upstream.tool` operation match the configured target.
+
+The administrator supplies the **original write arguments**. Their canonical
+SHA-256 must match the effect's stored `intent_digest` before any external
+read is made. One JSON Pointer extracts a stable identity from these arguments;
+the declared read tool is called with that identity, and a second pointer
+extracts the returned identity. Only a positive exact identity match resolves
+the effect as `resolved_applied` with a digest of observed MCP evidence.
+Missing results, a different identity, unsupported payloads, tool errors or
+eventually consistent not-found results all retain `unknown`: no
+`resolved_absent` inference is made.
+
+`safe_read = true` is an **operator assertion** about the declared tool's
+behavior, not a protocol-generated proof. Only a resource-specific adapter
+with verified identity/consistency semantics should be trusted in production.
+A malicious MCP server that invents a matching identity can defeat this
+positive-only evidence check. The current management call uses the active HCL
+revision; changing the endpoint blocks reconciliation of old effects rather
+than silently checking a new server. Revision-pinned adapter attestation is
+outstanding work.
+
 ## Management surface
 
 - `regate_effects`: list current status projections.
+- `regate_effect_readback`: reconcile a target-bound unknown MCP effect with
+  `effect_id`, a named HCL `adapter`, and original write `intent` (object).
+- REST equivalent: `POST /api/effect-readback` (admin bearer required).
 - `regate_effect_decide`: explicitly resolve one `unknown` effect
   with `effect_id`, `actor`, `verdict` and `reason`.
 - REST equivalent: `POST /api/effect-decide` (admin bearer required).
 
 ## Remaining work before issue #6 can close
 
-The stored read-back interface and state machine do not themselves constitute
-a set of verified adapters. Configurable read-back contracts, effect-specific
-resource identity, idempotency keys shared with external systems, durable
-capability grants, execution leases and robust compensation remain required.
+The positive-only readback adapter verifies an identity match under an
+operator-attested read-only contract; it does not verify vendor-specific
+consistency and cannot prove absence. Provider-verified readback semantics,
+independently enforced idempotency/fencing, durable scoped capability grants
+and compensation remain required.
 Only property-verified adapters may claim an authoritative negative outcome.
 Audit actor identity is currently a management assertion authenticated by
 the shared admin bearer, not an individually signed attestation. No

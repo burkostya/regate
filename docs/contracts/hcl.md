@@ -64,8 +64,8 @@ prefer standard CEL methods where possible.
 
 ### Supported blocks and node kinds
 
-Top-level blocks: `regate`, `upstream`, `hook`, `policy`, `pipeline`,
-`surface`, `interceptor`. Within pipelines: `node` and `edge`. Within
+Top-level blocks: `regate`, `oauth`, `upstream`, `hook`, `policy`, `readback`,
+`pipeline`, `surface`, `interceptor`. Within pipelines: `node` and `edge`. Within
 surfaces: `tool`, `resource` and `prompt`.
 
 Node kinds: `input`, `output`, `transform`, `filter`, `validate`, `condition`,
@@ -80,6 +80,32 @@ A surface tool specifies exactly one of `source = "upstream.tool"` (direct
 proxy) or `pipeline = "named_pipeline"`. `input_schema` and `output_schema`
 are native HCL object values published with the tool. Full JSON Schema
 validation of remote content is a separate v1 requirement.
+
+### Positive-only MCP reconciliation declarations
+
+A top-level `readback` declaration binds an effectful MCP operation to a
+trusted read-only lookup on the same upstream:
+
+```hcl
+readback "customer_update" {
+  write_operation = "crm.update_customer"
+  upstream        = "crm"
+  read_tool       = "get_customer"
+  intent_pointer  = "/customer_id"
+  read_argument   = "customer_id"
+  result_pointer  = "/structuredContent/customer_id"
+  safe_read       = true
+}
+```
+
+Both pointers are RFC 6901 JSON Pointers: the intent selector must extract a
+stable identity from the original write arguments, and the result selector
+must match that identity in an actual MCP read response. Explicit
+`safe_read = true` is a trusted operator assertion that this particular
+read tool has no external effects; it is not inferred from MCP tool
+annotations. A missing or mismatched lookup never establishes absence.
+Older effects without an endpoint fingerprint are not automatically
+reconcilable.
 
 ### Source-preserving edits and semantic diffs
 

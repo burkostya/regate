@@ -19,7 +19,7 @@
 | Management MCP and REST endpoints | Implemented subset, official SDK inbound implementation (#15; conformance pending) | Auth + draft/activate/conflict/rollback, SDK client interoperability and skills tests |
 | Immutable revision history + drafts | SQLite transactional implementation (PR #20); complete v1 validation pending | Atomic conflict/rollback/restart, cross-connection and legacy-import tests |
 | Dry-run with explicit mocks | Partial implementation | REST API path |
-| Effect journal (`dispatching`, `confirmed`, `unknown`) | SQLite effect barriers for MCP and HTTP POST hooks/nodes; stable hook run identities. Resource-specific read-back and compensation still pending (#6) | Restart, lost HTTP/MCP response, denial and no-replay integration tests |
+| Effect journal (`dispatching`, `confirmed`, `unknown`) | SQLite MCP and HTTP POST admission; positive-only HCL-configured MCP readback bound to endpoint/intent. Vendor-verified readback and compensation pending (#6) | Restart, no-replay, positive/mismatched readback, admin auth and lost-response tests |
 | Async MCP tasks, cancellation, checkpoint and resume | Partial implementation | Task integration test |
 | Subscription change notification | Implemented subset | SSE activation test |
 | Outbound HTTP DNS/IP safety guard | Implemented initial fail-closed guard | `internal/netguard` unit tests (DNS rebinding / mixed DNS / loopback) |
@@ -130,3 +130,18 @@
 - Schema v2 adds an exclusive execution lease with expiry, heartbeat and monotonically increasing epoch. The Regate MCP service refuses to start as a second live leader for the same state directory; new epoch promotion and abandoned-record recovery commit atomically.
 - An observer may inspect SQLite but cannot mark a live leader's tasks/effects interrupted, and cannot dispatch external effects while that leader's lease is active. Old workers lose the right to perform new actions after fencing/takeover.
 - Startup migration from SQLite schema v1 is tested; CLI releases the lease on normal and fatal paths. Outstanding v1 requirements include remote-effect fencing/idempotency, durable OAuth capability grants and full reconciliation adapters.
+
+#### Positive-only MCP read-back milestone (PR #24)
+
+- `readback` HCL blocks bind an original MCP write operation to a trusted
+  read-only lookup on the same upstream endpoint.
+- New SQLite effect records carry a hashed target identity. Reconciliation
+  requires an exact digest of the original write arguments, a matching
+  upstream endpoint and a positive exact identity match from an actual MCP
+  read. Missing or negative results always remain `unknown`.
+- Admin-only MCP `regate_effect_readback` and REST
+  `POST /api/effect-readback` expose the workflow; no automatic retry.
+- The configured `safe_read=true` is an operator assertion, not an independent
+  vendor proof. No negative consistency semantics, remote idempotency/fencing,
+  revision-pinned attestation, durable encrypted OAuth grants or compensation
+  are provided by this milestone. Issue #6 remains open.

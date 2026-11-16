@@ -12,6 +12,7 @@ type Config struct {
     OAuth         map[string]OAuth                    `json:"oauth,omitempty"`
 	Upstreams     map[string]Upstream                `json:"upstreams"`
 	Hooks         map[string]Hook                    `json:"hooks"`
+    Readbacks     map[string]Readback                `json:"readbacks,omitempty"`
 	Policies      map[string]Policy                  `json:"policies"`
 	Pipelines     map[string]Pipeline                `json:"pipelines"`
 	Surfaces      map[string]Surface                 `json:"surfaces"`
@@ -59,6 +60,19 @@ type Hook struct {
     OAuthExchange string `json:"oauth_exchange,omitempty"`
     OAuthAudience string `json:"oauth_audience,omitempty"`
     OAuthScopes []string `json:"oauth_scopes,omitempty"`
+}
+// Readback declares a trusted, read-only MCP lookup used to resolve a lost
+// WRITE response only when it finds a positive identity match. It never
+// asserts that "not found" means authoritative absence.
+type Readback struct {
+    Name string `json:"name"`
+    WriteOperation string `json:"write_operation"`
+    Upstream string `json:"upstream"`
+    ReadTool string `json:"read_tool"`
+    IntentPointer string `json:"intent_pointer"`
+    ReadArgument string `json:"read_argument"`
+    ResultPointer string `json:"result_pointer"`
+    SafeRead bool `json:"safe_read"`
 }
 type Policy struct {
 	Name         string `json:"name"`
@@ -136,7 +150,7 @@ func Decode(src string) (*Config, error) {
 	if err = ValidateBlockSchema(blocks); err != nil {
 		return nil, err
 	}
-	c := &Config{Listen: "127.0.0.1:8080", OAuth: map[string]OAuth{}, Upstreams: map[string]Upstream{}, Hooks: map[string]Hook{}, Policies: map[string]Policy{}, Pipelines: map[string]Pipeline{}, Surfaces: map[string]Surface{}, Source: src}
+	c := &Config{Listen: "127.0.0.1:8080", OAuth: map[string]OAuth{}, Upstreams: map[string]Upstream{}, Hooks: map[string]Hook{}, Readbacks: map[string]Readback{}, Policies: map[string]Policy{}, Pipelines: map[string]Pipeline{}, Surfaces: map[string]Surface{}, Source: src}
 	seen := map[string]bool{}
 	for _, b := range blocks {
 		name := ""
@@ -171,6 +185,11 @@ func Decode(src string) (*Config, error) {
 				h.OnError = "deny"
 			}
 			c.Hooks[name] = h
+		case "readback":
+            c.Readbacks[name]=Readback{Name:name,WriteOperation:b.String("write_operation"),
+                Upstream:b.String("upstream"),ReadTool:b.String("read_tool"),
+                IntentPointer:b.String("intent_pointer"),ReadArgument:b.String("read_argument"),
+                ResultPointer:b.String("result_pointer"),SafeRead:b.Bool("safe_read",false)}
 		case "policy":
 			c.Policies[name] = Policy{Name: name, DecisionHook: b.String("decision_hook"), Scope: b.String("scope")}
 		case "pipeline":
@@ -301,6 +320,26 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("hook %s: unknown contract", name)
 		}
 	}
+    for name,rb:=range c.Readbacks {
+        if rb.Upstream=="" || rb.ReadTool=="" || rb.ReadArgument=="" ||
+            rb.WriteOperation=="" || !rb.SafeRead {
+            return fmt.Errorf("readback %s: incomplete positive-only read-safe contract",name)
+        }
+        if _,ok:=c.Upstreams[rb.Upstream];!ok {
+            return fmt.Errorf("readback %s: missing upstream %s",name,rb.Upstream)
+        }
+        if !strings.HasPrefix(rb.WriteOperation,rb.Upstream+".") ||
+            strings.TrimPrefix(rb.WriteOperation,rb.Upstream+".")=="" {
+            return fmt.Errorf("readback %s: write_operation must name a tool on the same upstream",name)
+        }
+        if strings.TrimSpace(rb.ReadArgument)!=rb.ReadArgument ||
+            strings.ContainsAny(rb.ReadArgument," \t\n\r") {
+            return fmt.Errorf("readback %s: invalid read_argument",name)
+        }
+        if !validReadbackPointer(rb.IntentPointer) || !validReadbackPointer(rb.ResultPointer) {
+            return fmt.Errorf("readback %s: invalid JSON pointer",name)
+        }
+    }
 	for name, p := range c.Policies {
 		if p.DecisionHook != "" {
 			h, ok := c.Hooks[p.DecisionHook]
@@ -488,6 +527,21 @@ func (c *Config) Validate() error {
 		return c.Interceptors[i].Name < c.Interceptors[j].Name
 	})
 	return nil
+}
+// Positive-only readback selectors follow RFC 6901 JSON Pointer syntax;
+// empty segments and invalid escape sequences are disallowed for clarity.
+func validReadbackPointer(pointer string)bool {
+    if len(pointer)<2 || pointer[0]!='/' {return false}
+    for _,segment:=range strings.Split(pointer[1:],"/") {
+        if segment=="" {return false}
+        for i:=0;i<len(segment);i++ {
+            if segment[i]=='~' {
+                if i+1==len(segment) || (segment[i+1]!='0' && segment[i+1]!='1') {return false}
+                i++
+            }
+        }
+    }
+    return true
 }
 func validateTrustLevel(value string) error {
     switch value {

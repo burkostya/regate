@@ -61,6 +61,7 @@ type Effect struct {
     Node string `json:"node"`
     Operation string `json:"operation"`
     IntentDigest string `json:"intent_digest,omitempty"`
+    TargetDigest string `json:"target_digest,omitempty"`
     Status string `json:"status"`
     At time.Time `json:"at"`
     Reason string `json:"reason,omitempty"`
