@@ -13,6 +13,7 @@ type Config struct {
 	Upstreams     map[string]Upstream                `json:"upstreams"`
 	Hooks         map[string]Hook                    `json:"hooks"`
     Readbacks     map[string]Readback                `json:"readbacks,omitempty"`
+    Compensations map[string]Compensation `json:"compensations,omitempty"`
 	Policies      map[string]Policy                  `json:"policies"`
 	Pipelines     map[string]Pipeline                `json:"pipelines"`
 	Surfaces      map[string]Surface                 `json:"surfaces"`
@@ -73,6 +74,18 @@ type Readback struct {
     ReadArgument string `json:"read_argument"`
     ResultPointer string `json:"result_pointer"`
     SafeRead bool `json:"safe_read"`
+}
+// Compensation is an operator-approved, effectful inverse MCP call. Mapping
+// an original resource identifier does not guarantee semantic reversibility;
+// the operator remains responsible for auditing the inverse tool contract.
+type Compensation struct {
+    Name string `json:"name"`
+    ForOperation string `json:"for_operation"`
+    Upstream string `json:"upstream"`
+    Tool string `json:"tool"`
+    IntentPointer string `json:"intent_pointer"`
+    Argument string `json:"argument"`
+    Enabled bool `json:"enabled"`
 }
 type Policy struct {
 	Name         string `json:"name"`
@@ -150,7 +163,7 @@ func Decode(src string) (*Config, error) {
 	if err = ValidateBlockSchema(blocks); err != nil {
 		return nil, err
 	}
-	c := &Config{Listen: "127.0.0.1:8080", OAuth: map[string]OAuth{}, Upstreams: map[string]Upstream{}, Hooks: map[string]Hook{}, Readbacks: map[string]Readback{}, Policies: map[string]Policy{}, Pipelines: map[string]Pipeline{}, Surfaces: map[string]Surface{}, Source: src}
+	c := &Config{Listen: "127.0.0.1:8080", OAuth: map[string]OAuth{}, Upstreams: map[string]Upstream{}, Hooks: map[string]Hook{}, Readbacks: map[string]Readback{}, Compensations: map[string]Compensation{}, Policies: map[string]Policy{}, Pipelines: map[string]Pipeline{}, Surfaces: map[string]Surface{}, Source: src}
 	seen := map[string]bool{}
 	for _, b := range blocks {
 		name := ""
@@ -190,6 +203,13 @@ func Decode(src string) (*Config, error) {
                 Upstream:b.String("upstream"),ReadTool:b.String("read_tool"),
                 IntentPointer:b.String("intent_pointer"),ReadArgument:b.String("read_argument"),
                 ResultPointer:b.String("result_pointer"),SafeRead:b.Bool("safe_read",false)}
+		case "compensation":
+            c.Compensations[name]=Compensation{
+                Name:name,ForOperation:b.String("for_operation"),
+                Upstream:b.String("upstream"),Tool:b.String("tool"),
+                IntentPointer:b.String("intent_pointer"),
+                Argument:b.String("argument"),Enabled:b.Bool("enabled",false),
+            }
 		case "policy":
 			c.Policies[name] = Policy{Name: name, DecisionHook: b.String("decision_hook"), Scope: b.String("scope")}
 		case "pipeline":
@@ -338,6 +358,26 @@ func (c *Config) Validate() error {
         }
         if !validReadbackPointer(rb.IntentPointer) || !validReadbackPointer(rb.ResultPointer) {
             return fmt.Errorf("readback %s: invalid JSON pointer",name)
+        }
+    }
+    for name,inverse:=range c.Compensations {
+        if !inverse.Enabled || inverse.Upstream=="" || inverse.Tool=="" ||
+            inverse.ForOperation=="" || inverse.Argument=="" {
+            return fmt.Errorf("compensation %s: requires enabled operator-reviewed inverse contract",name)
+        }
+        if _,ok:=c.Upstreams[inverse.Upstream];!ok {
+            return fmt.Errorf("compensation %s: unknown upstream",name)
+        }
+        if !strings.HasPrefix(inverse.ForOperation,inverse.Upstream+".") ||
+            strings.TrimPrefix(inverse.ForOperation,inverse.Upstream+".")=="" {
+            return fmt.Errorf("compensation %s: source and inverse must bind the same upstream",name)
+        }
+        if !validReadbackPointer(inverse.IntentPointer) {
+            return fmt.Errorf("compensation %s: invalid original intent pointer",name)
+        }
+        if strings.TrimSpace(inverse.Argument)!=inverse.Argument ||
+            strings.ContainsAny(inverse.Argument," \t\n\r") {
+            return fmt.Errorf("compensation %s: invalid inverse argument",name)
         }
     }
 	for name, p := range c.Policies {

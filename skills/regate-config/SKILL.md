@@ -18,6 +18,9 @@ Regate is an HTTP-only MCP gateway controlled using a separate authenticated man
   verify whether an ambiguous write was applied; an inconclusive or missing
   lookup cannot establish absence. The operator must verify `safe_read=true`,
   correct endpoint binding, original-intent key and response identity.
+- `compensation` configures a trusted inverse MCP tool, disabled unless
+  explicitly `enabled=true`. A compensation requires a source effect with
+  durable `resolved_applied` evidence, not a transport-only confirmation.
 - `interceptor` attaches cross-cutting handlers around requests and external calls.
 - Every activated revision is immutable. New requests use the latest active revision; in-flight ones use their original revision.
 
@@ -50,4 +53,4 @@ Regate is an HTTP-only MCP gateway controlled using a separate authenticated man
 
 ## Basic management tools
 
-`regate_status`, `regate_upstreams`, `regate_inspect`, `regate_config_get`, `regate_draft_create`, `regate_draft_get`, `regate_draft_patch`, `regate_graph_get`, `regate_graph_patch`, `regate_validate`, `regate_diff`, `regate_impact_analyze`, `regate_test`, `regate_activate`, `regate_rollback`, `regate_revisions`, `regate_pipeline_trace`, `regate_upstream_refresh`, `regate_resume`, `regate_effects`, `regate_effect_readback`, `regate_effect_decide`.
+`regate_status`, `regate_upstreams`, `regate_inspect`, `regate_config_get`, `regate_draft_create`, `regate_draft_get`, `regate_draft_patch`, `regate_graph_get`, `regate_graph_patch`, `regate_validate`, `regate_diff`, `regate_impact_analyze`, `regate_test`, `regate_activate`, `regate_rollback`, `regate_revisions`, `regate_pipeline_trace`, `regate_upstream_refresh`, `regate_resume`, `regate_effects`, `regate_effect_readback`, `regate_effect_decide`, `regate_effect_compensate`.

@@ -110,12 +110,30 @@ Imported, legacy or unbound journal entries are never retroactively assigned
 a target, and can only be handled by a separately audited operator decision
 or an independently verified legacy-resource adapter.
 
+## Audited compensation attempts
+
+SQLite journals each explicitly authorized MCP inverse as an independent
+effect with `compensates` pointing to the original applied effect. Only
+`resolved_applied` originals with matching target and intent digests may
+start a compensation. The inverse effect ID is stable per original effect
+regardless of the contract or operator selected. Concurrent admission is
+atomic, so there is at most one inverse attempt.
+
+The approval includes the asserted operator identity, approval timestamp and
+a digest of the explanation (not the raw text). Unknown inverse outcomes are
+never retried automatically; abandoned `dispatching` inverses become
+`unknown` on lease takeover. A `confirmed` inverse denotes an observed MCP
+response but does not assert the resource was restored. The original event
+remains immutable.
+
 ### Not yet supported by this milestone
 
 - The MCP adapter supports only an operator-asserted read-only positive
   identity lookup. Verified vendor-specific read semantics, authoritative
-  negative consistency, HTTP readback and policy-driven compensation for
-  arbitrary resources remain outstanding.
+  negative consistency, HTTP readback and independently verified
+  compensation semantics for arbitrary resources remain outstanding.
+  Explicit operator-approved MCP inverse attempts are journaled, but
+  compensating-action verification is not implemented.
 - Multi-instance fair scheduling, crash-safe preemption and remote adapter
   fencing of effects already dispatched. Local SQLite leader leasing and
   epoch-based refusal of new operations are implemented (PR #22).
