@@ -89,11 +89,15 @@ key at rewrap time; after all rows have been rewrapped, old keys can be
 retired. Historical SQLite WAL pages/backups may still contain encrypted
 versions until separately retained/erased.
 
-**This is a storage-layer milestone, not active unattended OAuth delegation.**
-No public endpoint provisions grants; no external OAuth refresh flow uses
-this table yet; no crashed task is automatically replayed. The caller must
-prove explicit authorization and configure grant renewal before encrypted
-secrets may permit new effects. These are separate acceptance stages.
+**Sealed grants are no longer accepted without verifying the issuing OAuth provider.**
+An owner-scoped public MCP custom method reserves one initial grant attempt,
+requests a rotated credential from the configured IdP and validates the
+issuer, Regate audience, original user identity and task scopes before
+committing ciphertext. A failed or ambiguous response stays `needs_reauth`
+and cannot be blindly repeated. No current execution path consumes the
+sealed grant for unattended continuation, and no crashed task is replayed.
+Actual delegated scheduling, revocation checks at effect boundaries and
+provider-specific recovery remain separate acceptance stages.
 
 ## Legacy file import
 

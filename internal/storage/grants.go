@@ -193,6 +193,48 @@ func grantTaskTx(tx *sql.Tx,taskID,owner string)(TaskRecord,error) {
     return task,nil
 }
 
+// ReserveTaskGrantProvision durably records ONE initial refresh-token exchange
+// before it contacts the OAuth provider. A failed or lost response never lets
+// a second caller use the same task as a retry lane. Provisioning is restricted
+// to an explicitly suspended delegated task and cannot widen its original
+// issuer, audience or permission scopes.
+func (s *Store) ReserveTaskGrantProvision(ctx context.Context,
+    taskID,owner string)(GrantMetadata,error) {
+    if s.grantKeys==nil{return GrantMetadata{},ErrGrantKeyUnavailable}
+    if len(taskID)!=24 || len(owner)!=64{return GrantMetadata{},ErrGrantUnavailable}
+    tx,err:=s.db.BeginTx(ctx,nil)
+    if err!=nil{return GrantMetadata{},err}
+    defer tx.Rollback()
+    if err=s.checkExecutionLeaseTx(tx);err!=nil{return GrantMetadata{},err}
+    task,err:=grantTaskTx(tx,taskID,owner)
+    if err!=nil || task.Status!="input_required"{
+        return GrantMetadata{},ErrGrantUnavailable
+    }
+    meta:=GrantMetadata{
+        TaskID:taskID,OwnerDigest:owner,Revision:task.Revision,
+        Provider:task.Delegation.Provider,Issuer:task.Delegation.Issuer,
+        Audience:task.Delegation.Audience,
+        ScopesDigest:digestTaskScopes(task.RequiredScopes),
+        Generation:1,ExpiresAt:time.Now().Add(29*24*time.Hour).UTC(),
+        State:"refreshing",KeyID:s.grantKeys.active,
+    }
+    if meta.Provider=="" || meta.Issuer=="" || meta.Audience==""{
+        return GrantMetadata{},ErrGrantUnavailable
+    }
+    _,err=tx.Exec(`INSERT INTO task_grants(task_id,owner_digest,revision,provider,
+        issuer,audience,scopes_digest,generation,expires_ns,state,key_id,
+        nonce,ciphertext,updated_ns) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        taskID,owner,meta.Revision,meta.Provider,meta.Issuer,meta.Audience,
+        meta.ScopesDigest,meta.Generation,meta.ExpiresAt.UnixNano(),meta.State,
+        meta.KeyID,[]byte{},[]byte{},time.Now().UnixNano())
+    if err!=nil {
+        if strings.Contains(err.Error(),"constraint"){return GrantMetadata{},ErrGrantConflict}
+        return GrantMetadata{},err
+    }
+    if err=tx.Commit();err!=nil{return GrantMetadata{},err}
+    return meta,nil
+}
+
 // CreateTaskGrant seals an explicitly provisioned credential for ONE existing,
 // delegated task. Initial credential validation is the job of an OAuth-aware
 // caller; this storage method never claims that an arbitrary string is a valid
