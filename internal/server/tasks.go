@@ -114,7 +114,7 @@ func (s *Service) createTaskFor(ctx context.Context,cfg *config.Config,revision 
         RedactPII:published.OAuth!="" && !selected.AllowUnmasked,
         TTLMS:3600000,PollIntervalMS:1000,
     }
-	if e := s.Store.TaskPut(task); e != nil {
+	if e := s.Store.AdmitWorkingTask(ctx,task,cfg.MaxActiveTasks); e != nil {
         cancel()
 		return nil, e
 	}
@@ -246,10 +246,15 @@ func (s *Service) TaskUpdateWithContext(ctx context.Context,id, owner string, in
     t.Phase=""
 	t.InputRequests = nil
 	t.StatusMessage = "Continuing pipeline"
-	if e := s.Store.TaskPut(t); e != nil {
+	if !usingGrant {
+        if e:=s.Store.ClaimTaskContinuation(ctx,t,cfg.MaxActiveTasks);e!=nil {
+            cancel()
+            return nil,e
+        }
+    } else if e:=s.Store.TaskPut(t);e!=nil {
         cancel()
-		return nil, e
-	}
+        return nil,e
+    }
 	running.Store(id, context.CancelFunc(cancel))
 	go func() {
 		defer cancel()

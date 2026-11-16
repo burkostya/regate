@@ -45,6 +45,27 @@ pipeline "customer_summary" {
 }
 ```
 
+### Global active-task admission
+
+The optional top-level `regate { max_active_tasks = N }` setting caps the
+number of asynchronous tasks that may run concurrently in one SQLite state
+directory. Default: **32**, accepted range: **1–1024**. This is a
+system-wide bound across public surfaces and individual pipelines; it is
+independent of the existing per-pipeline `concurrency` limit for nodes.
+
+A task start or user-approved continuation reserves an active slot through
+an atomic SQLite transaction *before* its external side effects or goroutine
+execution. Capacity exhaustion rejects new work rather than accepting an
+unbounded background queue. Suspended tasks (`input_required`) do not
+occupy active slots; completion, cancellation and failure release slots.
+A grant-backed continuation reserves its slot in the same transaction as
+its OAuth-grant refresh barrier. It cannot bypass the cap.
+
+This is an explicit **backpressure milestone**. A durable encrypted
+waiting queue, admission fairness and priority scheduling are still separate
+release requirements; this version deliberately rejects overflow rather
+than persisting unbounded, potentially sensitive task arguments.
+
 ### Compilation before activation
 
 `Decode → HCL2 parse → cty value evaluation → closed schema validation →

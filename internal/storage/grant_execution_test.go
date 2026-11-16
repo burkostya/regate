@@ -24,7 +24,7 @@ func TestGrantContinuationAtomicallyReservesTaskAndCredential(t *testing.T){
     if _,err:=s.CreateTaskGrant(context.Background(),task.TaskID,task.OwnerDigest,
         "verified-refresh",expiresGrant());err!=nil{t.Fatal(err)}
     reservation,secret,err:=s.BeginTaskGrantContinuation(
-        context.Background(),task.TaskID,task.OwnerDigest)
+        context.Background(),task.TaskID,task.OwnerDigest,32)
     if err!=nil || secret!="verified-refresh" || reservation.State!="refreshing" {
         t.Fatalf("atomic task/grant admission failed: %#v %v",reservation,err)
     }
@@ -35,7 +35,7 @@ func TestGrantContinuationAtomicallyReservesTaskAndCredential(t *testing.T){
         t.Fatalf("task not fenced during refresh: %#v %v",working,err)
     }
     if _,_,err=s.BeginTaskGrantContinuation(context.Background(),
-        task.TaskID,task.OwnerDigest);!errors.Is(err,ErrGrantUnavailable) {
+        task.TaskID,task.OwnerDigest,32);!errors.Is(err,ErrGrantUnavailable) {
         t.Fatalf("second continuation admitted: %v",err)
     }
     if _,err=s.TaskGrantState(context.Background(),task.TaskID,task.OwnerDigest);err!=nil{
@@ -70,7 +70,7 @@ func TestGrantContinuationRejectsMissingCheckpointBeforeCredentialRotation(t *te
     if _,err:=s.CreateTaskGrant(context.Background(),task.TaskID,task.OwnerDigest,
         "verified-refresh",expiresGrant());err!=nil{t.Fatal(err)}
     if _,_,err:=s.BeginTaskGrantContinuation(context.Background(),
-        task.TaskID,task.OwnerDigest);!errors.Is(err,ErrGrantUnavailable) {
+        task.TaskID,task.OwnerDigest,32);!errors.Is(err,ErrGrantUnavailable) {
         t.Fatalf("missing checkpoint spent refresh credential: %v",err)
     }
     state,err:=s.TaskGrantState(context.Background(),task.TaskID,task.OwnerDigest)
@@ -88,7 +88,7 @@ func TestGrantContinuationCrashFailsTaskAndRefreshWithoutReplay(t *testing.T){
     task:=grantCheckpointFixture(t,first)
     if _,err=first.CreateTaskGrant(context.Background(),task.TaskID,task.OwnerDigest,
         "refresh-once",expiresGrant());err!=nil{t.Fatal(err)}
-    grant,_,err:=first.BeginTaskGrantContinuation(context.Background(),task.TaskID,task.OwnerDigest)
+    grant,_,err:=first.BeginTaskGrantContinuation(context.Background(),task.TaskID,task.OwnerDigest,32)
     if err!=nil{t.Fatal(err)}
     if err=first.Close();err!=nil{t.Fatal(err)}
     reopened,err:=New(dir,initSource())

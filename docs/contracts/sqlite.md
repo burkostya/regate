@@ -218,3 +218,25 @@ no automatic replay is admitted.
 These mechanisms do not revoke already in-flight external calls and do
 not provide an unattended durable task scheduler, provider-enforced
 fencing or independently verified compensation.
+
+## Bounded asynchronous execution slots (PR #30)
+
+Task admission now checks the current SQLite execution leader lease and
+counts `status='working'` tasks inside the same write transaction that
+inserts a new task. The maximum is the active revision's
+`regate.max_active_tasks` (default 32, range 1–1024). A full ledger
+rejects the request with `ErrTaskCapacity` before creating a task handle
+or sending external effects. Distinct callers therefore cannot overrun the
+limit through a race between counting and inserting tasks.
+
+An `input_required` task reclaims a slot with an atomic conditional
+`input_required → working` transition, without overwriting concurrent
+cancellation or a second resume. For grant-backed resumes, the capacity
+reservation and OAuth refresh-token `refreshing` transition occur in one
+transaction. Rejected transitions leave the checkpoint and ciphertext
+unchanged. Task completion, failure and cancellation release capacity.
+
+No unbounded or unencrypted waiting queue has been introduced. Overload
+is explicit backpressure, not a guarantee of eventual scheduling.
+Durable bounded queues, fairness, task progress recovery and production
+saturation/load verification remain outstanding.
