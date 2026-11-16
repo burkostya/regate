@@ -65,7 +65,7 @@ prefer standard CEL methods where possible.
 ### Supported blocks and node kinds
 
 Top-level blocks: `regate`, `oauth`, `upstream`, `hook`, `policy`, `readback`,
-`pipeline`, `surface`, `interceptor`. Within pipelines: `node` and `edge`. Within
+`compensation`, `pipeline`, `surface`, `interceptor`. Within pipelines: `node` and `edge`. Within
 surfaces: `tool`, `resource` and `prompt`.
 
 Node kinds: `input`, `output`, `transform`, `filter`, `validate`, `condition`,
@@ -106,6 +106,35 @@ read tool has no external effects; it is not inferred from MCP tool
 annotations. A missing or mismatched lookup never establishes absence.
 Older effects without an endpoint fingerprint are not automatically
 reconcilable.
+
+### Explicit MCP compensation declarations
+
+A `compensation` block describes one operator-reviewed inverse tool for an
+original MCP write. It is not run automatically, nor does Regate infer that an
+inverse is semantically safe:
+
+```hcl
+compensation "undo_customer_create" {
+  for_operation = "crm.create_customer"
+  upstream       = "crm"
+  tool           = "delete_customer"
+  intent_pointer = "/external_id"
+  argument       = "external_id"
+  enabled        = true
+}
+```
+
+The inverse must reference the same configured upstream as the original write.
+At runtime, Regate validates the original effect's endpoint and exact input
+fingerprints, its `resolved_applied` status and an explicit admin-supplied
+actor and reason. The original input's JSON Pointer selects the identifier
+sent to the inverse operation under `argument`. Other arbitrary CEL
+expressions or implicit authorization are not accepted in this declaration.
+
+A named compensation contract is only an operator-provided assertion about
+resource behavior, **not** a proof of semantic reversibility. A compensation
+is journaled as a distinct one-time external effect; its successful transport
+response does not rewrite or roll back the original effect.
 
 ### Source-preserving edits and semantic diffs
 
