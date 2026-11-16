@@ -136,6 +136,10 @@ type ReadbackObservation struct {
     EvidenceDigest string
     Verifier string
     Verdict string
+    // A negative lookup may be used only when the adapter certifies it
+    // represents authoritative, consistency-safe absence. Ordinary
+    // eventually-consistent "not found" responses remain UNKNOWN.
+    Authoritative bool
 }
 type ReadbackVerifier interface {
     ReadBack(ctx context.Context,attempt Effect)(ReadbackObservation,error)
@@ -160,7 +164,8 @@ func (s *Store) ResolveWithReadback(ctx context.Context,id string,verifier Readb
         observed.Operation!=current.Operation || observed.Resource=="" ||
         observed.Method=="" || observed.Verifier=="" ||
         len(observed.EvidenceDigest)!=64 ||
-        (observed.Verdict!="applied" && observed.Verdict!="absent") {
+        (observed.Verdict!="applied" && observed.Verdict!="absent") ||
+        (observed.Verdict=="absent" && !observed.Authoritative) {
         return Effect{},ErrInvalidEvidence
     }
     if _,err=hex.DecodeString(observed.EvidenceDigest);err!=nil{return Effect{},ErrInvalidEvidence}
