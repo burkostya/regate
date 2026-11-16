@@ -104,9 +104,44 @@ revision; changing the endpoint blocks reconciliation of old effects rather
 than silently checking a new server. Revision-pinned adapter attestation is
 outstanding work.
 
+## Operator-approved compensating effects
+
+Compensation is a **new external action**, not a rollback of SQLite, and must
+not be interpreted as proof that the original resource state was restored.
+An HCL `compensation` declaration binds the original `upstream.tool` to
+an inverse MCP tool on the **same endpoint**; `enabled=true` asserts the
+operator has reviewed the inverse. The authenticated management caller must
+separately supply the original `effect_id`, the exact original write
+arguments, a named contract, an actor and a nonempty approval explanation.
+
+Regate refuses compensation unless the source effect is `resolved_applied`,
+its original request digest matches the supplied arguments, and the original
+target fingerprint matches the inverse endpoint. `confirmed` is insufficient:
+receipt of an MCP result alone does not prove an application-level commit.
+An `unknown`, `resolved_absent` or legacy-unbound source is also refused.
+
+SQLite atomically journals the inverse as `dispatching` **before** its
+outbound request. The inverse effect has an immutable
+`compensates = <original ID>` link and an operator approval record containing
+the actor and only SHA-256 of the free-text reason. Its identifier is fixed
+by the original effect ID, independent of the chosen inverse contract:
+a second inverse attempt using a different adapter is still blocked.
+Concurrent callers admit exactly one inverse. A lost response remains
+`unknown` and is never automatically retried.
+
+A successful MCP result records the **compensation request** as `confirmed`,
+not as proof of restoration; a remote error is `unknown` because the external
+effect may have committed. The original effect remains unchanged. Verification
+that the inverse achieved its target state, idempotency/fencing of external
+operations, provider-specific compensation semantics and independent actor
+attestation remain release gates.
+
 ## Management surface
 
 - `regate_effects`: list current status projections.
+- `regate_effect_compensate`: explicitly authorize a one-time inverse through
+  `effect_id`, `contract`, original write `intent`, `actor` and `reason`.
+- REST equivalent: `POST /api/effect-compensate` (admin bearer required).
 - `regate_effect_readback`: reconcile a target-bound unknown MCP effect with
   `effect_id`, a named HCL `adapter`, and original write `intent` (object).
 - REST equivalent: `POST /api/effect-readback` (admin bearer required).
@@ -120,7 +155,7 @@ The positive-only readback adapter verifies an identity match under an
 operator-attested read-only contract; it does not verify vendor-specific
 consistency and cannot prove absence. Provider-verified readback semantics,
 independently enforced idempotency/fencing, durable scoped capability grants
-and compensation remain required.
+and provider-verified compensation remain required.
 Only property-verified adapters may claim an authoritative negative outcome.
 Audit actor identity is currently a management assertion authenticated by
 the shared admin bearer, not an individually signed attestation. No
