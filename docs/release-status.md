@@ -391,7 +391,9 @@
   execution lease, mutating tasks or supplying an admin bearer.
 - Tests include all persisted state domains, concurrent backup publishers,
   encrypted grants/queue snapshot, deliberate revision/effect corruption,
-  truncation, unsafe permissions, symlinks and offline CLI output.
+  truncation, unsafe permissions, symlinks and offline CLI output. A copied
+  *live lease* blocks premature restored-worker promotion; only after
+  original worker fencing and lease expiry is fail-closed recovery allowed.
 - Structural backup validation is **not** resource proof, guarantee of
   external keyring availability, independent KMS/retention compliance or
   a completed disaster-recovery drill. #6 remains open.
