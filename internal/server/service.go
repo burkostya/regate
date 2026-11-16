@@ -175,8 +175,21 @@ func (s *Service) Discover(ctx context.Context, name string, refresh bool) (cata
     return e,err
 }
 func (s *Service) Status() map[string]any {
-	cfg, rev := s.Current()
-	return map[string]any{"name": "regate", "version": "0.1.0", "revision": rev.ID, "listen": cfg.Listen, "upstreams": len(cfg.Upstreams), "surfaces": len(cfg.Surfaces), "pipelines": len(cfg.Pipelines), "hooks": len(cfg.Hooks), "policies": len(cfg.Policies), "http_only": true}
+    cfg,rev:=s.Current()
+    state:=map[string]any{
+        "name":"regate","version":"0.1.0","revision":rev.ID,"listen":cfg.Listen,
+        "upstreams":len(cfg.Upstreams),"surfaces":len(cfg.Surfaces),
+        "pipelines":len(cfg.Pipelines),"hooks":len(cfg.Hooks),
+        "policies":len(cfg.Policies),"http_only":true,
+        "max_active_tasks":cfg.MaxActiveTasks,"max_queued_tasks":cfg.MaxQueuedTasks,
+    }
+    if active,err:=s.Store.ActiveTaskCount(context.Background());err==nil {
+        state["active_tasks"]=active
+    }
+    if queued,err:=s.Store.QueueDepth(context.Background());err==nil {
+        state["queued_tasks"]=queued
+    }
+    return state
 }
 func (s *Service) Inspect(name string) map[string]any {
 	cfg, _ := s.Current()
