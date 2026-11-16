@@ -141,3 +141,50 @@ func TestParallelBackupPublicationNeverOverwritesDestination(t *testing.T){
     if err!=nil{t.Fatal(err)}
     if len(entries)!=1 {t.Fatalf("failed writer leaked temporary backup: %#v",entries)}
 }
+
+func TestVerifiedBackupRestoresUnknownEffectsAndUnclaimedQueueSafely(t *testing.T){
+    s:=queueStore(t)
+    ctx:=context.Background()
+    interrupted,err:=s.BeginEffect("original-run","write","crm.create",
+        map[string]any{"request":"may-have-committed"})
+    if err!=nil{t.Fatal(err)}
+    busy:=capacityTask(s,"working")
+    if _,err=s.AdmitOrQueueTask(ctx,busy,map[string]any{},1,2);err!=nil{t.Fatal(err)}
+    pending:=capacityTask(s,"working")
+    if accepted,err:=s.AdmitOrQueueTask(ctx,pending,
+        map[string]any{"private":"encrypted-restored-input"},1,2);
+        err!=nil || !accepted {t.Fatalf("queued input admission failed: %v",err)}
+
+    archive:=filepath.Join(t.TempDir(),"verified.sqlite")
+    if err=s.Backup(archive);err!=nil{t.Fatal(err)}
+    snapshot,err:=os.ReadFile(archive)
+    if err!=nil{t.Fatal(err)}
+    restoredDir:=t.TempDir()
+    if err=os.WriteFile(filepath.Join(restoredDir,"regate.sqlite"),snapshot,0600);
+        err!=nil{t.Fatal(err)}
+    // A restore is opened as an independent state directory, with no
+    // external effects replayed. A dispatching journal entry must become
+    // unknown before a new leader can proceed.
+    restored,err:=New(restoredDir,initSource())
+    if err!=nil{t.Fatal(err)}
+    defer restored.Close()
+    if err=restored.AcquireExecutionLease();err!=nil{t.Fatal(err)}
+    event,err:=restored.EffectGet(interrupted.ID)
+    if err!=nil || event.Status!="unknown"{
+        t.Fatalf("ambiguous external effect was replayed: %#v %v",event,err)
+    }
+    old,err:=restored.TaskGet(busy.TaskID)
+    if err!=nil || old.Status!="failed"{
+        t.Fatalf("interrupted active work was replayed: %#v %v",old,err)
+    }
+    saved,err:=restored.TaskGet(pending.TaskID)
+    if err!=nil || saved.Status!="queued"{
+        t.Fatalf("unclaimed encrypted input was lost: %#v %v",saved,err)
+    }
+    scheduled,args,err:=restored.ClaimNextQueued(ctx,1)
+    if err!=nil || scheduled.TaskID!=pending.TaskID ||
+        args["private"]!="encrypted-restored-input"{
+        t.Fatalf("encrypted backup queue not recoverable: %#v %#v %v",
+            scheduled,args,err)
+    }
+}
