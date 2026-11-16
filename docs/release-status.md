@@ -260,3 +260,20 @@
   durable bounded waiting queue or fair scheduler. Encrypted queued-input
   storage, fairness, leases across process failures, retry reconciliation
   and load-chaos acceptance remain open in #6/#9.
+
+#### Sealed bounded FIFO waiting queue storage (PR #31)
+
+- SQLite schema v4 `task_queue` holds canonical JSON inputs encrypted
+  with a separately configured environment keyring, nonce and authenticated
+  task/owner/revision/scope/TTL metadata. Per-queue capacity and FIFO order
+  are enforced atomically; no plaintext arguments leak into SQLite backups.
+- `regate.max_queued_tasks` defaults to zero (off), upper bound 4096.
+  The internal admission and claim APIs fail closed without encryption keys,
+  on OAuth/scoped inputs, corruption or missing capacity. Unclaimed entries
+  persist after restart; a claimed task cannot be replayed after crash.
+- Tests cover queue saturation, FIFO dequeue, cancellation/erasure, TTL expiry,
+  restart/takeover, invalid key material and authenticated tamper rejection.
+- **Important:** this PR is queue storage and contracts only. It does not yet
+  hook the queue into user-facing task admission or automatic dispatch.
+  Next milestone must implement a bounded worker dispatcher and live tests
+  for recovery and HTTP/MCP task lifecycle. No v1 or #6 closure.
