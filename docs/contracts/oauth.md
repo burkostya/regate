@@ -153,10 +153,37 @@ infer arbitrary property-level taint, certify external redactors or prove
 remote providers actually uphold declared trust. Real attestation and
 declassification evidence are separate v1 work.
 
-### Async exchange limitation (fail closed)
+### Async exchange: live execution and reauthenticated continuation
 
-A short-lived subject token must not be persisted in a task checkpoint simply
-to resume an external write later. Async task creation currently refuses
-pipelines that require a delegated subject token until durable audience- and
-scope-bounded capability grants can be implemented in #6. A successful
-synchronous exchange does not imply crash-resumable token exchange.
+A delegated asynchronous task may now execute while its creator's **verified
+subject token remains live in process memory**. The initial MCP task-start
+request must authenticate the caller, carry the original required surface and
+tool scopes, and provide a bearer with sufficient lifetime. Regate runs the
+task in a detached context with the bearer bound to the original token's
+`exp` (with a safety margin) and the configured execution deadline. Each
+RFC 8693 outbound exchange rechecks token expiry and its target audience.
+An expired token cannot authorize further external effects.
+
+SQLite task state stores only an owner identity digest, creation-time scopes,
+original revision and an immutable `delegation` metadata record containing
+the OAuth provider name, issuer and **Regate** audience. Bearer/refresh tokens,
+exchanged credentials and OAuth client secrets are **never** persisted there.
+
+After a pipeline suspends for user input, `tasks/update` must carry a newly
+verified caller bearer. Its issuer, audience and subject must match the
+persisted task owner and provider, and it must still satisfy the **union**
+of original surface and tool scopes. Regate resumes using the original
+immutable HCL revision and then performs a fresh target-audience exchange
+for each remote operation. The context-free legacy `TaskUpdate` entry point
+cannot resume delegated work. Cancelled, failed and already completed tasks
+cannot be resumed through this mechanism.
+
+This is **not an autonomous durable delegated grant**. If Regate crashes
+during an in-process delegated task, the task fails closed under the normal
+effect reconciliation rules; the subject bearer is not recoverable. A
+suspended task may persist its non-secret owner binding, but progress requires
+an interactive new authorization. Full unattended post-restart execution
+requires a separately designed encrypted, revocable grant store with audited
+renewal, fencing, expiry, capability restrictions and recovery semantics.
+This milestone does not implement those guarantees.
+
