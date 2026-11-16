@@ -152,6 +152,18 @@ func (s *Store) CheckExecutionLease(ctx context.Context)error {
     return nil
 }
 
+// RequireExecutionLeader is the mandatory engine admission rule. A Store
+// opened for offline analysis cannot dispatch effects merely because no other
+// worker happens to have acquired the lease yet.
+func (s *Store) RequireExecutionLeader(ctx context.Context) error {
+    s.mu.RLock()
+    owner,lost:=s.leaseOwner,s.leaseLost
+    s.mu.RUnlock()
+    if lost{return ErrExecutionLeaseLost}
+    if owner==""{return ErrExecutionLeaseHeld}
+    return s.CheckExecutionLease(ctx)
+}
+
 // checkExecutionLeaseTx is the same barrier while an effect is being inserted
 // transactionally. This prevents a dethroned leader from admitting new writes
 // even if another Regate instance is concurrently promoting a new lease.
