@@ -333,7 +333,7 @@ func (c *Config) Validate() error {
             return fmt.Errorf("readback %s: write_operation must name a tool on the same upstream",name)
         }
         if strings.TrimSpace(rb.ReadArgument)!=rb.ReadArgument ||
-            strings.ContainsAny(rb.ReadArgument," \\t\\n\\r") {
+            strings.ContainsAny(rb.ReadArgument," \t\n\r") {
             return fmt.Errorf("readback %s: invalid read_argument",name)
         }
         if !validReadbackPointer(rb.IntentPointer) || !validReadbackPointer(rb.ResultPointer) {
