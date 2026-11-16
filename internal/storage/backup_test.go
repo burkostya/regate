@@ -8,6 +8,7 @@ import (
     "path/filepath"
     "sync"
     "testing"
+    "time"
 )
 
 func TestVerifiedBackupContainsDurableDomainsAndStableManifest(t *testing.T) {
@@ -162,12 +163,21 @@ func TestVerifiedBackupRestoresUnknownEffectsAndUnclaimedQueueSafely(t *testing.
     restoredDir:=t.TempDir()
     if err=os.WriteFile(filepath.Join(restoredDir,"regate.sqlite"),snapshot,0600);
         err!=nil{t.Fatal(err)}
-    // A restore is opened as an independent state directory, with no
-    // external effects replayed. A dispatching journal entry must become
-    // unknown before a new leader can proceed.
+    // A backup preserves the execution lease: starting the copied database
+    // before the source has stopped or the lease expires must fail closed.
+    if err=s.Close();err!=nil{t.Fatal(err)}
     restored,err:=New(restoredDir,initSource())
     if err!=nil{t.Fatal(err)}
     defer restored.Close()
+    if err=restored.AcquireExecutionLease();!errors.Is(err,ErrExecutionLeaseHeld){
+        t.Fatalf("restored snapshot bypassed a copied live lease: %v",err)
+    }
+    // Simulate waiting for the copied 30-second lease to expire after the
+    // original source was stopped. This modification is test-only; an
+    // operator must NOT start a second live environment against the same
+    // upstream resources without fencing the original process.
+    if _,err=restored.db.Exec("UPDATE execution_leases SET deadline_ns=? WHERE name=?",
+        time.Now().Add(-time.Second).UnixNano(),executionLeaseName);err!=nil{t.Fatal(err)}
     if err=restored.AcquireExecutionLease();err!=nil{t.Fatal(err)}
     event,err:=restored.EffectGet(interrupted.ID)
     if err!=nil || event.Status!="unknown"{
