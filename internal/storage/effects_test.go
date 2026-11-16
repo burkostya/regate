@@ -94,6 +94,27 @@ func TestEffectReadbackResolutionRequiresBoundEvidence(t *testing.T) {
         t.Fatalf("resolved external write became retryable: %v",err)
     }
 }
+func TestUnverifiedNegativeReadbackCannotUnlockRetry(t *testing.T) {
+    s,err:=New(t.TempDir(),initSource())
+    if err!=nil{t.Fatal(err)}
+    defer s.Close()
+    e,err:=s.BeginEffect("run-absence","write","crm.create",map[string]any{"id":"C99"})
+    if err!=nil{t.Fatal(err)}
+    if err=s.CompleteEffect(e.ID,"unknown","lost response");err!=nil{t.Fatal(err)}
+    eventual:=probeFor(e,"absent") // no consistency attestation
+    if _,err=s.ResolveWithReadback(context.Background(),e.ID,&fakeReadback{observation:eventual});!errors.Is(err,ErrInvalidEvidence) {
+        t.Fatalf("non-authoritative missing record treated as a verified absence: %v",err)
+    }
+    now,err:=s.EffectGet(e.ID)
+    if err!=nil || now.Status!="unknown" {t.Fatalf("negative probe changed unknown state: %#v %v",now,err)}
+    eventual.Authoritative=true
+    resolved,err:=s.ResolveWithReadback(context.Background(),e.ID,&fakeReadback{observation:eventual})
+    if err!=nil || resolved.Status!="resolved_absent" {t.Fatalf("authoritative absence rejected: %#v %v",resolved,err)}
+    if _,err=s.BeginEffect("run-absence","write","crm.create",map[string]any{"id":"C99"});!errors.Is(err,ErrEffectAlreadyAttempted) {
+        t.Fatalf("resolved absence allowed blind same-run replay: %v",err)
+    }
+}
+
 func TestOperatorDecisionDistinctFromVerifiedReadback(t *testing.T){
     s,err:=New(t.TempDir(),initSource())
     if err!=nil{t.Fatal(err)}
