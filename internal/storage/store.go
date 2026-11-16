@@ -83,6 +83,7 @@ type Store struct {
     leaseLost bool
     leaseStop chan struct{}
     leaseDone chan struct{}
+    grantKeys *GrantKeyRing
 }
 const databaseName = "regate.sqlite"
 
@@ -95,7 +96,9 @@ func New(dir,initial string) (*Store,error) {
     if err!=nil{return nil,err}
     db.SetMaxOpenConns(1)
     db.SetMaxIdleConns(1)
-    s:=&Store{Dir:dir,db:db}
+    keys,err:=LoadGrantKeyRing()
+    if err!=nil {_=db.Close();return nil,fmt.Errorf("grant key configuration: %w",err)}
+    s:=&Store{Dir:dir,db:db,grantKeys:keys}
     if err=s.initialize(initial);err!=nil {
         _=db.Close()
         return nil,err
@@ -131,7 +134,7 @@ func (s *Store) initialize(initial string) error {
     defer tx.Rollback()
     var version int
     if err=tx.QueryRow("PRAGMA user_version").Scan(&version);err!=nil{return err}
-    if version>2 {return fmt.Errorf("database schema version %d is newer than Regate",version)}
+    if version>3 {return fmt.Errorf("database schema version %d is newer than Regate",version)}
     if version==0 {
         for _,stmt:=range []string{
             `CREATE TABLE IF NOT EXISTS revisions (
@@ -195,6 +198,25 @@ func (s *Store) initialize(initial string) error {
             deadline_ns INTEGER NOT NULL
         )`);err!=nil{return err}
         if _,err=tx.Exec("PRAGMA user_version=2");err!=nil{return err}
+    }
+    if version<3 {
+        if _,err=tx.Exec(`CREATE TABLE IF NOT EXISTS task_grants (
+            task_id TEXT PRIMARY KEY REFERENCES tasks(task_id),
+            owner_digest TEXT NOT NULL,
+            revision TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            issuer TEXT NOT NULL,
+            audience TEXT NOT NULL,
+            scopes_digest TEXT NOT NULL,
+            generation INTEGER NOT NULL CHECK(generation > 0),
+            expires_ns INTEGER NOT NULL,
+            state TEXT NOT NULL CHECK(state IN ('active','refreshing','needs_reauth','revoked')),
+            key_id TEXT NOT NULL,
+            nonce BLOB NOT NULL,
+            ciphertext BLOB NOT NULL,
+            updated_ns INTEGER NOT NULL
+        )`);err!=nil{return fmt.Errorf("SQLite v3 task_grants migration: %w",err)}
+        if _,err=tx.Exec("PRAGMA user_version=3");err!=nil{return err}
     }
     var count int
     if err=tx.QueryRow("SELECT COUNT(*) FROM revisions").Scan(&count);err!=nil{return err}
