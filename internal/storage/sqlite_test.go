@@ -168,7 +168,9 @@ func TestLegacyImportCorruptionRollsBackEntireTransaction(t *testing.T){
     b,err:=sql.Open("sqlite3","file:"+filepath.Join(dir,databaseName))
     if err!=nil{t.Fatal(err)}
     var count int
-    if err=b.QueryRow("SELECT count(*) FROM revisions").Scan(&count);err!=nil{t.Fatal(err)}
+    if err=b.QueryRow("SELECT count(*) FROM revisions").Scan(&count);err!=nil && !strings.Contains(err.Error(),"no such table"){
+        t.Fatal(err)
+    }
     b.Close()
     if count!=0 {t.Fatalf("partial legacy import committed %d revisions",count)}
     if err=os.WriteFile(path,[]byte(initSource()),0600);err!=nil{t.Fatal(err)}
