@@ -15,6 +15,7 @@ import (
 )
 
 var ErrTaskQueueFull = errors.New("asynchronous task waiting queue is full")
+var ErrTaskOwnerQueueFull = errors.New("asynchronous task owner quota reached")
 var ErrTaskQueueExpired = errors.New("queued task expired before dispatch")
 var ErrTaskQueueKeyUnavailable = errors.New("task queue encryption key unavailable")
 const taskQueueKeyEnv = "REGATE_QUEUE_KEYS_JSON"
@@ -117,16 +118,24 @@ func (s *Store) QueueDepth(ctx context.Context)(int,error) {
     return count,err
 }
 
-// AdmitOrQueueTask returns true only when a task is admitted to the bounded
-// encrypted FIFO queue; false means immediately running. Rejected work gets
-// no task handle. Credentials or raw input must never be stored as plaintext.
-//
-// No OAuth-protected task is admitted to the deferred queue: a user-scoped
-// bearer cannot be safely reused after request expiry without a separate
-// resource-scoped grant/reauthorization workflow.
+// AdmitOrQueueTask preserves the existing storage API with a conservative
+// default per-owner quota. Callers with a configured HCL quota use the
+// explicit WithOwnerLimit variant below.
 func (s *Store) AdmitOrQueueTask(ctx context.Context,task TaskRecord,
     args map[string]any,maxActive,maxQueued int)(bool,error) {
+    return s.AdmitOrQueueTaskWithOwnerLimit(ctx,task,args,maxActive,maxQueued,32)
+}
+
+// AdmitOrQueueTaskWithOwnerLimit admits active or encrypted queued work.
+// No OAuth-protected task can be deferred on an expiring subject token.
+// Within one SQLite transaction it checks global and per-owner capacity
+// before creating the durable task handle.
+func (s *Store) AdmitOrQueueTaskWithOwnerLimit(ctx context.Context,task TaskRecord,
+    args map[string]any,maxActive,maxQueued,maxQueuedPerOwner int)(bool,error) {
     if err:=validTaskLimit(maxActive);err!=nil{return false,err}
+    if maxQueuedPerOwner<1 || maxQueuedPerOwner>maxQueuedTasksLimit {
+        return false,fmt.Errorf("invalid owner queue limit")
+    }
     if maxQueued<0 || maxQueued>maxQueuedTasksLimit {
         return false,fmt.Errorf("invalid waiting queue limit")
     }
@@ -157,6 +166,12 @@ func (s *Store) AdmitOrQueueTask(ctx context.Context,task TaskRecord,
             return false,ErrTaskCapacity
         }
         if waiting>=maxQueued{return false,ErrTaskQueueFull}
+        var ownerWaiting int
+        if err=tx.QueryRow("SELECT COUNT(*) FROM task_queue WHERE owner_digest=?",
+            task.OwnerDigest).Scan(&ownerWaiting);err!=nil{return false,err}
+        if ownerWaiting>=maxQueuedPerOwner {
+            return false,ErrTaskOwnerQueueFull
+        }
         queued=true
         task.Status="queued"
         task.Phase="queued"
@@ -179,10 +194,11 @@ func (s *Store) AdmitOrQueueTask(ctx context.Context,task TaskRecord,
     return queued,nil
 }
 
-// ClaimNextQueued atomically frees a FIFO encrypted record only after the
-// corresponding task switches to working. A crash after the transaction and
-// before execution marks the task failed, instead of re-running an ambiguous
-// effect; unclaimed queued jobs survive restarts and leader takeover.
+// ClaimNextQueued implements deterministic owner round-robin with strict
+// FIFO *within each owner*. Select the least recently served owner, then
+// that owner's oldest task. Owner turns are durably persisted, so a worker
+// restart cannot reset rotation and starve another waiting principal.
+// A crash after claiming fails closed rather than replaying unknown effects.
 func (s *Store) ClaimNextQueued(ctx context.Context,maxActive int)(TaskRecord,map[string]any,error) {
     if err:=validTaskLimit(maxActive);err!=nil{return TaskRecord{},nil,err}
     tx,err:=s.db.BeginTx(ctx,nil)
@@ -196,9 +212,13 @@ func (s *Store) ClaimNextQueued(ctx context.Context,maxActive int)(TaskRecord,ma
     var nonce,ciphertext []byte
     err=tx.QueryRow(`SELECT q.task_id,q.owner_digest,q.revision,q.surface,q.tool,
         q.key_id,q.nonce,q.ciphertext,t.record
-        FROM task_queue q JOIN tasks t ON t.task_id=q.task_id
-        ORDER BY q.seq LIMIT 1`).Scan(&id,&owner,&revision,&surface,&tool,
-        &keyID,&nonce,&ciphertext,&record)
+        FROM task_queue q
+        JOIN tasks t ON t.task_id=q.task_id
+        LEFT JOIN task_queue_turns turn ON turn.owner_digest=q.owner_digest
+        WHERE q.seq=(SELECT MIN(head.seq) FROM task_queue head
+                     WHERE head.owner_digest=q.owner_digest)
+        ORDER BY COALESCE(turn.last_turn,0),q.seq LIMIT 1`).
+        Scan(&id,&owner,&revision,&surface,&tool,&keyID,&nonce,&ciphertext,&record)
     if err!=nil{return TaskRecord{},nil,err}
     var task TaskRecord
     if err=json.Unmarshal([]byte(record),&task);err!=nil{return TaskRecord{},nil,err}
@@ -221,6 +241,9 @@ func (s *Store) ClaimNextQueued(ctx context.Context,maxActive int)(TaskRecord,ma
         if _,err=tx.Exec("UPDATE tasks SET status='failed',record=? WHERE task_id=? AND status='queued'",
             string(expiredRaw),id);err!=nil{return TaskRecord{},nil,err}
         if _,err=tx.Exec("DELETE FROM task_queue WHERE task_id=?",id);err!=nil{return TaskRecord{},nil,err}
+        if _,err=tx.Exec(`DELETE FROM task_queue_turns WHERE owner_digest=?
+            AND NOT EXISTS (SELECT 1 FROM task_queue WHERE owner_digest=?)`,
+            owner,owner);err!=nil{return TaskRecord{},nil,err}
         if err=tx.Commit();err!=nil{return TaskRecord{},nil,err}
         return TaskRecord{},nil,ErrTaskQueueExpired
     }
@@ -238,6 +261,24 @@ func (s *Store) ClaimNextQueued(ctx context.Context,maxActive int)(TaskRecord,ma
     n,err:=result.RowsAffected()
     if err!=nil || n!=1{return TaskRecord{},nil,ErrTaskTransition}
     if _,err=tx.Exec("DELETE FROM task_queue WHERE task_id=?",id);err!=nil{return TaskRecord{},nil,err}
+    // A committed scheduling turn is part of the same transaction as
+    // removing the task and changing its status. No second claim can race.
+    if _,err=tx.Exec("UPDATE task_queue_clock SET turn=turn+1 WHERE name='default'");err!=nil{
+        return TaskRecord{},nil,err
+    }
+    var turn int64
+    if err=tx.QueryRow("SELECT turn FROM task_queue_clock WHERE name='default'").
+        Scan(&turn);err!=nil{return TaskRecord{},nil,err}
+    if _,err=tx.Exec(`INSERT INTO task_queue_turns(owner_digest,last_turn)
+        VALUES(?,?) ON CONFLICT(owner_digest)
+        DO UPDATE SET last_turn=excluded.last_turn`,owner,turn);err!=nil{
+        return TaskRecord{},nil,err
+    }
+    if _,err=tx.Exec(`DELETE FROM task_queue_turns
+        WHERE owner_digest=? AND NOT EXISTS(
+            SELECT 1 FROM task_queue WHERE owner_digest=?)`,owner,owner);err!=nil {
+        return TaskRecord{},nil,err
+    }
     if err=tx.Commit();err!=nil{return TaskRecord{},nil,err}
     return task,args,nil
 }
@@ -264,5 +305,8 @@ func (s *Store) CancelQueuedTask(ctx context.Context,id,owner string)error {
     n,err:=result.RowsAffected()
     if err!=nil || n!=1{return ErrTaskTransition}
     if _,err=tx.Exec("DELETE FROM task_queue WHERE task_id=?",id);err!=nil{return err}
+    if _,err=tx.Exec(`DELETE FROM task_queue_turns WHERE owner_digest=?
+        AND NOT EXISTS(SELECT 1 FROM task_queue WHERE owner_digest=?)`,
+        owner,owner);err!=nil{return err}
     return tx.Commit()
 }

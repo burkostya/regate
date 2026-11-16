@@ -78,14 +78,24 @@ Deferred execution supports non-OAuth tasks without caller-delegated
 credentials or required scopes. An expired bearer cannot be reused to
 execute sensitive queued work. A queue entry stores original inputs
 encrypted, bound to task owner/revision, original trust requirements and
-TTL. The live dispatcher claims work in FIFO order when an active task slot
-is available, including after restart. A claimed task interrupted before
-completion is failed closed rather than automatically replayed.
+TTL. The live dispatcher claims work in FIFO order **within each owner**
+and alternates owners by least-recently-served turn whenever an active task
+slot becomes available, including after restart. A claimed task interrupted
+before completion is failed closed rather than automatically replayed.
 
-`max_queued_tasks` controls only admission and queue size; it does not
-promise cross-principal fairness, guaranteed delivery, or authorization to
-reissue an uncertain external effect. The queue requires
-`REGATE_QUEUE_KEYS_JSON` to be available when enabled.
+`regate.max_queued_per_owner = N` limits encrypted waiting tasks from one
+owner (default 32, accepted range 1–4096), independently of
+`max_queued_tasks` (global queue maximum). Both quotas are checked in
+one SQLite transaction before the task handle is issued. The owner is
+an opaque task-owner fingerprint; a public, unauthenticated client may be
+able to use multiple bearer identities, so this is **not** proof of
+provider-authenticated user fairness or an anti-Sybil guarantee.
+
+The owner scheduler is unweighted round-robin, not a priority scheduler:
+it does not guarantee absolute global FIFO or strict completion order
+across parallel workers. It never authorizes reissuing an unknown external
+effect. The queue requires `REGATE_QUEUE_KEYS_JSON` to be available
+when enabled.
 
 ### Compilation before activation
 
