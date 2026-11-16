@@ -1,10 +1,33 @@
-# Regate SQLite durability contract (schema version 1)
+# Regate SQLite durability contract (schema version 2)
 
 SQLite is the authoritative on-disk store for revisions, active selection,
 drafts, graph layouts, MCP task records, suspended run checkpoints, execution
 traces and the append-only effect event journal. The database is stored at
 `<stateDir>/regate.sqlite`, with WAL journaling and
 `PRAGMA synchronous=FULL`. The Go driver uses pure Go (no CGO).
+
+## Execution leadership and fencing
+
+Schema v2 adds an `execution_leases` table. A running Regate service must
+acquire the single `default` lease before exposing MCP endpoints. An
+independent process opening the same state directory cannot become execution
+leader while that lease is alive; it may inspect stored state but cannot
+dispatch external writes. Leases have a 30-second deadline renewed every
+5 seconds. Each takeover increments a monotonic `epoch`; an old worker's
+late heartbeat, stale `Close` and subsequent external effects are fenced.
+
+A database observer must **not** convert another worker's live
+`dispatching` effects into `unknown`, nor fail its running tasks. Startup
+recovery of abandoned effects and tasks happens only when the previous lease
+is absent or expired. No task is automatically replayed after takeover.
+The CLI releases leadership on graceful shutdown and on fatal validation
+paths after startup.
+
+This protects a single SQLite-backed Regate deployment from common duplicate
+worker execution. It is not external-service fencing: an already in-flight
+write cannot be revoked at a remote service without an idempotency key or a
+resource-specific fencing contract. Full distributed coordinator semantics
+remain a separate acceptance gate.
 
 ## Atomicity and restart
 
@@ -62,8 +85,9 @@ migration rollback, and conflicting writers.
   compensation for arbitrary resources. A typed readback verification
   interface, stable effect IDs and operator-resolution journal now exist
   (PR #21), but verified adapters must still be supplied per resource.
-- Execution leases, crash-safe preemption and multi-instance scheduling;
-  operations that require coordination across live workers need fencing.
+- Multi-instance fair scheduling, crash-safe preemption and remote adapter
+  fencing of effects already dispatched. Local SQLite leader leasing and
+  epoch-based refusal of new operations are implemented (PR #22).
 - Encryption-at-rest, KMS rotation and secure erasure of historical PII/secret
   material (the SQLite file and backups must be protected by filesystem
   permissions and deployment controls).
