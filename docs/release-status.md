@@ -19,7 +19,7 @@
 | Management MCP and REST endpoints | Implemented subset, official SDK inbound implementation (#15; conformance pending) | Auth + draft/activate/conflict/rollback, SDK client interoperability and skills tests |
 | Immutable revision history + drafts | SQLite transactional implementation (PR #20); complete v1 validation pending | Atomic conflict/rollback/restart, cross-connection and legacy-import tests |
 | Dry-run with explicit mocks | Partial implementation | REST API path |
-| Effect journal (`dispatching`, `confirmed`, `unknown`) | SQLite event log and latest projection; reconciliation adapters still pending (#6) | Restart preservation and unknown-outcome tests |
+| Effect journal (`dispatching`, `confirmed`, `unknown`) | SQLite effect barriers for MCP and HTTP POST hooks/nodes; stable hook run identities. Resource-specific read-back and compensation still pending (#6) | Restart, lost HTTP/MCP response, denial and no-replay integration tests |
 | Async MCP tasks, cancellation, checkpoint and resume | Partial implementation | Task integration test |
 | Subscription change notification | Implemented subset | SSE activation test |
 | Outbound HTTP DNS/IP safety guard | Implemented initial fail-closed guard | `internal/netguard` unit tests (DNS rebinding / mixed DNS / loopback) |
