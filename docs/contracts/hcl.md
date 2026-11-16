@@ -66,6 +66,22 @@ waiting queue, admission fairness and priority scheduling are still separate
 release requirements; this version deliberately rejects overflow rather
 than persisting unbounded, potentially sensitive task arguments.
 
+### Bounded encrypted waiting queue declaration
+
+In addition to `max_active_tasks`, the top-level
+`regate { max_queued_tasks = N }` attribute defines an optional, bounded
+SQLite waiting queue (default 0, maximum 4096). A queue requires a separate
+`REGATE_QUEUE_KEYS_JSON` keyring with 32-byte AES-256-GCM keys. Without keys
+the system must not persist queued arguments in plaintext.
+
+Pending storage support is currently restricted to non-OAuth tasks; an
+expired bearer cannot be reused to execute sensitive queued work.
+A queue entry stores original inputs encrypted, bound to task owner/revision
+and TTL, and is claimable in FIFO order by the future dispatcher. Until
+the dispatcher is wired into task start and service recovery,
+`max_queued_tasks` is only a declarative capacity; it does **not** imply
+that the current HTTP/MCP runtime will automatically queue and run requests.
+
 ### Compilation before activation
 
 `Decode → HCL2 parse → cty value evaluation → closed schema validation →
