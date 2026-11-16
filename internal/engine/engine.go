@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"context"
+    "crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +22,32 @@ import (
 	"github.com/burkostya/regate/internal/netguard"
 	"github.com/burkostya/regate/internal/storage"
 )
+
+// effectScope binds external writes (including HTTP hooks) to a stable
+// logical run and step. Nested interceptors have their own step identity;
+// no credentials or sensitive payloads are stored in this context.
+type effectScope struct {
+    runID string
+    node string
+}
+type effectScopeKey struct{}
+
+func withEffectScope(ctx context.Context, runID string) context.Context {
+    return context.WithValue(ctx, effectScopeKey{}, effectScope{runID:runID,node:"run"})
+}
+func withEffectStep(ctx context.Context, step string) context.Context {
+    scope,ok:=ctx.Value(effectScopeKey{}).(effectScope)
+    if !ok || scope.runID=="" {return ctx}
+    scope.node += "/"+step
+    return context.WithValue(ctx,effectScopeKey{},scope)
+}
+func requireEffectScope(ctx context.Context)(effectScope,error) {
+    scope,ok:=ctx.Value(effectScopeKey{}).(effectScope)
+    if !ok || scope.runID=="" || scope.node=="" {
+        return effectScope{},fmt.Errorf("durable effect identity required for external hook")
+    }
+    return scope,nil
+}
 
 type Runtime struct {
 	Store       *storage.Store
@@ -111,6 +138,7 @@ var ErrDenied = errors.New("policy denied")
 
 func (r *Runtime) Run(ctx context.Context, revision string, cfg *config.Config, surface, toolName string, args map[string]any, dry bool) (Outcome, error) {
 	out := Outcome{RunID: storage.ID(), Revision: revision, Status: "running"}
+    ctx=withEffectScope(ctx,out.RunID)
 	s, ok := cfg.Surfaces[surface]
 	if !ok {
 		return out, fmt.Errorf("surface not found")
@@ -255,7 +283,7 @@ func (r *Runtime) intercept(ctx context.Context, cfg *config.Config, stage, surf
 		if i.Stage != stage || (i.Surface != "" && i.Surface != surface) || (i.Tool != "" && i.Tool != tool) {
 			continue
 		}
-		v, e := r.runHook(ctx, cfg.Hooks[i.Hook], cfg, value, dry)
+		v, e := r.runHook(withEffectStep(ctx,"interceptor:"+stage+":"+i.Name), cfg.Hooks[i.Hook], cfg, value, dry)
 		if e != nil {
 			return nil, fmt.Errorf("interceptor %s: %w", i.Name, e)
 		}
@@ -421,6 +449,7 @@ func structured(v map[string]any) any {
 	return v["structuredContent"]
 }
 func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Node, plan *config.NodeIR, vars map[string]any, dry bool, runID, surface, toolName string) nodeResult {
+    ctx=withEffectStep(ctx,"node:"+n.Name)
 	ret := nodeResult{name: n.Name}
 	checkInput := func(value any) bool {
 		if err := plan.InputSchema.Validate(value); err != nil {
@@ -685,7 +714,9 @@ func (r *Runtime) runHook(ctx context.Context, h config.Hook, cfg *config.Config
 		if !ok {
 			args = map[string]any{"input": value}
 		}
-		raw, e := r.mcpCall(ctx, cfg, u, h.Tool, args, storage.ID(), "hook:"+h.Name, "unknown")
+		scope,err:=requireEffectScope(ctx)
+        if err!=nil{return nil,err}
+        raw, e := r.mcpCall(ctx, cfg, u, h.Tool, args, scope.runID, scope.node, "unknown")
 		if e != nil {
 			return nil, e
 		}
@@ -700,7 +731,8 @@ func (r *Runtime) runHook(ctx context.Context, h config.Hook, cfg *config.Config
 		if e := checkOutbound(h.URL); e != nil {
 			return nil, e
 		}
-		body, _ := json.Marshal(map[string]any{"input": value})
+		body, e := json.Marshal(map[string]any{"input": value})
+        if e!=nil{return nil,e}
 		timeout := time.Duration(h.TimeoutMS) * time.Millisecond
 		hc := httpClient(timeout)
 		request, e := http.NewRequestWithContext(ctx, "POST", h.URL, bytes.NewReader(body))
@@ -717,22 +749,43 @@ func (r *Runtime) runHook(ctx context.Context, h config.Hook, cfg *config.Config
 				request.Header.Set("Authorization", "Bearer "+token)
 			}
 		}
-		response, e := hc.Do(request)
-		if e != nil {
-			return nil, e
-		}
-		defer response.Body.Close()
-		if response.StatusCode != 200 {
-			return nil, fmt.Errorf("hook %s: HTTP %d", h.Name, response.StatusCode)
-		}
-		raw, e := io.ReadAll(io.LimitReader(response.Body, 4<<20))
-		if e != nil {
-			return nil, e
-		}
-		var result map[string]any
-		if e = json.Unmarshal(raw, &result); e != nil {
-			return nil, e
-		}
+		// HTTP POST is effectful even when its response is intended as a
+        // transformation or authorization decision. A lost response might
+        // follow an already committed external write. The SQLite barrier
+        // must be durable before issuing the request.
+        if r.Store==nil {return nil,fmt.Errorf("durable effect journal required before HTTP POST")}
+        scope,err:=requireEffectScope(ctx)
+        if err!=nil{return nil,err}
+        endpointDigest:=sha256.Sum256([]byte(h.URL))
+        attempt,err:=r.Store.BeginEffect(scope.runID,scope.node,
+            fmt.Sprintf("http.POST:%x",endpointDigest),
+            map[string]any{"url":h.URL,"body":json.RawMessage(body)})
+        if err!=nil{return nil,err}
+        complete:=func(status string,cause error) error {
+            reason:=""
+            if cause!=nil {reason=expr.RedactDiagnostic(cause.Error())}
+            if e:=r.Store.CompleteEffect(attempt.ID,status,reason);e!=nil {
+                return fmt.Errorf("HTTP effect outcome not durable: %w",e)
+            }
+            return cause
+        }
+        if err=r.Store.RequireExecutionLeader(ctx);err!=nil {
+            return nil,complete("unknown",err)
+        }
+        response,e:=hc.Do(request)
+        if e!=nil {return nil,complete("unknown",e)}
+        defer response.Body.Close()
+        if response.StatusCode!=200 {
+            return nil,complete("unknown",fmt.Errorf("hook %s: HTTP %d",h.Name,response.StatusCode))
+        }
+        raw,e:=io.ReadAll(io.LimitReader(response.Body,4<<20))
+        if e!=nil {return nil,complete("unknown",e)}
+        var result map[string]any
+        if e=json.Unmarshal(raw,&result);e!=nil {return nil,complete("unknown",e)}
+        if result==nil {return nil,complete("unknown",fmt.Errorf("hook returned null JSON object"))}
+        // This confirmation describes the HTTP response, not the policy
+        // decision encoded in it. A known "deny" is not a lost effect.
+        if e=complete("confirmed",nil);e!=nil {return nil,e}
 		if h.Contract == "decision" {
 			return decide(result)
 		}
@@ -766,6 +819,7 @@ func decide(value any) (any, error) {
 	return nil, ErrDenied
 }
 func (r *Runtime) Resume(ctx context.Context, cfg *config.Config, revision string, runID string, value any) (Outcome, error) {
+    ctx=withEffectScope(ctx,runID)
     if r.Store!=nil {
         if err:=r.Store.RequireExecutionLeader(ctx);err!=nil{return Outcome{},err}
     }
