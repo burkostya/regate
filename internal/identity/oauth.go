@@ -37,6 +37,7 @@ type Principal struct {
     Issuer string
     Audience string
     Scopes map[string]bool
+    ExpiresAt time.Time
 }
 func (p Principal) HasAll(scopes []string) bool {
     for _,scope:=range scopes {if !p.Scopes[scope] {return false}}
@@ -146,7 +147,7 @@ func (v *Verifier) principalFromClaims(c map[string]any) (Principal,error) {
         n,ok:=claimTimestamp(iat)
         if !ok || n>now+30 {return Principal{},ErrInvalidToken}
     }
-    return Principal{Subject:subject,Issuer:issuer,Audience:v.provider.Audience,Scopes:scopesFromClaims(c)},nil
+    return Principal{Subject:subject,Issuer:issuer,Audience:v.provider.Audience,Scopes:scopesFromClaims(c),ExpiresAt:time.Unix(exp,0).UTC()},nil
 }
 
 func (v *Verifier) verifyJWT(ctx context.Context,token string)(Principal,error) {
