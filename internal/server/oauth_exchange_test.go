@@ -13,6 +13,7 @@ import (
     "strings"
     "sync"
     "testing"
+    "time"
 )
 
 func TestDelegatedUpstreamTokenAudienceAndEffectBoundary(t *testing.T) {
@@ -132,7 +133,8 @@ func TestDelegatedUpstreamTokenAudienceAndEffectBoundary(t *testing.T) {
     if callsAfter!=callsBefore || len(svc.Store.Effects())!=effectsBefore {
         t.Fatalf("invalid delegation reached an external effect: before=%d after=%d",callsBefore,callsAfter)
     }
-    // An async job cannot durably reuse a transient subject bearer token.
+    // Async execution may hold the verified bearer IN MEMORY while live;
+    // the persisted task must contain only the owner and provider binding.
     async:=map[string]any{"name":"get_customer_direct","arguments":map[string]any{"customer_id":"C1"},
         "_meta":map[string]any{
             "io.modelcontextprotocol/protocolVersion":"2026-07-28",
@@ -141,8 +143,69 @@ func TestDelegatedUpstreamTokenAudienceAndEffectBoundary(t *testing.T) {
             },
         },
     }
+    mu.Lock()
+    variant="valid"
+    mu.Unlock()
     start:=decode(t,latestCall(t,api.URL+"/mcp/support",origin,"tools/call",53,async))
-    if start["error"]==nil || start["result"]!=nil {
-        t.Fatalf("insecure async subject token persistence was allowed: %#v",start)
+    if start["error"]!=nil {t.Fatalf("delegated async creation denied: %#v",start)}
+    handle:=start["result"].(map[string]any)
+    taskID,ok:=handle["taskId"].(string)
+    if !ok || taskID=="" {t.Fatalf("async handle absent: %#v",start)}
+    deadline:=time.Now().Add(4*time.Second)
+    done:=false
+    for time.Now().Before(deadline) {
+        response:=decode(t,latestCall(t,api.URL+"/mcp/support",origin,"tasks/get",54,
+            map[string]any{"taskId":taskID}))
+        task:=response["result"].(map[string]any)
+        if task["status"]=="completed" {
+            result:=task["result"].(map[string]any)
+            if result["isError"]==true {t.Fatalf("delegated async execution failed: %#v",task)}
+            done=true
+            break
+        }
+        time.Sleep(10*time.Millisecond)
     }
+    if !done {t.Fatal("delegated async task did not complete")}
+    recorded,err:=svc.Store.TaskGet(taskID)
+    if err!=nil {t.Fatal(err)}
+    if recorded.Delegation==nil || recorded.Delegation.Provider!="company" ||
+        recorded.Delegation.Audience!=regateAudience {
+        t.Fatalf("durable delegation requirement missing: %#v",recorded)
+    }
+    serialized,_:=json.Marshal(recorded)
+    if strings.Contains(string(serialized),origin) ||
+        strings.Contains(string(serialized),exchanged) {
+        t.Fatal("delegated bearer persisted in SQLite task")
+    }
+    // An invalid exchanged audience can no longer create an external write,
+    // even if the async handle itself was admitted before the exchange.
+    world.mu.Lock()
+    writesBefore:=len(world.calls)
+    world.mu.Unlock()
+    mu.Lock()
+    variant="wrong-audience"
+    mu.Unlock()
+    deniedStart:=decode(t,latestCall(t,api.URL+"/mcp/support",origin,"tools/call",55,async))
+    if deniedStart["error"]!=nil {t.Fatal(deniedStart)}
+    deniedID:=deniedStart["result"].(map[string]any)["taskId"].(string)
+    done=false
+    deadline=time.Now().Add(4*time.Second)
+    for time.Now().Before(deadline) {
+        response:=decode(t,latestCall(t,api.URL+"/mcp/support",origin,"tasks/get",56,
+            map[string]any{"taskId":deniedID}))
+        task:=response["result"].(map[string]any)
+        if task["status"]=="completed" {
+            result:=task["result"].(map[string]any)
+            if result["isError"]!=true {t.Fatal("invalid delegation succeeded asynchronously")}
+            done=true
+            break
+        }
+        time.Sleep(10*time.Millisecond)
+    }
+    if !done {t.Fatal("invalid delegation task did not resolve")}
+    world.mu.Lock()
+    writesAfter:=len(world.calls)
+    world.mu.Unlock()
+    if writesAfter!=writesBefore {t.Fatal("invalid async delegation reached upstream")}
+
 }
