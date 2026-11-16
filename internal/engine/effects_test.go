@@ -58,6 +58,7 @@ func TestEffectfulMCPCallCannotReplayAfterConfirmedWrite(t *testing.T) {
     store,err:=storage.New(t.TempDir(),`regate { listen="127.0.0.1:8080" }`)
     if err!=nil{t.Fatal(err)}
     defer store.Close()
+    if err=store.AcquireExecutionLease();err!=nil{t.Fatal(err)}
     runtime:=New(store)
     u:=config.Upstream{Name:"crm",URL:upstream.URL,TimeoutMS:5000}
     cfg:=&config.Config{Upstreams:map[string]config.Upstream{"crm":u}}
@@ -81,6 +82,7 @@ func TestEffectfulMCPCallLostResponseNeverRetries(t *testing.T){
     store,err:=storage.New(t.TempDir(),`regate { listen="127.0.0.1:8080" }`)
     if err!=nil{t.Fatal(err)}
     defer store.Close()
+    if err=store.AcquireExecutionLease();err!=nil{t.Fatal(err)}
     runtime:=New(store)
     u:=config.Upstream{Name:"crm",URL:upstream.URL,TimeoutMS:3000}
     cfg:=&config.Config{Upstreams:map[string]config.Upstream{"crm":u}}

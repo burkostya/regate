@@ -77,6 +77,11 @@ func (s *Store) RecoverInterruptedTasks() error {
     tx,err:=s.db.BeginTx(context.Background(),nil)
     if err!=nil{return err}
     defer tx.Rollback()
+    if err=recoverInterruptedTasksTx(tx);err!=nil{return err}
+    return tx.Commit()
+}
+
+func recoverInterruptedTasksTx(tx *sql.Tx) error {
     rows,err:=tx.Query("SELECT task_id,record FROM tasks WHERE status='working'")
     if err!=nil{return err}
     tasks:=[]TaskRecord{}
@@ -108,5 +113,5 @@ func (s *Store) RecoverInterruptedTasks() error {
         if err!=nil{return err}
         if affected!=1 {return sql.ErrNoRows}
     }
-    return tx.Commit()
+    return nil
 }

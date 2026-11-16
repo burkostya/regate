@@ -40,6 +40,7 @@ func TestAdminUpstreamRefreshIncludesFullMCPDiscovery(t *testing.T) {
     source:=strings.ReplaceAll(string(original),"http://127.0.0.1:9091/mcp",endpoint.URL)
     svc,err:=New(t.TempDir(),source)
     if err!=nil {t.Fatal(err)}
+    defer svc.Store.Close()
     ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second)
     defer cancel()
     value,err:=svc.Admin(ctx,"regate_upstream_refresh",map[string]any{"name":"crm"})
