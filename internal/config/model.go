@@ -10,6 +10,7 @@ import (
 type Config struct {
 	Listen        string                             `json:"listen"`
     MaxActiveTasks int `json:"max_active_tasks"`
+    MaxQueuedTasks int `json:"max_queued_tasks"`
     OAuth         map[string]OAuth                    `json:"oauth,omitempty"`
 	Upstreams     map[string]Upstream                `json:"upstreams"`
 	Hooks         map[string]Hook                    `json:"hooks"`
@@ -185,6 +186,7 @@ func Decode(src string) (*Config, error) {
 				c.Listen = s
 			}
             c.MaxActiveTasks=b.Int("max_active_tasks",32)
+            c.MaxQueuedTasks=b.Int("max_queued_tasks",0)
 		case "oauth":
             c.OAuth[name] = OAuth{Name:name,Issuer:b.String("issuer"), Audience:b.String("audience"),JWKSURL:b.String("jwks_url"),
                 IntrospectionURL:b.String("introspection_url"),ClientIDEnv:b.String("client_id_env"),ClientSecretEnv:b.String("client_secret_env"),
@@ -286,6 +288,9 @@ func validateScopeList(v []string) error {
     return nil
 }
 func (c *Config) Validate() error {
+    if c.MaxQueuedTasks<0 || c.MaxQueuedTasks>4096 {
+        return fmt.Errorf("regate max_queued_tasks must be between 0 and 4096")
+    }
     if c.MaxActiveTasks<1 || c.MaxActiveTasks>1024 {
         return fmt.Errorf("regate max_active_tasks must be between 1 and 1024")
     }
