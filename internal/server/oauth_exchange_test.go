@@ -98,6 +98,7 @@ func TestDelegatedUpstreamTokenAudienceAndEffectBoundary(t *testing.T) {
     `,issuer,idp.URL+"/jwks",regateAudience,idp.URL+"/token")+hcl
     svc,err:=New(t.TempDir(),hcl)
     if err!=nil {t.Fatal(err)}
+    defer svc.Store.Close()
     api:=httptest.NewServer(svc.Handler())
     defer api.Close()
     origin:=signedTestJWT(t,private,issuer,regateAudience,"surface:read crm:read")
