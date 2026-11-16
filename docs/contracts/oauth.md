@@ -208,3 +208,40 @@ Interactive continuation (fresh caller bearer) is still the only enabled
 delegated execution mode. Key rotation is manual and actual secure erasure
 of historical encrypted records and backups requires operational controls.
 
+
+### Verified task-grant provisioning via public MCP (PR #28)
+
+A suspended, OAuth-protected task can now acquire a task-scoped, sealed
+credential through the **task owner's protected MCP endpoint**, not the
+separate management bearer:
+
+- `tasks/grants/provision` accepts `taskId` and the **explicitly obtained**
+  `refreshToken` as a short-lived request argument. It verifies the current
+  caller, original surface+tool scopes, immutable task revision, configured
+  provider/issuer/audience and the task owner. The task must be
+  `input_required` and must actually need delegated OAuth.
+- **Before making a refresh-token request** to the IdP, SQLite reserves a
+  one-shot, task-bound `refreshing` row. Even if a remote response is lost,
+  a second provisioning attempt will not repeat the external request.
+- The configured OAuth endpoint is called using the explicit refresh-token
+  grant and the client's credential references from environment variables.
+  The returned access token must verify against the original Regate resource
+  issuer, audience, exact owner identity, expiration and the **full union**
+  of task scopes. A bounded, refreshed token and its nonzero
+  `refresh_token_expires_in` are required; only the rotated refresh
+  credential is AES-GCM sealed after verification.
+- A failed or ambiguous response persists `needs_reauth`. The task's
+  original grant cannot be silently recreated or used to retry. Revocation
+  is available through `tasks/grants/revoke`, and non-secret state through
+  `tasks/grants/status`. Management MCP does not register these methods.
+- All errors are generic at the public MCP boundary. A grant credential
+  is never returned to the client, published as a tool, or included in logs,
+  HCL, task records, effect journals, task results or ordinary traces.
+
+The provisioned grant is **not yet used to automatically resume tasks**.
+There is no unattended scheduler in this milestone: merely having a sealed,
+verified refresh credential is not an independent authority to retry a
+failed task, repeat an unknown effect or ignore cancellation and revocation.
+The next acceptance stage must enforce grant state again at each actual
+effect boundary, atomically rotate the refresh credential before execution
+and refuse unsafe crash recovery.
