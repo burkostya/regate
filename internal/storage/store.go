@@ -66,6 +66,9 @@ type Effect struct {
     At time.Time `json:"at"`
     Reason string `json:"reason,omitempty"`
     Resolution *EffectResolution `json:"resolution,omitempty"`
+    // Compensation is a separate effect with its own durable dispatch barrier.
+    Compensates string `json:"compensates,omitempty"`
+    Approval *CompensationApproval `json:"compensation_approval,omitempty"`
 }
 
 // The single-connection pool makes all store-level operations serial without
