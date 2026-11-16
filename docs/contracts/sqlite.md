@@ -399,3 +399,32 @@ This procedure does **not** rotate OAuth grant keys
 (`REGATE_GRANT_KEYS_JSON`). It does not erase ciphertext from historical
 backups or SQLite WAL pages. Key custody, offsite recovery, KMS
 attestation and cryptographic erasure remain deployment responsibilities.
+
+## Periodic authenticated queue expiry (PR #37)
+
+The SQLite-backed dispatcher now sweeps expired encrypted queue records
+**without waiting for a working execution slot to become available**.
+A bounded `SweepExpiredQueued(ctx, limit)` transaction checks execution
+leadership, scans pending task metadata, and selects at most 256 expired
+records. It verifies each row's owner, revision, tool, task status, TTL,
+scope and original encrypted payload authenticity using the correct
+AES-GCM key before changing any state.
+
+For each verified expired record it atomically marks the task `failed`
+with a generic expiry reason, deletes the sealed queued input, and removes
+a now-unused owner scheduling turn. A missing decryption key, tampered
+ciphertext or mismatched task metadata rolls back the entire batch;
+the operator's evidence is **never silently discarded**. These are not
+external effects and no remote write is replayed.
+
+The dispatcher performs bounded sweep passes periodically (even while
+the active-task pool remains fully occupied). Reclaimed queue capacity
+may then be used for new waiting tasks. Encrypted queue admission now
+requires an explicit positive TTL no greater than 24 hours, preventing
+indefinite retention of newly accepted secret input. Already existing
+legacy rows with invalid retention metadata require operator review:
+the sweeper will not fabricate a TTL or silently delete them.
+
+This is not secure erasure of historical WAL, snapshots or backups.
+Real-world compliance requires an explicit retention, recovery and
+key-destruction policy separate from SQLite row deletion.
