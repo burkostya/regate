@@ -67,7 +67,7 @@ func (s *Store) EffectGet(id string)(Effect,error) {
 // TargetDigest binds evidence to the actual remote endpoint, not merely a
 // human-readable upstream alias. It is domain-separated and never stores URLs.
 func TargetDigest(transport,endpoint string)string {
-    h:=sha256.Sum256([]byte(transport+"\\x00"+endpoint))
+    h:=sha256.Sum256([]byte(transport+"\x00"+endpoint))
     return hex.EncodeToString(h[:])
 }
 
