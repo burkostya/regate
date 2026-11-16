@@ -17,9 +17,9 @@
 | DAG conditional edges/parallel waves/join | Basic implementation | Code path; incomplete formal/race coverage |
 | Prompt/resource publishing and proxy resource read | Partial implementation | Server method path |
 | Management MCP and REST endpoints | Implemented subset, official SDK inbound implementation (#15; conformance pending) | Auth + draft/activate/conflict/rollback, SDK client interoperability and skills tests |
-| Immutable revision history + drafts | File-backed implementation | Integration tests |
+| Immutable revision history + drafts | SQLite transactional implementation (PR #20); complete v1 validation pending | Atomic conflict/rollback/restart, cross-connection and legacy-import tests |
 | Dry-run with explicit mocks | Partial implementation | REST API path |
-| Effect journal (`dispatching`, `confirmed`, `unknown`) | Partial implementation | Go executor |
+| Effect journal (`dispatching`, `confirmed`, `unknown`) | SQLite event log and latest projection; reconciliation adapters still pending (#6) | Restart preservation and unknown-outcome tests |
 | Async MCP tasks, cancellation, checkpoint and resume | Partial implementation | Task integration test |
 | Subscription change notification | Implemented subset | SSE activation test |
 | Outbound HTTP DNS/IP safety guard | Implemented initial fail-closed guard | `internal/netguard` unit tests (DNS rebinding / mixed DNS / loopback) |
@@ -35,7 +35,7 @@
 4. Full composition semantics (`pipeline.call`, map, controlled retries, named ports, safe joins with effects), robust task and MRTR resume, and property-based execution tests.
 5. Production-grade effect reconciliation/idempotency/compensation, backpressure and durable scheduling (no blind retries after uncertain writes).
 6. Enforced data labels/taint tracking and verified PII obligations, permissions, principal identities and trust boundaries throughout every node.
-7. Persist revisions/events/traces/tasks in SQLite with transactions; safe migrations and recovery/compaction.
+7. SQLite transactions, legacy-state import and backups are implemented in PR #20. Remaining: durable execution leases/fencing, verified reconciliation/compensation, bounded scheduling and safe retention/compaction of all sensitive records.
 8. OAuth JWT/JWKS or RFC7662 introspection and issuer/audience/scope-verified public surfaces are implemented in PR #18. Management remains a separate static admin bearer; delegated upstream token exchange, end-to-end taint policies, provider-specific integration, audit-ready secret management and production threat verification remain open.
 9. Independent MCP resource/prompt discovery (including templates, pagination and revision-aware caching) now exists; source-safe mapping/editing, upstream change detection and compatibility diagnostics remain open.
 10. Complete UI build, type checks, browser/e2e tests, full graphical node/edge/port editor, impact analysis, robust source preservation and operator approval workflow.
@@ -80,7 +80,7 @@
 - Tools, resources, prompts and admin skills are registered with the SDK; custom `skills/*` and `tasks/*` methods remain typed SDK extension handlers. Strict modern `Mcp-Method`/`Mcp-Name` requirements remain enforced, and admin authorization stays outside the protocol handler.
 - Activation/rollback builds a new SDK catalog before committing the revision. A catalog switch leaves the old revision intact for in-flight handlers and notifies existing subscriptions through non-destructive descriptor re-registration.
 - Existing Regate HTTP clients that omit `Accept` remain compatible; versionless `server/discover` retains a compatibility handler. The SDK does not currently have a typed `resultType: task` response, so task-start is still narrowly bridged through the previous dispatcher.
-- Remaining limitations: no full independent protocol conformance suite, browser/runtime e2e, persistent resume of SSE sessions, production OAuth, SQLite effect durability, or tested cross-instance subscription fan-out.
+- Remaining limitations: no full independent external-provider conformance or browser/runtime e2e, persistent SSE session resume, completed production OAuth attestation, reconciled effect durability or tested cross-instance subscription fan-out.
 
 #### Compiler opaque-draft editing (issue #3)
 
@@ -110,3 +110,10 @@
 - OAuth pipeline/interceptor graphs are fail-closed before dispatch if any MCP/HTTP/agent effect lacks an explicit Restricted trust boundary; this includes conditional branches and resume paths.
 - Invalid exchanges are rejected before journaling a dispatching effect. Async jobs needing transient delegated user tokens are explicitly rejected until durable grants exist in #6.
 - Tested both positive MCP exchange and negative wrong-audience/subject/scope routes. Remaining #5 work includes attested taint/declassification, real IdP verification and durable delegated grants.
+
+#### SQLite transactional durability milestone (PR #20)
+
+- Single SQLite WAL database (FULL synchronous) is the authoritative store for immutable revisions/drafts, tasks/continuations, traces, layouts and the append-only effect events plus latest-state projection. Atomic activation/rollback and revision conflict checks hold across independent SQLite connections.
+- One-transaction migration imports legacy file state without modifying the legacy originals; invalid revision digests, broken chain, malformed effect logs and missing referenced data roll back the import.
+- Startup preserves potential writes as `unknown` after interrupted `dispatching`; orphaned tasks fail closed without replaying effects. Consistent snapshots use `VACUUM INTO` with no overwrite.
+- Still required for #6: verified read-back reconciliation and compensation, stable idempotency/effect-contract identity, durable execution leases/multi-instance fencing, task capability grants, retention and encryption-at-rest.
