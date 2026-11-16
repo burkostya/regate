@@ -314,4 +314,3 @@ pipeline "deferred_customer" {
         t.Fatal("resumed bearer persisted in task state")
     }
 }
-}
