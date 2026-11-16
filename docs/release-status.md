@@ -204,3 +204,21 @@
   and schedule only proven-safe continuations after crash/restart.
 - Issue #6 stays open, including provider-specific read-back/compensation
   guarantees, external fencing and full production hardening.
+
+#### Verified OAuth task-grant provisioning milestone (PR #28)
+
+- Public OAuth task owners may explicitly provision a **suspended delegated
+  task** using `tasks/grants/provision`; this command is not exposed on
+  admin MCP. Persistent SQLite admission precedes any refresh-token request
+  and prevents duplicate IdP rotation when the response is unknown.
+- The IdP response is independently verified for issuer, resource audience,
+  same task subject and original surface+tool scopes. Only the newly rotated
+  refresh credential is sealed, with bounded expiration. Public
+  `tasks/grants/status` and `tasks/grants/revoke` are owner/scope-gated.
+- Negative tests cover wrong owner, revoked scopes, mismatched refreshed
+  subject/audience, repeated provisioning, ciphertext secrecy and revoked
+  credential access. Go race/vet/build and Web CI are acceptance gates.
+- **Not yet an autonomous durable grant:** a sealed credential is not
+  consumed during task continuation. Provider-specific refresh rotation
+  recovery, crash-safe continuation and effect-level revocation enforcement
+  are outstanding. Issues #5/#6 remain open.
