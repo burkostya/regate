@@ -158,8 +158,13 @@ func TestTaskQueueRejectsTamperingAndExpiredWork(t *testing.T){
     if _,_,err:=s.ClaimNextQueued(context.Background(),1);!errors.Is(err,ErrTaskQueueExpired){
         t.Fatalf("expired queued work dispatched: %v",err)
     }
-    dead,err:=s.TaskGet(expired.TaskID)
-    if err!=nil || dead.Status!="failed"{t.Fatalf("expired task not settled: %#v %v",dead,err)}
+    // TaskGet deliberately hides TTL-expired records. Inspect SQLite's
+    // durable projection to prove the queued task was marked failed.
+    var settled string
+    if err:=s.db.QueryRow("SELECT status FROM tasks WHERE task_id=?",
+        expired.TaskID).Scan(&settled);err!=nil || settled!="failed" {
+        t.Fatalf("expired task not settled: %s %v",settled,err)
+    }
     awaiting:=capacityTask(s,"working")
     busy:=capacityTask(s,"working")
     if _,err=s.AdmitOrQueueTask(context.Background(),busy,map[string]any{},1,3);err!=nil{t.Fatal(err)}
