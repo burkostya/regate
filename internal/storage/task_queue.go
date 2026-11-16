@@ -165,6 +165,12 @@ func (s *Store) AdmitOrQueueTaskWithOwnerLimit(ctx context.Context,task TaskReco
         if task.Delegation!=nil || len(task.RequiredScopes)!=0 || task.RedactPII {
             return false,ErrTaskCapacity
         }
+        // A queued secret must have a bounded retention window. A running
+        // task may follow the normal task TTL contract, but never queue an
+        // indefinitely retained or overflow-prone sensitive payload.
+        if task.TTLMS<=0 || task.TTLMS>maxQueueTTLMS {
+            return false,ErrTaskQueueExpired
+        }
         if waiting>=maxQueued{return false,ErrTaskQueueFull}
         var ownerWaiting int
         if err=tx.QueryRow("SELECT COUNT(*) FROM task_queue WHERE owner_digest=?",
