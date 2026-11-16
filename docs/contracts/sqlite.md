@@ -1,4 +1,4 @@
-# Regate SQLite durability contract (schema version 3)
+# Regate SQLite durability contract (schema version 4)
 
 SQLite is the authoritative on-disk store for revisions, active selection,
 drafts, graph layouts, MCP task records, suspended run checkpoints, execution
@@ -240,3 +240,48 @@ No unbounded or unencrypted waiting queue has been introduced. Overload
 is explicit backpressure, not a guarantee of eventual scheduling.
 Durable bounded queues, fairness, task progress recovery and production
 saturation/load verification remain outstanding.
+
+## Encrypted bounded FIFO waiting queue (schema v4)
+
+Schema v4 adds `task_queue`, with an ordered internal sequence, unique task
+reference, queue-envelope metadata and AES-256-GCM ciphertext of canonical
+JSON task arguments. The metadata is authenticated as associated data:
+task ID, owner digest, original revision, surface/tool, creation time, TTL,
+original scopes digest, redaction requirement and key ID. The source
+configuration remains HCL; queued input is **never stored in a plaintext
+task record, trace or event journal**.
+
+`REGATE_QUEUE_KEYS_JSON` contains a separate environment-only encryption
+keyring (distinct from `REGATE_GRANT_KEYS_JSON`):
+
+```json
+{"active":"k2","keys":{"k1":"<base64-32-byte-key>","k2":"<base64-32-byte-key>"}}
+```
+
+Only if `regate.max_queued_tasks` is set to a value above zero may an
+overloaded task be accepted for delayed execution, and only with this
+keyring available. Default queue limit: **0 (disabled)**. Maximum: 4096.
+The legacy path remains immediate rejection when over capacity. A deferred
+task is internally `queued` and is exposed as MCP `working` with a
+waiting message. The queue is bounded transactionally in SQLite; an overfull
+or unencrypted queue fails before a task handle is issued. OAuth-delegated or
+scope-bearing tasks cannot be deferred without a distinct authorized
+capability grant — a bearer must never be reused after expiration.
+
+The internal `ClaimNextQueued` operation picks the oldest eligible entry
+and atomically moves its task to `working`, deleting the encrypted queue
+entry before effects may be dispatched. Unclaimed entries survive clean
+restarts and leadership takeovers. An already claimed but interrupted task
+becomes `failed` as usual; it cannot be automatically repeated after an
+unknown external effect. Expired tasks are failed without dispatch, and
+cancellation deletes the sealed payload in the same SQL transaction.
+Failed authenticated decryption stops the claim and preserves evidence.
+
+**This milestone is storage only:** the service task dispatcher is not yet
+connected to automatically claim queued work. It is not correct to claim
+user-facing scheduling, FIFO fairness across principals, distributed task
+execution or guaranteed eventual delivery from this migration alone.
+A subsequent stage must connect the SQLite queue to the HTTP/MCP task
+lifecycle, respect revocation and cancellation and test capacity under
+restart/load. Ciphertext in WAL/backups remains subject to key-retention
+policy and operational secure erasure.
