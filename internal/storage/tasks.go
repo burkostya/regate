@@ -8,8 +8,17 @@ import (
     "time"
 )
 
-// TaskRecord is durable. OwnerDigest, authorization scopes and the persisted
-// execution revision never appear in TaskRecord.Public.
+// DelegationRequirement persists only the identity and provider trust
+// boundary. It does NOT contain an access token, refresh token or secret. A
+// suspended delegated task requires a newly verified bearer on each resume.
+type DelegationRequirement struct {
+    Provider string `json:"provider"`
+    Issuer string `json:"issuer"`
+    Audience string `json:"audience"`
+}
+
+// TaskRecord is durable. OwnerDigest, authorization scopes, delegation trust
+// boundary and the persisted execution revision never appear in Public.
 type TaskRecord struct {
     TaskID string `json:"taskId"`
     Status string `json:"status"`
@@ -18,6 +27,7 @@ type TaskRecord struct {
     Surface string `json:"surface"`
     Tool string `json:"tool,omitempty"`
     RequiredScopes []string `json:"required_scopes,omitempty"`
+    Delegation *DelegationRequirement `json:"delegation,omitempty"`
     RedactPII bool `json:"redact_pii,omitempty"`
     RunID string `json:"run_id,omitempty"`
     Revision string `json:"revision"`

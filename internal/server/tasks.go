@@ -17,6 +17,36 @@ import (
 )
 
 var running sync.Map // task id -> context.CancelFunc; one-process cancellation
+
+// A delegated task can continue only while a verified subject bearer is
+// live in this process. Neither the token nor a refresh token is persisted.
+// On a later resumed request, the same principal must supply a NEW verified
+// bearer. Bound the in-process context by the original bearer expiration.
+func taskExecutionContext(ctx context.Context, delegated bool)(context.Context,context.CancelFunc,error) {
+    if !delegated {
+        run,cancel:=context.WithTimeout(context.Background(),90*time.Second)
+        return run,cancel,nil
+    }
+    if !identity.HasLiveSubjectToken(ctx) {
+        return nil,nil,identity.ErrTokenExchange
+    }
+    principal,_:=identity.FromContext(ctx)
+    expiry:=principal.ExpiresAt.Add(-2*time.Second)
+    deadline:=time.Now().Add(90*time.Second)
+    if expiry.Before(deadline) {deadline=expiry}
+    if !deadline.After(time.Now()) {return nil,nil,identity.ErrTokenExchange}
+    run,cancel:=context.WithDeadline(context.WithoutCancel(ctx),deadline)
+    return run,cancel,nil
+}
+
+func immutableTaskScopes(surface,tool []string)[]string {
+    seen:=map[string]bool{}
+    var all []string
+    for _,scope:=range append(append([]string(nil),surface...),tool...) {
+        if scope!="" && !seen[scope] {all=append(all,scope);seen[scope]=true}
+    }
+    return all
+}
 // OAuth task owners are identities, not access-token bytes. A renewed token
 // from the same issuer/audience/subject can resume a durable task; a token for
 // a different principal can never inherit another owner's state.
@@ -58,28 +88,41 @@ func (s *Service) createTaskFor(ctx context.Context,cfg *config.Config,revision 
         if _,verified:=identity.FromContext(ctx);!verified {return nil,identity.ErrInvalidToken}
     }
     if err:=identity.RequireScopes(ctx,selected.RequiredScopes);err!=nil {return nil,err}
-    if engine.ToolNeedsDelegation(cfg,surface,*selected) {
-        return nil,fmt.Errorf("async task needs durable delegated grant; raw subject token cannot be persisted")
+    delegated:=engine.ToolNeedsDelegation(cfg,surface,*selected)
+    var requirement *storage.DelegationRequirement
+    if delegated {
+        principal,ok:=identity.FromContext(ctx)
+        provider,configured:=cfg.OAuth[published.OAuth]
+        if !ok || !configured || !identity.HasLiveSubjectToken(ctx) ||
+            principal.Issuer!=provider.Issuer || principal.Audience!=provider.Audience {
+            return nil,identity.ErrTokenExchange
+        }
+        requirement=&storage.DelegationRequirement{
+            Provider:published.OAuth,Issuer:provider.Issuer,Audience:provider.Audience,
+        }
     }
     if err:=cfg.ToolContracts[surface][tool].Input.Validate(args);err!=nil {
         return nil,fmt.Errorf("invalid tool arguments")
     }
+    runctx,cancel,err:=taskExecutionContext(ctx,delegated)
+    if err!=nil{return nil,err}
     task := storage.TaskRecord{
         TaskID: storage.ID(),Status:"working",StatusMessage:"Executing pipeline",
         OwnerDigest:fingerprint(ownerIdentity(ctx,owner)),Surface:surface,Tool:tool,Revision:revision,
-        RequiredScopes:append([]string(nil),selected.RequiredScopes...),
+        RequiredScopes:immutableTaskScopes(published.RequiredScopes,selected.RequiredScopes),
+        Delegation:requirement,
         RedactPII:published.OAuth!="" && !selected.AllowUnmasked,
         TTLMS:3600000,PollIntervalMS:1000,
     }
 	if e := s.Store.TaskPut(task); e != nil {
+        cancel()
 		return nil, e
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	running.Store(task.TaskID, context.CancelFunc(cancel))
 	go func() {
 		defer cancel()
 		defer running.Delete(task.TaskID)
-		out, err := s.Engine.Run(ctx, revision, cfg, surface, tool, args, false)
+		out, err := s.Engine.Run(runctx, revision, cfg, surface, tool, args, false)
 		// Persist status under a per-task mutex to avoid races with cancel/update.
 		s.tasksMu.Lock()
 		defer s.tasksMu.Unlock()
@@ -130,6 +173,11 @@ func (s *Service) TaskGet(id, owner string) (map[string]any, error) {
 	return t.Public(), nil
 }
 func (s *Service) TaskUpdate(id, owner string, inputResponses map[string]any) (map[string]any, error) {
+    // Compatibility entry point: callers without a verified request context
+    // may still resume nondelegated tasks, but never delegated work.
+    return s.TaskUpdateWithContext(context.Background(),id,owner,inputResponses)
+}
+func (s *Service) TaskUpdateWithContext(ctx context.Context,id, owner string, inputResponses map[string]any) (map[string]any, error) {
 	s.tasksMu.Lock()
 	defer s.tasksMu.Unlock()
 	t, e := s.Store.TaskGet(id)
@@ -158,18 +206,49 @@ func (s *Service) TaskUpdate(id, owner string, inputResponses map[string]any) (m
 	if e != nil {
 		return nil, e
 	}
+    // Every resumed effect uses the original immutable revision and must
+    // reacquire authorization from a newly verified inbound bearer. Neither
+    // a task owner digest alone nor an expired credential is a delegation.
+    selected:=config.Tool{}
+    found:=false
+    published,exists:=cfg.Surfaces[t.Surface]
+    if !exists {return nil,identity.ErrTokenExchange}
+    for _,candidate:=range published.Tools {
+        if candidate.Name==t.Tool {selected=candidate;found=true;break}
+    }
+    if !found {return nil,identity.ErrTokenExchange}
+    needsDelegation:=engine.ToolNeedsDelegation(cfg,t.Surface,selected)
+    if needsDelegation!=(t.Delegation!=nil) {
+        return nil,identity.ErrTokenExchange
+    }
+    if t.Delegation!=nil {
+        principal,ok:=identity.FromContext(ctx)
+        requirement:=t.Delegation
+        if !ok || !identity.HasLiveSubjectToken(ctx) ||
+            requirement.Provider!=published.OAuth ||
+            requirement.Issuer!=principal.Issuer ||
+            requirement.Audience!=principal.Audience ||
+            !allowedOwner(t,ownerIdentity(ctx,owner)) {
+            return nil,identity.ErrTokenExchange
+        }
+        if err:=identity.RequireScopes(ctx,t.RequiredScopes);err!=nil {
+            return nil,err
+        }
+    }
+    runctx,cancel,err:=taskExecutionContext(ctx,needsDelegation)
+    if err!=nil{return nil,err}
 	t.Status = "working"
 	t.InputRequests = nil
 	t.StatusMessage = "Continuing pipeline"
 	if e := s.Store.TaskPut(t); e != nil {
+        cancel()
 		return nil, e
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	running.Store(id, context.CancelFunc(cancel))
 	go func() {
 		defer cancel()
 		defer running.Delete(id)
-		out, err := s.Engine.Resume(ctx, cfg, t.Revision, t.RunID, value)
+		out, err := s.Engine.Resume(runctx, cfg, t.Revision, t.RunID, value)
 		s.tasksMu.Lock()
 		defer s.tasksMu.Unlock()
 		updated, e := s.Store.TaskGet(id)
