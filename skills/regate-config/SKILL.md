@@ -14,6 +14,10 @@ Regate is an HTTP-only MCP gateway controlled using a separate authenticated man
 - `pipeline` contains a DAG of typed nodes connected by explicit edges.
 - `hook` is an HTTP, MCP or built-in transformation or decision handler.
 - `policy` authorizes execution, independent of optional hook transformations.
+- `readback` declares a trusted, positive-only MCP resource read used to
+  verify whether an ambiguous write was applied; an inconclusive or missing
+  lookup cannot establish absence. The operator must verify `safe_read=true`,
+  correct endpoint binding, original-intent key and response identity.
 - `interceptor` attaches cross-cutting handlers around requests and external calls.
 - Every activated revision is immutable. New requests use the latest active revision; in-flight ones use their original revision.
 
@@ -36,10 +40,14 @@ Regate is an HTTP-only MCP gateway controlled using a separate authenticated man
 - Do not make a denied or indeterminate decision into `allow`.
 - Do not remove PII obligations or trust boundary checks by reordering a pipeline.
 - Do not blindly retry a write after a network failure. The side effect may already have happened.
+- To reconcile an unknown MCP write, use `regate_effect_readback` with
+  `effect_id`, `adapter` and the original writer `intent`; the journal
+  verifies its digest and the endpoint before any read. Never invent original
+  arguments or claim an eventual-consistency not-found result is authoritative.
 - Do not share the management token with hooks or MCP upstreams.
 - The compiler uses HCL2/cty for static config and bounded CEL expressions inside pipeline node attributes; see `docs/contracts/hcl.md`. All executable attributes are closed-schema validated.
 - When a tool or operation is unsupported, report the exact limitation instead of inventing an outcome.
 
 ## Basic management tools
 
-`regate_status`, `regate_upstreams`, `regate_inspect`, `regate_config_get`, `regate_draft_create`, `regate_draft_get`, `regate_draft_patch`, `regate_graph_get`, `regate_graph_patch`, `regate_validate`, `regate_diff`, `regate_impact_analyze`, `regate_test`, `regate_activate`, `regate_rollback`, `regate_revisions`, `regate_pipeline_trace`, `regate_upstream_refresh`, `regate_resume`.
+`regate_status`, `regate_upstreams`, `regate_inspect`, `regate_config_get`, `regate_draft_create`, `regate_draft_get`, `regate_draft_patch`, `regate_graph_get`, `regate_graph_patch`, `regate_validate`, `regate_diff`, `regate_impact_analyze`, `regate_test`, `regate_activate`, `regate_rollback`, `regate_revisions`, `regate_pipeline_trace`, `regate_upstream_refresh`, `regate_resume`, `regate_effects`, `regate_effect_readback`, `regate_effect_decide`.
