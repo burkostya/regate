@@ -12,7 +12,8 @@ import (
 // request is in flight. Neither SQLite observer nor takeover may replay the
 // reserved task; interrupted 'working' tasks fail closed on recovery.
 func (s *Store) BeginTaskGrantContinuation(ctx context.Context,
-    taskID,owner string)(GrantMetadata,string,error) {
+    taskID,owner string,limit int)(GrantMetadata,string,error) {
+    if err:=validTaskLimit(limit);err!=nil{return GrantMetadata{},"",err}
     tx,err:=s.db.BeginTx(ctx,nil)
     if err!=nil{return GrantMetadata{},"",err}
     defer tx.Rollback()
@@ -29,6 +30,9 @@ func (s *Store) BeginTaskGrantContinuation(ctx context.Context,
         return GrantMetadata{},"",ErrGrantUnavailable
     }
 
+    active,err:=workingTaskCountTx(tx)
+    if err!=nil{return GrantMetadata{},"",err}
+    if active>=limit{return GrantMetadata{},"",ErrTaskCapacity}
     grant,err:=s.grantRowTx(tx,taskID)
     if err!=nil{return GrantMetadata{},"",ErrGrantUnavailable}
     if err=validateGrantOwner(grant,task,owner);err!=nil{return GrantMetadata{},"",err}
