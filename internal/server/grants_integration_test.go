@@ -108,8 +108,14 @@ pipeline "deferred_customer" {
     kind = "output"
     value = "nodes.fetch.value"
   }
-  edge {from = "pause" to = "fetch"}
-  edge {from = "fetch" to = "result"}
+  edge {
+    from = "pause"
+    to = "fetch"
+  }
+  edge {
+    from = "fetch"
+    to = "result"
+  }
 }
 `
     hcl=fmt.Sprintf(`oauth "company" {
