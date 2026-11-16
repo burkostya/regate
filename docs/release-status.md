@@ -328,3 +328,17 @@
   for unauthenticated clients and does not yet implement weighted priority,
   per-tenant funding, authenticated provider identity quotas, or verified
   fairness under production load.
+
+#### Suspended-task admission precedence (PR #35)
+
+- The interactive `input_required → working` transition and explicit
+  grant-backed continuation both refuse a free active slot while
+  earlier encrypted queue entries are pending, using a single
+  execution-leader SQLite write transaction.
+- Rejected resumes leave the suspended checkpoint, task status and
+  OAuth refresh credential unchanged; no IdP call or remote effect
+  is made. After backlog drains, the same authorized resume can
+  proceed normally.
+- Regression tests cover both interactive and grant-backed cases,
+  ensuring a newly available slot cannot bypass committed waiting
+  work even with OAuth capability rotation.
