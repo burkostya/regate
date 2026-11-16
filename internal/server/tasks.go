@@ -187,9 +187,14 @@ func (s *Service) TaskUpdateWithContext(ctx context.Context,id, owner string, in
 	if !allowedOwner(t, owner) {
 		return nil, fmt.Errorf("task not found")
 	}
-	if t.Status != "input_required" {
-		return map[string]any{}, nil
-	}
+    usingGrant:=t.Status=="working" && t.Phase=="refreshing_grant" &&
+        engine.HasGrantExecution(ctx)
+    if t.Status!="input_required" && !usingGrant {
+        return map[string]any{},nil
+    }
+    if usingGrant {
+        if err:=s.Engine.CheckGrantExecution(ctx);err!=nil{return nil,err}
+    }
 	response, ok := inputResponses["resume"].(map[string]any)
 	if !ok {
 		return map[string]any{}, nil
@@ -238,6 +243,7 @@ func (s *Service) TaskUpdateWithContext(ctx context.Context,id, owner string, in
     runctx,cancel,err:=taskExecutionContext(ctx,needsDelegation)
     if err!=nil{return nil,err}
 	t.Status = "working"
+    t.Phase=""
 	t.InputRequests = nil
 	t.StatusMessage = "Continuing pipeline"
 	if e := s.Store.TaskPut(t); e != nil {
@@ -286,6 +292,12 @@ func (s *Service) TaskCancel(id, owner string) (map[string]any, error) {
 		if e := s.Store.TaskPut(t); e != nil {
 			return nil, e
 		}
+        // Cancellation revokes any outstanding autonomous grant. A worker
+        // holding an old access token must check task/grant state before
+        // initiating the next protected external operation.
+        if t.Delegation!=nil {
+            _=s.Store.RevokeTaskGrant(context.Background(),id,t.OwnerDigest)
+        }
 	}
 	return map[string]any{}, nil
 }
