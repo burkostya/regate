@@ -32,6 +32,7 @@ func (s *Service) signalQueue() {
 func (s *Service) queueDispatchLoop() {
     ticker:=time.NewTicker(200*time.Millisecond)
     defer ticker.Stop()
+    var lastSweep time.Time
     for {
         select {
         case <-ticker.C:
@@ -43,6 +44,29 @@ func (s *Service) queueDispatchLoop() {
         err:=s.Store.RequireExecutionLeader(ctx)
         cancel()
         if err!=nil{return}
+
+        // Expired encrypted jobs must be removed even when every working
+        // slot is occupied; otherwise they may fill the entire waiting
+        // queue forever. Sweep in bounded transactions, with a modest
+        // frequency cap, before attempting to schedule additional work.
+        if lastSweep.IsZero() || time.Since(lastSweep)>=time.Second {
+            lastSweep=time.Now()
+            blocked:=false
+            for {
+                ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second)
+                swept,err:=s.Store.SweepExpiredQueued(ctx,64)
+                cancel()
+                if err!=nil {
+                    // A tampered, unverified or inaccessible ciphertext
+                    // remains intact for operator repair, not silently
+                    // removed to free slots.
+                    blocked=true
+                    break
+                }
+                if swept<64 {break}
+            }
+            if blocked {continue}
+        }
 
         cfg,_:=s.Current()
         for {
