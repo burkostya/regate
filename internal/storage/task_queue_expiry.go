@@ -99,8 +99,11 @@ func (s *Store) SweepExpiredQueued(ctx context.Context,limit int)(int,error) {
         if err!=nil{return 0,err}
         count,err:=result.RowsAffected()
         if err!=nil || count!=1{return 0,ErrTaskTransition}
-        if _,err=tx.ExecContext(ctx,`DELETE FROM task_queue
-            WHERE task_id=? AND key_id=?`,item.id,item.keyID);err!=nil{return 0,err}
+        deleted,err:=tx.ExecContext(ctx,`DELETE FROM task_queue
+            WHERE task_id=? AND key_id=?`,item.id,item.keyID)
+        if err!=nil{return 0,err}
+        removed,err:=deleted.RowsAffected()
+        if err!=nil || removed!=1{return 0,ErrTaskTransition}
         if _,err=tx.ExecContext(ctx,`DELETE FROM task_queue_turns
             WHERE owner_digest=? AND NOT EXISTS(
                 SELECT 1 FROM task_queue WHERE owner_digest=?)`,
