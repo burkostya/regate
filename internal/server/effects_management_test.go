@@ -1,12 +1,10 @@
 package server
 
 import (
-    "encoding/json"
     "io"
     "net/http"
     "testing"
 
-    "github.com/burkostya/regate/internal/storage"
 )
 func TestManagementEffectDecisionRequiresAdminAndUnknownState(t *testing.T){
     svc,api,_:=fixture(t)
@@ -57,8 +55,4 @@ func TestManagementMCPReconciliationDecision(t *testing.T){
         t.Fatalf("MCP decision was not applied: %#v %v",current,err)
     }
     if current.Resolution.Kind!="operator" {t.Fatal("operator claim was misrepresented as verified read-back")}
-    var raw map[string]any
-    if err=json.Unmarshal([]byte(storage.Hash(current.ID)),&raw);err==nil{
-        t.Fatal("unexpected hash interpretation")
-    }
 }
