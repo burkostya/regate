@@ -310,3 +310,21 @@
 - Regression tests cover order of dequeue, freed-slot races, full queue
   handling and HCL queue-disable semantics. Per-principal fairness and
   priority queues are separate remaining issues.
+
+#### Owner-fair bounded queue admission (PR #34)
+
+- SQLite schema v5 records per-owner last-served scheduling turns and a
+  monotone scheduler clock. Claim is an atomic unweighted round-robin
+  among owners while preserving FIFO within each owner's backlog; turns
+  survive restart and are removed once that owner has no queued work.
+- HCL `regate.max_queued_per_owner` defaults to 32 (range 1–4096).
+  Admission checks global and per-owner limits together under the
+  execution-leader SQLite transaction, preventing one owner from consuming
+  all slots while independent owners still have capacity.
+- Regression coverage includes deterministic interleaving, owner FIFO,
+  turn preservation after restart, concurrent quota contention, invalid
+  HCL ranges and SQLite v1/v2/v3 migrations to v5.
+- This policy uses opaque task-owner hashes. It is **not** Sybil-resistant
+  for unauthenticated clients and does not yet implement weighted priority,
+  per-tenant funding, authenticated provider identity quotas, or verified
+  fairness under production load.
