@@ -128,7 +128,7 @@ func (r *Runtime) Run(ctx context.Context, revision string, cfg *config.Config, 
 		return out, fmt.Errorf("tool not found")
 	}
     if r.Store!=nil {
-        if err:=r.Store.CheckExecutionLease(ctx);err!=nil{return out,err}
+        if err:=r.Store.RequireExecutionLeader(ctx);err!=nil{return out,err}
     }
     if err:=enforceDataTrust(cfg,surface,tool);err!=nil {
         out.Status="denied"
@@ -636,7 +636,7 @@ func (r *Runtime) mcpCall(ctx context.Context,cfg *config.Config,u config.Upstre
     conn,err:=r.connFor(ctx,cfg,u)
     if err!=nil{return nil,err}
     if r.Store!=nil {
-        if err=r.Store.CheckExecutionLease(ctx);err!=nil{return nil,err}
+        if err=r.Store.RequireExecutionLeader(ctx);err!=nil{return nil,err}
     }
     var attempt storage.Effect
     if effect!="read" {
@@ -648,7 +648,7 @@ func (r *Runtime) mcpCall(ctx context.Context,cfg *config.Config,u config.Upstre
         if err!=nil{return nil,err}
     }
     if r.Store!=nil {
-        if err=r.Store.CheckExecutionLease(ctx);err!=nil{return nil,err}
+        if err=r.Store.RequireExecutionLeader(ctx);err!=nil{return nil,err}
     }
     raw,e:=conn.CallTool(ctx,tool,args)
     if effect!="read" {
@@ -671,7 +671,7 @@ func (r *Runtime) runHook(ctx context.Context, h config.Hook, cfg *config.Config
 		return value, nil
 	}
     if h.Transport!="builtin" && r.Store!=nil {
-        if err:=r.Store.CheckExecutionLease(ctx);err!=nil{return nil,err}
+        if err:=r.Store.RequireExecutionLeader(ctx);err!=nil{return nil,err}
     }
 	switch h.Transport {
 	case "builtin":
@@ -767,7 +767,7 @@ func decide(value any) (any, error) {
 }
 func (r *Runtime) Resume(ctx context.Context, cfg *config.Config, revision string, runID string, value any) (Outcome, error) {
     if r.Store!=nil {
-        if err:=r.Store.CheckExecutionLease(ctx);err!=nil{return Outcome{},err}
+        if err:=r.Store.RequireExecutionLeader(ctx);err!=nil{return Outcome{},err}
     }
 	var cp Checkpoint
 	if e := r.Store.GetSuspended(runID, &cp); e != nil {
