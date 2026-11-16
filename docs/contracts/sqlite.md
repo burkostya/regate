@@ -346,3 +346,24 @@ identities, quotas across all entrypoints, advanced fairness/priority
 policy, remote adapter fencing and operational load testing. This
 milestone does not add a default priority order or guarantee that work
 completes in the exact dispatch order.
+
+## Backlog precedence for resumed checkpoints (PR #35)
+
+Resuming a previously suspended task is another request for an active
+execution slot. Both `ClaimTaskContinuation` and the durable OAuth-grant
+`BeginTaskGrantContinuation` barrier now check the encrypted queue
+depth in the **same SQLite transaction** as capacity and task-status
+validation. If any already accepted entry is waiting, a resume receives
+`ErrTaskBacklog`, even if a slot has just become free. The dispatcher
+must claim and run the waiting work first.
+
+A refused OAuth-grant continuation does **not** move the task to
+`working`, decrypt or rotate the refresh token, change grant generation
+or mutate the suspended checkpoint. Once the older backlog is drained,
+normal authorization and grant refresh may proceed. This closes a
+scheduler-precedence gap while retaining the rule that no uncertain
+external action may be blindly retried.
+
+The backlog gate is not a priority system: urgent recovery requires an
+explicitly modeled operator policy or a separate authenticated
+priority lane rather than an accidental bypass.

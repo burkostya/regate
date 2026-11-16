@@ -33,6 +33,12 @@ func (s *Store) BeginTaskGrantContinuation(ctx context.Context,
     active,err:=workingTaskCountTx(tx)
     if err!=nil{return GrantMetadata{},"",err}
     if active>=limit{return GrantMetadata{},"",ErrTaskCapacity}
+    // Do not spend a rotating OAuth refresh token while previously
+    // accepted queued work still has priority. Resume cannot cut in
+    // front of the encrypted backlog even if a slot just became free.
+    backlog,err:=pendingTaskCountTx(tx)
+    if err!=nil{return GrantMetadata{},"",err}
+    if backlog>0{return GrantMetadata{},"",ErrTaskBacklog}
     grant,err:=s.grantRowTx(tx,taskID)
     if err!=nil{return GrantMetadata{},"",ErrGrantUnavailable}
     if err=validateGrantOwner(grant,task,owner);err!=nil{return GrantMetadata{},"",err}
