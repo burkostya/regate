@@ -84,6 +84,7 @@ type Store struct {
     leaseStop chan struct{}
     leaseDone chan struct{}
     grantKeys *GrantKeyRing
+    queueKeys *TaskQueueKeyRing
 }
 const databaseName = "regate.sqlite"
 
@@ -98,7 +99,9 @@ func New(dir,initial string) (*Store,error) {
     db.SetMaxIdleConns(1)
     keys,err:=LoadGrantKeyRing()
     if err!=nil {_=db.Close();return nil,fmt.Errorf("grant key configuration: %w",err)}
-    s:=&Store{Dir:dir,db:db,grantKeys:keys}
+    queueKeys,err:=LoadTaskQueueKeyRing()
+    if err!=nil {_=db.Close();return nil,fmt.Errorf("task queue key configuration: %w",err)}
+    s:=&Store{Dir:dir,db:db,grantKeys:keys,queueKeys:queueKeys}
     if err=s.initialize(initial);err!=nil {
         _=db.Close()
         return nil,err
@@ -134,7 +137,7 @@ func (s *Store) initialize(initial string) error {
     defer tx.Rollback()
     var version int
     if err=tx.QueryRow("PRAGMA user_version").Scan(&version);err!=nil{return err}
-    if version>3 {return fmt.Errorf("database schema version %d is newer than Regate",version)}
+    if version>4 {return fmt.Errorf("database schema version %d is newer than Regate",version)}
     if version==0 {
         for _,stmt:=range []string{
             `CREATE TABLE IF NOT EXISTS revisions (
@@ -217,6 +220,21 @@ func (s *Store) initialize(initial string) error {
             updated_ns INTEGER NOT NULL
         )`);err!=nil{return fmt.Errorf("SQLite v3 task_grants migration: %w",err)}
         if _,err=tx.Exec("PRAGMA user_version=3");err!=nil{return err}
+    }
+    if version<4 {
+        if _,err=tx.Exec(`CREATE TABLE IF NOT EXISTS task_queue (
+            seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT NOT NULL UNIQUE REFERENCES tasks(task_id) ON DELETE CASCADE,
+            owner_digest TEXT NOT NULL,
+            revision TEXT NOT NULL,
+            surface TEXT NOT NULL,
+            tool TEXT NOT NULL,
+            key_id TEXT NOT NULL,
+            nonce BLOB NOT NULL,
+            ciphertext BLOB NOT NULL,
+            created_ns INTEGER NOT NULL
+        )`);err!=nil{return fmt.Errorf("SQLite v4 task_queue migration: %w",err)}
+        if _,err=tx.Exec("PRAGMA user_version=4");err!=nil{return err}
     }
     var count int
     if err=tx.QueryRow("SELECT COUNT(*) FROM revisions").Scan(&count);err!=nil{return err}
