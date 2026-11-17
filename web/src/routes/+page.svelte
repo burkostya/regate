@@ -68,7 +68,9 @@
       throw new Error('The active revision changed while loading the graph; refresh the catalog.');
     }
     selected = name;
-    activePipeline = structuredClone(catalog.pipelines[name]);
+    // Svelte 5 $state wraps catalog entries in proxies that structuredClone
+    // cannot clone. A snapshot is detached and safe for independent editing.
+    activePipeline = $state.snapshot(catalog.pipelines[name]);
     graphSnapshot = current;
     dirty = false; selectedNode = ''; selectedEdgeIndex = null;
     positions = await api(`layout/${encodeURIComponent(name)}`).catch(() => ({}));
