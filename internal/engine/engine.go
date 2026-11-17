@@ -115,6 +115,7 @@ type Outcome struct {
 	Error    string         `json:"error,omitempty"`
 	Nodes    map[string]any `json:"nodes,omitempty"`
 	OutputProduced bool `json:"-"` // True even for a deliberately null output.
+	NamedOutputs map[string]any `json:"-"` // Private, completed child terminal values; never client-facing.
 	Checkpoint *Checkpoint `json:"-"` // Private continuation state, never sent to MCP clients.
 }
 type Checkpoint struct {
@@ -417,6 +418,22 @@ func (r *Runtime) execute(ctx context.Context, revision string, cfg *config.Conf
 			if pending {
 				return out, fmt.Errorf("pipeline %s deadlock", p.Name)
 			}
+			// Reconstruct completed output terminals from durable values, not
+			// only from the current wave: resumed child frames may have
+			// produced a sibling output before suspension.
+			out.NamedOutputs = map[string]any{}
+			for name, node := range p.Nodes {
+				if node.Kind != "output" || states[name] != "completed" { continue }
+				state, present := values[name].(map[string]any)
+				if !present {
+					return out, fmt.Errorf("pipeline %s terminal %s has no completed value record", p.Name, name)
+				}
+				value, present := state["value"]
+				if !present {
+					return out, fmt.Errorf("pipeline %s terminal %s has no completed output value", p.Name, name)
+				}
+				out.NamedOutputs[name] = value
+			}
 			if out.Status == "running" {
 				out.Status = "success"
 			}
@@ -663,7 +680,26 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 			ret.error = fmt.Errorf("called pipeline %s did not produce an output", childName)
 			break
 		}
-		ret.value = nested.Value
+		terminalNames := []string{}
+		for terminalName, node := range child.Nodes {
+			if node.Kind == "output" { terminalNames = append(terminalNames, terminalName) }
+		}
+		if len(terminalNames) > 1 {
+			sort.Strings(terminalNames)
+			outputs := make(map[string]any, len(terminalNames))
+			for _, terminalName := range terminalNames {
+				value, present := nested.NamedOutputs[terminalName]
+				if !present {
+					ret.error = fmt.Errorf("called pipeline %s missing required child output %s", childName, terminalName)
+					break
+				}
+				outputs[terminalName] = value
+			}
+			if ret.error != nil { break }
+			ret.value = outputs
+		} else {
+			ret.value = nested.Value
+		}
 	case "map":
 		// Pure, bounded mapping: each CEL evaluation runs with the item as
 		// its local input. No hook, MCP request or external effect is invoked

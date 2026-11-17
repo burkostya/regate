@@ -125,7 +125,7 @@ func TestPurePipelineCallRejectedUnsafeConfigurations(t *testing.T) {
   edge {
     from = "upper"
     to = "second"
-  }`, 1), "exactly one output"},
+  }`, 1), "must declare output_ports for child terminal"},
 		{"missing arguments", strings.Replace(base, `    arguments = {name = "input.name"}`, "", 1), "arguments"},
 		{"nonobject arguments", strings.Replace(base, `arguments = {name = "input.name"}`, `arguments = ["input.name"]`, 1), "arguments"},
 		{"incompatible callee input", strings.Replace(base, `input_schema = {type = "object"}`, `input_schema = {type = "string"}`, 1), "incompatible port types"},

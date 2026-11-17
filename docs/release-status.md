@@ -676,3 +676,21 @@
 - This is **not** independent multi-terminal output, effectful map, general
   multi-suspension, remote idempotency/attestation or production acceptance.
   Issues #7/#10 remain open.
+
+
+#### Deterministic multi-terminal subpipeline outputs (PR #57)
+
+- A called pipeline may now have multiple explicitly typed `output`
+  terminals, each mapped by node name to a required
+  `pipeline.call.output_ports` declaration; unknown, missing and reserved
+  names fail before activation.
+- On success, all settled child terminal values are aggregated into the
+  caller's `value` object, validated against independent field and aggregate
+  contracts, then routed via named data ports. Missing/skipped child terminal
+  outputs fail closed; no nondeterministic last-terminal-wins result leaks to
+  parent effects.
+- Durable nested suspension resumes can reconstruct previously completed
+  sibling outputs without rerunning their nodes.
+- This is **not** conditional optional terminal delivery, parallel independent
+  nested checkpoint support, effectful map, remote idempotency or full #7/#10
+  acceptance.
