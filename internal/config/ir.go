@@ -146,6 +146,12 @@ func (c *Config) Compile() error {
 					if !ok { return fmt.Errorf("pipeline %s node %s output port %s needs a JSON Schema object", name, id, portName) }
 					schema, err := compileSchema(declared)
 					if err != nil { return fmt.Errorf("pipeline %s node %s output port %s: %w", name, id, portName, err) }
+					if portName == "content" {
+						types := schema.Types()
+						if len(types) != 1 || types[0] != "array" {
+							return fmt.Errorf("pipeline %s node %s output port content: explicit array JSON Schema required", name, id)
+						}
+					}
 					compiled.OutputPorts[portName] = schema
 				}
 			}
