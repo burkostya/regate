@@ -920,3 +920,16 @@
 - Coverage includes initial missing output, explicit null and resumed
   missing output, alongside existing competing-output rejection.
   #7/#10 remain open; provider idempotency is not implied.
+
+#### Bounded parallel pure CEL map (#7)
+
+- A `map` node using a pure CEL `mapping` (not `pipeline`) may
+  explicitly declare `parallelism = 1..min(max_items, 16)`.
+- Prevalidate all items before launching workers; evaluate against the
+  same immutable upstream node/port snapshot. A bounded worker pool
+  collects results in input order and deterministically reports the
+  smallest failing item index. Errors and cancellation publish no partial
+  array; default parallelism remains one.
+- Any pipeline-backed/effectful/suspendable map rejects the option.
+  This provides **no** concurrent writes, remote idempotency, parallel
+  durable checkpointing or full #7/#10 release acceptance.

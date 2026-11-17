@@ -450,6 +450,7 @@ node "upper_names" {
   items     = "input.names"
   mapping   = "upper(input)"
   max_items = 32
+  parallelism = 4 # optional, 1..16, pure CEL maps only (default: 1)
   input_schema  = {type = "string"} # contract for each input item
   output_schema = {
     type = "array"
@@ -464,7 +465,14 @@ Every element is validated with `input_schema` (when present), then
 transformed using bounded, cancellable CEL. The complete output array is
 checked against `output_schema` before it becomes visible downstream.
 Invalid elements, runtime CEL errors and oversize arrays fail the node
-without publishing partial results.
+without publishing partial results. An optional `parallelism` from 1 to
+`min(max_items, 16)` evaluates up to that many pure CEL items concurrently.
+The default of 1 preserves sequential execution. All inputs are prevalidated
+before evaluation, and outputs are indexed by the original array position.
+Errors are reported in ascending item order after workers settle; a failed
+or cancelled map publishes no partial array. Pipeline-backed maps reject
+`parallelism` entirely, including `parallelism = 1`: remote writes and
+durable suspension remain deliberately sequential.
 
 The **CEL mapping mode** makes no external calls. Its `mapping`
 attribute is mutually exclusive with the pipeline-backed mode below.

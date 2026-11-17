@@ -853,6 +853,18 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 			ret.error = fmt.Errorf("map item count or restored prefix exceeds configured bound")
 			break
 		}
+		// Opt-in parallelism is deliberately limited to pure, effect-free CEL
+		// mappings. Effectful/suspendable child pipelines retain the durable,
+		// sequential per-item journal and checkpoint order.
+		if childName == "" {
+			parallelism := n.Int("parallelism", 1)
+			if parallelism < 1 || parallelism > 16 || parallelism > maxItems {
+				ret.error = fmt.Errorf("invalid pure map parallelism")
+			} else {
+				ret.value, ret.error = evaluatePureMap(ctx, plan, items, vars, parallelism)
+			}
+			break
+		}
 		if childName != "" {
 			if !hasChild || cfg.Plans[childName] == nil ||
 				cfg.Plans[childName].Nodes[child.Entry] == nil {

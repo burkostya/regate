@@ -449,6 +449,15 @@ func (c *Config) Validate() error {
 				if count < 1 || count > 64 {
 					return fmt.Errorf("pipeline %s node %s: map max_items must be between 1 and 64", name, n)
 				}
+				if _, specified := node.Attrs["parallelism"]; specified {
+					parallelism := node.Int("parallelism", 0)
+					if parallelism < 1 || parallelism > 16 || parallelism > count {
+						return fmt.Errorf("pipeline %s node %s: pure map parallelism must be between 1 and min(max_items, 16)", name, n)
+					}
+					if node.Str("pipeline") != "" || node.Attrs["allow_effects"] == true || node.Attrs["allow_suspend"] == true {
+						return fmt.Errorf("pipeline %s node %s: parallelism is forbidden for effectful or suspendable maps", name, n)
+					}
+				}
 			}
 			if node.Kind == "mcp.call" {
 				if _, ok := c.Upstreams[node.Str("upstream")]; !ok {
