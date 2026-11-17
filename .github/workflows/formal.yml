@@ -10,7 +10,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
@@ -26,3 +26,6 @@ jobs:
       - name: Exhaustive bounded parallel continuation safety
         working-directory: docs/formal
         run: java -XX:+UseParallelGC -jar /tmp/tla2tools.jar -workers 1 -deadlock -config ParallelSuspensions.cfg ParallelSuspensions.tla
+      - name: Three-branch competing continuation interleavings
+        working-directory: docs/formal
+        run: java -XX:+UseParallelGC -jar /tmp/tla2tools.jar -workers 1 -deadlock -config ParallelSuspensions3.cfg ParallelSuspensions.tla
