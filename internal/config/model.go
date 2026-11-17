@@ -454,6 +454,18 @@ func (c *Config) Validate() error {
 				if _, ok := c.Upstreams[node.Str("upstream")]; !ok {
 					return fmt.Errorf("pipeline %s node %s: missing upstream", name, n)
 				}
+				// Read retries are explicit and operator-attested, never inferred
+				// from untrusted upstream MCP annotations. No write/unknown retries.
+				if retry, present := node.Attrs["retry"].(map[string]any); present {
+					attempts, attemptsOK := retry["max_attempts"].(int64)
+					delay, delayOK := retry["delay_ms"].(int64)
+					acknowledged, acknowledgedOK := retry["safe_read"].(bool)
+					if node.Str("effect") != "read" || !attemptsOK || attempts < 2 || attempts > 4 ||
+						!delayOK || delay < 1 || delay > 2000 ||
+						!acknowledgedOK || !acknowledged || len(retry) != 3 {
+						return fmt.Errorf("pipeline %s node %s: retry requires effect=read, explicit safe_read=true, max_attempts 2..4 and delay_ms 1..2000 (no extra fields)", name, n)
+					}
+				}
 			}
 			if node.Kind == "hook.call" {
 				if _, ok := c.Hooks[node.Str("hook")]; !ok {
