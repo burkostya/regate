@@ -3,7 +3,7 @@
   import FlowCanvas from '$lib/FlowCanvas.svelte';
   import { api, setToken, type Catalog, type Pipeline, type Draft, type EdgeDef, type Trace } from '$lib/api';
   import { pipelineToHCL, createNode } from '$lib/hcl';
-  import { assertGraphSnapshot, assertSavedHCL, assertRunnableEditor, type GraphSourceSnapshot } from '$lib/draftGuard';
+  import { assertGraphSnapshot, assertSavedHCL, assertNoPendingEdits, assertRunnableEditor, type GraphSourceSnapshot } from '$lib/draftGuard';
   import { editGraphEdge, removeGraphEdge } from '$lib/graphEditor';
 
   type Tab = 'Overview' | 'Upstreams' | 'Surfaces' | 'Rules' | 'Pipelines' | 'HCL' | 'Revisions' | 'Traces' | 'Effects';
@@ -182,7 +182,9 @@
     message = 'Node positions saved independently from HCL.';
   }
   async function validate() {
-    const source = draft ? editorText : (await api<{source:string}>('config')).source;
+    // Validate the visible editor, including unsaved HCL without a draft.
+    // Never report the active source as valid when the preview is invalid.
+    const source = draft || editorText ? editorText : (await api<{source:string}>('config')).source;
     const data = await api('validate','POST',{source});
     insight = JSON.stringify(data,null,2);
     tab = 'HCL';
@@ -195,6 +197,7 @@
   }
   async function activate() {
     if (!draft) throw new Error('Create and validate a draft first');
+    assertNoPendingEdits(dirty, draft, editorText, graphSnapshot);
     assertSavedHCL(draft, editorText);
     const result = await api('validate','POST',{draft_id:draft.id});
     if (!result.valid) throw new Error(result.error);
@@ -204,9 +207,14 @@
     await refresh(true); message = 'New revision activated.';
   }
   async function rollback(id: string) {
-    if (!confirm(`Restore revision ${id.slice(0,12)} as a new activation?`)) return;
+    assertNoPendingEdits(dirty, draft, editorText, graphSnapshot);
+    const draftNotice = draft
+      ? ' Your saved draft will remain stored, but will be deselected in this browser.'
+      : '';
+    if (!confirm(`Restore revision ${id.slice(0,12)} as a new activation?${draftNotice}`)) return;
     await api('rollback','POST',{revision:id});
-    draft = null; await refresh(true); message = 'Rollback activated.';
+    draft = null; editorText = ''; insight = '';
+    await refresh(true); message = 'Rollback activated.';
   }
   async function runTool(live: boolean) {
     assertRunnableEditor(dirty, draft, editorText, graphSnapshot, status?.revision ?? '');

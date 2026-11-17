@@ -28,6 +28,23 @@ export function assertSavedHCL(draft: Pick<Draft, 'source'>, editorText: string)
   }
 }
 
+/** Do not discard pending local edits during activation, rollback or execution. */
+export function assertNoPendingEdits(
+  dirtyGraph: boolean,
+  draft: Pick<Draft, 'source'> | null,
+  editorText: string,
+  snapshot: GraphSourceSnapshot | null
+): void {
+  if (dirtyGraph) {
+    throw new Error('Unsaved graph edits exist. Save the graph before changing the active revision.');
+  }
+  if (draft) {
+    assertSavedHCL(draft, editorText);
+  } else if (editorText && editorText !== snapshot?.source) {
+    throw new Error('Unsaved HCL edits exist. Save a draft before changing the active revision.');
+  }
+}
+
 /** Refuse to execute a different source than the operator is reviewing. */
 export function assertRunnableEditor(
   dirtyGraph: boolean,
@@ -36,14 +53,7 @@ export function assertRunnableEditor(
   snapshot: GraphSourceSnapshot | null,
   activeRevision: string
 ): void {
-  if (dirtyGraph) {
-    throw new Error('Unsaved graph edits exist. Save the graph before executing a tool.');
-  }
-  if (draft) {
-    assertSavedHCL(draft, editorText);
-  } else if (editorText && editorText !== snapshot?.source) {
-    throw new Error('Unsaved HCL edits exist. Save a draft before executing a tool.');
-  }
+  assertNoPendingEdits(dirtyGraph, draft, editorText, snapshot);
   if (!snapshot || !activeRevision || snapshot.revision !== activeRevision) {
     throw new Error('The active revision changed. Refresh the graph before executing a tool.');
   }

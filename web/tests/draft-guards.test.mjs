@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assertGraphSnapshot, assertSavedHCL, assertRunnableEditor } from '../src/lib/draftGuard.ts';
+import { assertGraphSnapshot, assertSavedHCL, assertNoPendingEdits, assertRunnableEditor } from '../src/lib/draftGuard.ts';
 
 const graph = { revision: 'revision-1', source: 'pipeline "one" {}' };
 const draft = { base: 'revision-1', source: graph.source };
@@ -56,4 +56,15 @@ test('execution blocks locally edited HCL and an out-of-date graph snapshot', ()
 test('execution accepts only a clean reviewed graph and saved draft', () => {
   assert.doesNotThrow(() => assertRunnableEditor(false, draft, draft.source, graph, graph.revision));
   assert.doesNotThrow(() => assertRunnableEditor(false, null, '', graph, graph.revision));
+});
+
+test('activation and rollback cannot discard dirty graph or unsaved HCL', () => {
+  assert.throws(() => assertNoPendingEdits(true, draft, draft.source, graph),
+    /Unsaved graph edits/);
+  assert.throws(() => assertNoPendingEdits(false, draft, draft.source + '\n# pending', graph),
+    /Unsaved HCL edits/);
+  assert.throws(() => assertNoPendingEdits(false, null, graph.source + '\n# pending', graph),
+    /Unsaved HCL edits/);
+  assert.doesNotThrow(() => assertNoPendingEdits(false, draft, draft.source, graph));
+  assert.doesNotThrow(() => assertNoPendingEdits(false, null, graph.source, graph));
 });
