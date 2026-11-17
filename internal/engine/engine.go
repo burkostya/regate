@@ -1398,6 +1398,12 @@ func (r *Runtime) ResumeAt(ctx context.Context, cfg *config.Config, revision str
 	out := Outcome{RunID: runID, Revision: revision, Status: "failure"}
 	if r.Store == nil { return out, fmt.Errorf("durable checkpoint store required") }
 	ctx = withEffectScope(ctx, runID)
+	// Hold the per-run guard across the whole resume, including downstream
+	// effects and checkpoint deletion. A second answer must read the updated
+	// snapshot; otherwise concurrent independent leaf answers can be lost.
+	unlock := r.Store.LockSuspendedRun(runID)
+	defer unlock()
+	// Re-check authorization and leader fencing after waiting for the lock.
 	if err := r.CheckGrantExecution(ctx); err != nil { return out, err }
 	if err := r.Store.RequireExecutionLeader(ctx); err != nil { return out, err }
 	var cp Checkpoint
