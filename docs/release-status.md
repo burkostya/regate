@@ -497,3 +497,19 @@
   Identity and direct passthrough MCP surface permissions remain
   separate work under #5/#7; marking a policy mandatory does not
   itself prove upstream trust or external effect safety.
+
+
+#### Named data ports and separated control flow (PR #45)
+
+- Explicit `edge.kind = "data"`, `to_port`, optional `from_port = "value"`,
+  `node.input_ports` schemas and CEL `ports.<name>` introduce separately
+  compiled data dependencies without changing legacy control-flow edges.
+- Each consumer port has one producer which structurally dominates its
+  consumer; data edges never add votes to joins or activate nodes.
+  Known incompatible contracts fail activation; uncertain/dynamic values
+  are checked before consumer-side effects, without logging their contents.
+- Invalid bindings, skipped-path bypasses, unknown ports, double producers,
+  malformed data/control combinations, and runtime type mismatch have tests.
+  This is a bounded port milestone, **not** full typed DAG composition:
+  nested pipelines, multi-output semantics, guarded data availability,
+  formal proofs and real upstream contract evidence are still open.
