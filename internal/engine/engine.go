@@ -175,6 +175,41 @@ func requireUniqueSurfaceOutput(out *Outcome, pipelineName string) error {
 	return fmt.Errorf("surface pipeline %s has competing outputs: %s", pipelineName, strings.Join(names, ", "))
 }
 
+// finalizePublishedOutput is the same release boundary for initial and
+// resumed tools. A suspended run never invokes response interceptors; only a
+// fully settled result is eligible. A failing schema or response hook clears
+// all client-visible result fields, including a previously returned MCP
+// envelope, so callers cannot observe partially verified data.
+func (r *Runtime) finalizePublishedOutput(ctx context.Context, cfg *config.Config, surface, toolName string,
+	contract *config.SchemaContract, out *Outcome, dry bool) error {
+	scrub := func() {
+		out.Value = nil
+		out.MCP = nil
+		out.OutputProduced = false
+		out.NamedOutputs = nil
+	}
+	if err := contract.Validate(out.Value); err != nil {
+		scrub()
+		return err
+	}
+	before, _ := json.Marshal(out.Value)
+	value, err := r.intercept(ctx, cfg, "before_response", surface, toolName, out.Value, dry)
+	if err != nil {
+		scrub()
+		return err
+	}
+	out.Value = value
+	after, _ := json.Marshal(out.Value)
+	if !bytes.Equal(before, after) {
+		out.MCP = nil
+	}
+	if err := contract.Validate(out.Value); err != nil {
+		scrub()
+		return err
+	}
+	return nil
+}
+
 func (r *Runtime) Run(ctx context.Context, revision string, cfg *config.Config, surface, toolName string, args map[string]any, dry bool) (Outcome, error) {
 	out := Outcome{RunID: storage.ID(), Revision: revision, Status: "running"}
     if err:=r.CheckQueuedTaskExecution(ctx);err!=nil{return out,err}
@@ -296,23 +331,12 @@ func (r *Runtime) Run(ctx context.Context, revision string, cfg *config.Config, 
 		}
 	}
 	if err == nil {
-		err = toolContract.Output.Validate(out.Value)
+		err = r.finalizePublishedOutput(ctx, cfg, surface, toolName, toolContract.Output, &out, dry)
 	}
 	if err == nil {
-		before, _ := json.Marshal(out.Value)
-		out.Value, err = r.intercept(ctx, cfg, "before_response", surface, toolName, out.Value, dry)
-		after, _ := json.Marshal(out.Value)
-		if !bytes.Equal(before, after) {
-			out.MCP = nil
-		}
-		if err == nil {
-			err = toolContract.Output.Validate(out.Value)
-		}
-		if err == nil {
-			finish("success", nil)
-			out.Status = "success"
-			return out, nil
-		}
+		finish("success", nil)
+		out.Status = "success"
+		return out, nil
 	}
 	if errors.Is(err, ErrDenied) {
 		finish("denied", err)
@@ -1281,6 +1305,19 @@ func (r *Runtime) Resume(ctx context.Context, cfg *config.Config, revision strin
 	completed := err == nil && out.Status != "suspended"
 	if completed {
 		err = requireUniqueSurfaceOutput(&out, pipeline.Name)
+		if err == nil {
+			err = r.finalizePublishedOutput(ctx, cfg, cp.Surface, cp.Tool,
+				cfg.ToolContracts[cp.Surface][cp.Tool].Output, &out, false)
+		}
+		if err != nil {
+			out.Status = "failure"
+			out.Error = expr.RedactDiagnostic(err.Error())
+			if surface.OAuth != "" { out.Error = "operation failed" }
+			_, _ = r.intercept(ctx, cfg, "on_error", cp.Surface, cp.Tool,
+				map[string]any{"status": "failure", "message": out.Error, "run_id": runID}, false)
+			r.Store.WriteTrace(storage.Trace{RunID:runID, Revision:revision,
+				Surface:cp.Surface, Tool:cp.Tool, Status:"failure", Message:out.Error})
+		}
 	}
 	if out.Status == "suspended" {
 		if out.Checkpoint == nil {
