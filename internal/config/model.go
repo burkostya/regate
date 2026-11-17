@@ -676,7 +676,7 @@ func (c *Config) Validate() error {
 			switch node.Kind {
 			case "mcp.call", "http.call", "hook.call", "output", "suspend":
 				observable = append(observable, nodeName)
-			case "pipeline.call":
+			case "pipeline.call", "map":
 				if node.Attrs["allow_effects"] == true {
 					observable = append(observable, nodeName)
 				}
