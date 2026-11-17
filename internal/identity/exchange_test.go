@@ -5,6 +5,7 @@ import (
     "crypto/rand"
     "crypto/rsa"
     "encoding/json"
+    "fmt"
     "net/http"
     "net/http/httptest"
     "strings"
@@ -57,6 +58,14 @@ func TestTokenExchangeVerifiesTargetAudienceAndScopes(t *testing.T) {
             token:=signedRS256(t,private,"primary",map[string]any{
                 "iss":issuer,"aud":target,"sub":subject,"exp":expires,"scope":scopes,
             })
+            switch variant.Load().(string) {
+            case "duplicate-token":
+                fmt.Fprintf(w,`{"access_token":"forged","access_token":%q,"issued_token_type":%q,"token_type":"Bearer","expires_in":3600}`,token,accessTokenType)
+                return
+            case "duplicate-nested":
+                fmt.Fprintf(w,`{"access_token":%q,"issued_token_type":%q,"token_type":"Bearer","expires_in":3600,"policy":{"active":false,"active":true}}`,token,accessTokenType)
+                return
+            }
             json.NewEncoder(w).Encode(map[string]any{
                 "access_token":token,"issued_token_type":accessTokenType,
                 "token_type":"Bearer","expires_in":3600,
@@ -81,7 +90,7 @@ func TestTokenExchangeVerifiesTargetAudienceAndScopes(t *testing.T) {
         t.Fatalf("token exchange did not issue distinct audience credential: %v",err)
     }
     if hits.Load()!=1 {t.Fatalf("exchange endpoint not used: %d",hits.Load())}
-    for _,test:=range []string{"wrong-aud","wrong-sub","wrong-scope","error"} {
+    for _,test:=range []string{"wrong-aud","wrong-sub","wrong-scope","error","duplicate-token","duplicate-nested"} {
         t.Run(test,func(t *testing.T){
             variant.Store(test)
             if _,err:=Exchange(ctx,provider,targetAudience,[]string{"crm:read"});err!=ErrTokenExchange {

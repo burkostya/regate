@@ -281,3 +281,18 @@ revision. This **explicit** continuation is not automatic cross-process
 recovery. Automatic durable scheduling, stronger revocation guarantees,
 secure credential key lifecycle and real-provider verification remain
 release gates.
+
+## Strict OAuth provider JSON framing (#5 / #9)
+
+JWT protected-header and claim documents, RFC 7662 introspection claims,
+JWKS key sets and token-exchange responses are checked as complete JSON
+frames, including nested objects. Duplicate member names (also those
+written with Unicode escapes), invalid UTF-8, trailing documents and
+nesting beyond 128 levels fail closed, before any authorization verdict
+or delegated bearer can be accepted. The existing 4 KiB JWT-header,
+64 KiB JWT-claims/introspection/exchange and 1 MiB JWKS byte bounds
+remain unchanged; refresh grant responses reuse the claims decoder.
+
+Provider errors and sensitive tokens are not reflected back to callers.
+These syntax guarantees do not establish external IdP trust, revocation
+propagation, policy attestation, or authorization-code/PKCE handling.

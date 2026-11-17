@@ -117,6 +117,9 @@ func TestOpaqueIntrospectionRequiresTrustedIssuerAudienceAndActive(t *testing.T)
         case "wrong-issuer":reply["iss"]="https://attacker.test"
         case "expired":reply["exp"]=time.Now().Add(-time.Second).Unix()
         case "malformed":w.Write([]byte("{bad"));return
+        case "duplicate-nested":
+            fmt.Fprintf(w,`{"active":true,"iss":"https://issuer.test","aud":"regate-audience","sub":"user-1","exp":%d,"scope":"docs:read","extra":{"allow":false,"allow":true}}`,expiry)
+            return
         }
         w.Header().Set("Content-Type","application/json")
         json.NewEncoder(w).Encode(reply)
@@ -126,12 +129,12 @@ func TestOpaqueIntrospectionRequiresTrustedIssuerAudienceAndActive(t *testing.T)
         IntrospectionURL:introspection.URL,ClientIDEnv:"REGATE_TEST_OAUTH_CLIENT",ClientSecretEnv:"REGATE_TEST_OAUTH_SECRET"})
     principal,err:=verifier.Verify(context.Background(),"valid-opaque-token")
     if err!=nil || !principal.HasAll([]string{"docs:read"}) {t.Fatalf("active token denied: %v %#v",err,principal)}
-    for _,token:=range []string{"revoked","wrong-aud","wrong-issuer","expired","malformed"} {
+    for _,token:=range []string{"revoked","wrong-aud","wrong-issuer","expired","malformed","duplicate-nested"} {
         if _,err:=verifier.Verify(context.Background(),token);err==nil {
             t.Errorf("accepted invalid introspection for %s",token)
         }
     }
-    if received.Load()!=6 {t.Fatalf("token lookup bypassed: %d",received.Load())}
+    if received.Load()!=7 {t.Fatalf("token lookup bypassed: %d",received.Load())}
     t.Setenv("REGATE_TEST_OAUTH_SECRET","")
     if _,err:=verifier.Verify(context.Background(),"valid-opaque-token");err==nil {t.Fatal("missing introspection credentials accepted")}
 }
@@ -142,4 +145,52 @@ func TestOAuthPrincipalContextIsScopeBound(t *testing.T) {
     if p,ok:=FromContext(ctx);!ok || p.Subject!="u" {t.Fatalf("principal missing: %v %v",p,ok)}
     if err:=RequireScopes(context.Background(),[]string{"a"});err!=ErrInsufficientScope {t.Fatalf("anonymous accepted: %v",err)}
     if fmt.Sprint(ErrInvalidToken)!= "invalid OAuth access token" {t.Fatal("token error changed")}
+}
+
+func TestOAuthClaimsAndJWKSRejectNestedAndEscapedDuplicateMembers(t *testing.T) {
+    for _,tc:=range []struct{name,raw string}{
+        {"nested-duplicate",`{"iss":"trusted","metadata":{"scope":"read","scope":"admin"}}`},
+        {"escaped-duplicate",`{"iss":"trusted","metadata":{"scope":"read","scop\u0065":"admin"}}`},
+        {"invalid-utf8",`{"iss":"trusted","extra":"`+string([]byte{0xff})+`"}`},
+        {"trailing-document",`{"iss":"trusted"}{"aud":"other"}`},
+    }{
+        t.Run(tc.name,func(t *testing.T) {
+            if _,err:=decodeJSONObject([]byte(tc.raw));err==nil {
+                t.Fatalf("ambiguous OAuth claims admitted: %s",tc.name)
+            }
+        })
+    }
+    private,err:=rsa.GenerateKey(rand.Reader,2048)
+    if err!=nil {t.Fatal(err)}
+    validJWKS:=string(privateJWKS(t,private))
+    duplicated:=strings.Replace(validJWKS,`"kid":"primary"`,`"kid":"primary","k\u0069d":"primary"`,1)
+    if duplicated==validJWKS {t.Fatal("JWKS fixture lacks kid field")}
+    for _,tc:=range []struct{name,body string}{
+        {"duplicated-nested-kid",duplicated},
+        {"invalid-utf8",validJWKS+string([]byte{0xff})},
+    }{
+        t.Run(tc.name,func(t *testing.T) {
+            server:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,_ *http.Request) {
+                w.Header().Set("Content-Type","application/json")
+                _,_ = w.Write([]byte(tc.body))
+            }))
+            defer server.Close()
+            provider:=config.OAuth{
+                Issuer:"https://issuer.test",Audience:"https://regate.test/oauth",
+                JWKSURL:server.URL,
+            }
+            claims:=map[string]any{
+                "iss":provider.Issuer,"aud":provider.Audience,"sub":"owner",
+                "exp":time.Now().Add(time.Hour).Unix(),
+            }
+            token:=signedRS256(t,private,"primary",claims)
+            verifier:=NewVerifier(provider)
+            if _,err:=verifier.Verify(context.Background(),token);err!=ErrInvalidToken {
+                t.Fatalf("ambiguous JWKS was accepted: %s: %v",tc.name,err)
+            }
+            if len(verifier.keys)!=0 {
+                t.Fatalf("invalid JWKS published verified keys: %s",tc.name)
+            }
+        })
+    }
 }

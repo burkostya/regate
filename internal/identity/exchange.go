@@ -13,6 +13,7 @@ import (
 
     "github.com/burkostya/regate/internal/config"
     "github.com/burkostya/regate/internal/netguard"
+    "github.com/burkostya/regate/internal/strictjson"
 )
 
 // The subject token is available only to trusted in-process adapters after
@@ -81,6 +82,9 @@ func Exchange(ctx context.Context,provider config.OAuth,targetAudience string,ne
         TokenType string `json:"token_type"`
         ExpiresIn int64 `json:"expires_in"`
     }
+    // This provider response grants a delegated bearer. A JSON decoder's
+    // last-wins handling of repeated or nested fields is not acceptable.
+    if err:=strictjson.Check(body);err!=nil{return "",ErrTokenExchange}
     if err:=json.Unmarshal(body,&result);err!=nil{return "",ErrTokenExchange}
     if result.IssuedTokenType!=accessTokenType ||
         result.TokenType!="Bearer" || result.AccessToken=="" ||
