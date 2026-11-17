@@ -4,6 +4,7 @@
   import { api, setToken, type Catalog, type Pipeline, type Draft, type EdgeDef } from '$lib/api';
   import { pipelineToHCL, createNode } from '$lib/hcl';
   import { assertGraphSnapshot, assertSavedHCL, type GraphSourceSnapshot } from '$lib/draftGuard';
+  import { editGraphEdge, removeGraphEdge } from '$lib/graphEditor';
 
   type Tab = 'Overview' | 'Upstreams' | 'Surfaces' | 'Rules' | 'Pipelines' | 'HCL' | 'Revisions' | 'Traces' | 'Effects';
   let tab = $state<Tab>('Pipelines');
@@ -15,6 +16,8 @@
   let activePipeline = $state<Pipeline | null>(null);
   let selectedNode = $state('');
   let nodeJson = $state('');
+  let selectedEdgeIndex = $state<number | null>(null);
+  let edgeDraft = $state<EdgeDef>({ from: '', to: '', kind: 'data' });
   let positions = $state.raw<Record<string, {x: number; y: number}>>({});
   let dirty = $state(false);
   let draft = $state<Draft | null>(null);
@@ -32,7 +35,7 @@
   let upstreamName = $state('');
   let discovered = $state<any[]>([]);
   const tabs: Tab[] = ['Overview', 'Upstreams', 'Surfaces', 'Rules', 'Pipelines', 'HCL', 'Revisions', 'Traces', 'Effects'];
-  const kinds = ['input','output','transform','filter','validate','condition','parallel','join','mcp.call','hook.call','http.call','policy.check','mask.pii','suspend'];
+  const kinds = ['input','output','transform','filter','validate','condition','parallel','join','map','pipeline.call','mcp.call','hook.call','http.call','policy.check','mask.pii','suspend'];
 
   async function task(fn: () => Promise<void>) {
     error = ''; busy = true;
@@ -67,7 +70,7 @@
     selected = name;
     activePipeline = structuredClone(catalog.pipelines[name]);
     graphSnapshot = current;
-    dirty = false; selectedNode = '';
+    dirty = false; selectedNode = ''; selectedEdgeIndex = null;
     positions = await api(`layout/${encodeURIComponent(name)}`).catch(() => ({}));
   }
   async function ensureDraft(): Promise<Draft> {
@@ -155,8 +158,41 @@
     resultText = JSON.stringify(output,null,2);
   }
   function selectNode(id: string) {
+    selectedEdgeIndex = null;
     selectedNode = id;
     nodeJson = activePipeline?.nodes[id] ? JSON.stringify(activePipeline.nodes[id].attrs,null,2) : '';
+  }
+  function selectEdge(index: number) {
+    const edge = activePipeline?.edges[index];
+    if (!edge) return;
+    selectedNode = '';
+    selectedEdgeIndex = index;
+    edgeDraft = {...edge};
+  }
+  function newDataBinding() {
+    if (!activePipeline) return;
+    const names = Object.keys(activePipeline.nodes);
+    const from = selectedNode || activePipeline.entry;
+    const to = names.find(name => name !== from) ?? '';
+    const ports = activePipeline.nodes[to]?.attrs.input_ports;
+    const firstPort = ports && typeof ports === 'object' && !Array.isArray(ports)
+      ? Object.keys(ports)[0] ?? '' : '';
+    selectedNode = '';
+    selectedEdgeIndex = -1;
+    edgeDraft = {from,to,kind:'data',from_port:'value',to_port:firstPort};
+  }
+  function applyEdge() {
+    if (!activePipeline || selectedEdgeIndex === null) return;
+    const index = selectedEdgeIndex;
+    activePipeline = editGraphEdge(activePipeline,index,edgeDraft);
+    dirty = true;
+    selectEdge(index === -1 ? activePipeline.edges.length - 1 : index);
+  }
+  function deleteEdge() {
+    if (!activePipeline || selectedEdgeIndex === null || selectedEdgeIndex < 0) return;
+    activePipeline = removeGraphEdge(activePipeline,selectedEdgeIndex);
+    selectedEdgeIndex = null;
+    dirty = true;
   }
   function updateNode() {
     if (!activePipeline || !selectedNode) return;
@@ -169,7 +205,7 @@
     if (!activePipeline || !selectedNode || selectedNode === activePipeline.entry) throw new Error('Cannot remove pipeline entry');
     const nodes = {...activePipeline.nodes};delete nodes[selectedNode];
     activePipeline = {...activePipeline,nodes,edges:activePipeline.edges.filter(e=>e.from!==selectedNode&&e.to!==selectedNode)};
-    selectedNode = ''; dirty = true;
+    selectedNode = ''; selectedEdgeIndex = null; dirty = true;
   }
   function addNode(kind: string) {
     if (!activePipeline) return;
@@ -180,7 +216,7 @@
     if (!activePipeline)return;
     positions = newPositions;
     if (JSON.stringify(activePipeline.edges) !== JSON.stringify(edges)) {
-      activePipeline = {...activePipeline,edges};dirty = true;
+      activePipeline = {...activePipeline,edges};dirty = true; selectedEdgeIndex = null;
     }
   }
   async function inspectUpstream(name:string) {
