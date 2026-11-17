@@ -196,7 +196,7 @@ func childIdentity(b *Block) (string, error) {
 		if from == "" || to == "" {
 			return "", fmt.Errorf("unidentifiable edge at line %d", b.Line)
 		}
-		return "edge/" + from + "/" + to + "/" + b.String("when"), nil
+		return "edge/" + from + "/" + to + "/" + b.String("when") + "/" + b.String("kind") + "/" + b.String("from_port") + "/" + b.String("to_port"), nil
 	}
 	return "", fmt.Errorf("unidentifiable %s at line %d", b.Type, b.Line)
 }

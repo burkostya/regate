@@ -358,3 +358,51 @@ are covered by a pipeline policy; a direct tool needs its own surface
 authorization and interceptors. Mandatory policy domination is distinct
 from tenant/owner identity, evidence-backed grant validation, and
 verified remote-effect fencing, all of which have separate contracts.
+
+
+### Explicit named data ports (PR #45)
+
+A `node` may declare `input_ports`, a map of port identifiers to inline JSON
+Schema 2020-12 contracts. Expressions receive a separate `ports` CEL variable.
+The existing `nodes.<name>.value` and `input` expressions remain supported.
+
+```hcl
+node "normalize" {
+  kind = "transform"
+  value = "literal:ready"
+  output_schema = {type = "string"}
+}
+node "finish" {
+  kind = "output"
+  input_ports = {result = {type = "string"}}
+  value = "ports.result"
+}
+edge { # control order is still mandatory (write attributes on separate lines)
+  from = "normalize"
+  to   = "finish"
+}
+edge {
+  kind      = "data"
+  from      = "normalize"
+  to        = "finish"
+  from_port = "value"
+  to_port   = "result"
+}
+```
+
+Legacy edges (no `kind`) and `kind = "control"` remain **control edges**.
+A `data` edge binds an immutable completed producer's `value` into one
+declared consumer input port; it does not fire a control branch or affect join
+quorum counts. Exactly one producer per named input port is required.
+Only `from_port = "value"` (also the default) is currently supported. A
+data edge cannot have a `when` guard or override a control edge. Data
+sources must dominate their consumer over every *control* path (ignoring
+guards conservatively). Bypassed, missing, duplicate and cyclic dependencies
+are rejected at activation; control-edge duplicates are rejected too.
+
+Known incompatible producer/output and consumer/port JSON types fail at
+compile time. Every bound value is schema-validated at runtime **before**
+the consumer executes an effect or hook; errors do not publish that node's
+result. Dynamic remote output remains untrusted, and this is not a proof of
+arbitrary JSON Schema subsumption, cross-branch atomicity or remote effect
+correctness. Nested pipeline composition and multi-output ports remain open.

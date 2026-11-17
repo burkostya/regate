@@ -145,9 +145,12 @@ type Node struct {
 	Span  SourceRange    `json:"-"`
 }
 type Edge struct {
-	From string `json:"from"`
-	To   string `json:"to"`
-	When string `json:"when,omitempty"`
+	From     string `json:"from"`
+	To       string `json:"to"`
+	When     string `json:"when,omitempty"`
+	Kind     string `json:"kind,omitempty"` // empty/control for control flow; data for named input binding
+	FromPort string `json:"from_port,omitempty"`
+	ToPort   string `json:"to_port,omitempty"`
 }
 type Interceptor struct {
 	Name    string `json:"name"`
@@ -257,7 +260,7 @@ func Decode(src string) (*Config, error) {
 					}
 					p.Nodes[n] = Node{Name: n, Kind: ch.String("kind"), Attrs: ch.Attrs, Span: SourceRange{Start: ch.Start, End: ch.End, Line: ch.Line, Column: 1}}
 				case "edge":
-					p.Edges = append(p.Edges, Edge{From: ch.String("from"), To: ch.String("to"), When: ch.String("when")})
+					p.Edges = append(p.Edges, Edge{From: ch.String("from"), To: ch.String("to"), When: ch.String("when"), Kind: ch.String("kind"), FromPort: ch.String("from_port"), ToPort: ch.String("to_port")})
 				default:
 					return nil, fmt.Errorf("invalid nested block %s in pipeline", ch.Type)
 				}
@@ -476,6 +479,8 @@ func (c *Config) Validate() error {
 		adj := map[string][]string{}
 		ind := map[string]int{}
 		joinSources := map[string]map[string]bool{}
+		controlPairs := map[string]map[string]bool{}
+		dataSources := map[string]map[string]string{}
 		for n := range p.Nodes {
 			ind[n] = 0
 		}
@@ -486,6 +491,38 @@ func (c *Config) Validate() error {
 			if _, ok := p.Nodes[e.To]; !ok {
 				return fmt.Errorf("pipeline %s: missing to node %s", name, e.To)
 			}
+			if e.Kind == "data" {
+				if e.When != "" || (e.FromPort != "" && e.FromPort != "value") ||
+					!portIdentifier.MatchString(e.ToPort) || e.From == e.To {
+					return fmt.Errorf("pipeline %s: invalid data edge %s -> %s port %q", name, e.From, e.To, e.ToPort)
+				}
+				declared, ok := p.Nodes[e.To].Attrs["input_ports"].(map[string]any)
+				if !ok {
+					return fmt.Errorf("pipeline %s node %s: data edge requires declared input_ports", name, e.To)
+				}
+				if _, ok := declared[e.ToPort]; !ok {
+					return fmt.Errorf("pipeline %s node %s: undeclared data port %s", name, e.To, e.ToPort)
+				}
+				if dataSources[e.To] == nil {
+					dataSources[e.To] = map[string]string{}
+				}
+				if dataSources[e.To][e.ToPort] != "" {
+					return fmt.Errorf("pipeline %s node %s: duplicate data port %s", name, e.To, e.ToPort)
+				}
+				dataSources[e.To][e.ToPort] = e.From
+				continue
+			}
+			if e.Kind != "" && e.Kind != "control" || e.FromPort != "" || e.ToPort != "" {
+				return fmt.Errorf("pipeline %s: invalid control edge %s -> %s", name, e.From, e.To)
+			}
+			if controlPairs[e.To] == nil { controlPairs[e.To] = map[string]bool{} }
+			if controlPairs[e.To][e.From] {
+				if p.Nodes[e.To].Kind == "join" {
+					return fmt.Errorf("pipeline %s join %s: duplicate predecessor %s", name, e.To, e.From)
+				}
+				return fmt.Errorf("pipeline %s: duplicate control edge %s -> %s", name, e.From, e.To)
+			}
+			controlPairs[e.To][e.From] = true
 			if p.Nodes[e.To].Kind == "join" {
 				if joinSources[e.To]==nil{joinSources[e.To]=map[string]bool{}}
 				if joinSources[e.To][e.From]{
@@ -561,6 +598,30 @@ func (c *Config) Validate() error {
 		for n := range p.Nodes {
 			if !reachable[n] {
 				return fmt.Errorf("pipeline %s: unreachable node %s", name, n)
+			}
+		}
+		// Every declared data port has exactly one producer. Its producer must
+		// structurally dominate the consumer on CONTROL paths. A data-only
+		// edge must not activate a skipped or unauthorized branch.
+		for nodeName, node := range p.Nodes {
+			ports, _ := node.Attrs["input_ports"].(map[string]any)
+			for portName, rawSchema := range ports {
+				if !portIdentifier.MatchString(portName) {
+					return fmt.Errorf("pipeline %s node %s: invalid input port name %q", name, nodeName, portName)
+				}
+				if _, ok := rawSchema.(map[string]any); !ok {
+					return fmt.Errorf("pipeline %s node %s: input port %s requires JSON Schema object", name, nodeName, portName)
+				}
+				if dataSources[nodeName][portName] == "" {
+					return fmt.Errorf("pipeline %s node %s: unbound input port %s", name, nodeName, portName)
+				}
+			}
+		}
+		for to, sources := range dataSources {
+			for portName, from := range sources {
+				if reachableAvoidingNode(p.Entry, to, from, adj) {
+					return fmt.Errorf("pipeline %s node %s: data port %s source %s does not dominate consumer", name, to, portName, from)
+				}
 			}
 		}
 		// An explicit mandatory policy must dominate every outbound call,
