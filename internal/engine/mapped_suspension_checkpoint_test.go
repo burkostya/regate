@@ -45,9 +45,18 @@ pipeline "writer" {
     value = "nodes.create.value"
     output_schema = {type = "object"}
   }
-  edge {from = "start", to = "create"}
-  edge {from = "create", to = "pause"}
-  edge {from = "pause", to = "done"}
+  edge {
+    from = "start"
+    to = "create"
+  }
+  edge {
+    from = "create"
+    to = "pause"
+  }
+  edge {
+    from = "pause"
+    to = "done"
+  }
 }
 pipeline "batch" {
   entry = "each"
@@ -65,7 +74,10 @@ pipeline "batch" {
     kind = "output"
     value = "nodes.each.value"
   }
-  edge {from = "each", to = "done"}
+  edge {
+    from = "each"
+    to = "done"
+  }
 }
 surface "mapped" {
   path = "/mcp/mapped"
