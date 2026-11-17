@@ -98,8 +98,8 @@ func TestAllJoinSkippedBranchDoesNotPublishIncompleteData(t *testing.T) {
 	cfg, err := config.Decode(src)
 	if err != nil { t.Fatal(err) }
 	got, err := New(nil).Run(context.Background(), "rev", cfg, "pair", "merge", map[string]any{}, true)
-	if err != nil { t.Fatal(err) }
-	if got.Value != nil || got.Status != "success" {
-		t.Fatalf("skipped branch leaked incomplete output: %#v", got)
+	if err == nil || !strings.Contains(err.Error(), "produced no output") ||
+		got.Value != nil || got.OutputProduced || got.Status != "failure" {
+		t.Fatalf("skipped branch leaked incomplete output or was treated as successful: %#v %v", got, err)
 	}
 }
