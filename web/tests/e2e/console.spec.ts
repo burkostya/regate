@@ -7,6 +7,9 @@ test('real console edits typed port graph, validates HCL and rejects stale draft
   const beforeResponse = await request.get('/api/status', { headers: auth });
   expect(beforeResponse.ok()).toBeTruthy();
   const before = await beforeResponse.json();
+  const initialConfigurationResponse = await request.get('/api/config', { headers: auth });
+  expect(initialConfigurationResponse.ok()).toBeTruthy();
+  const originalConfiguration = await initialConfigurationResponse.json();
 
   await page.goto('/');
   // A server-rendered form is not interactive until Svelte attaches handlers.
@@ -106,4 +109,57 @@ test('real console edits typed port graph, validates HCL and rejects stale draft
   expect((await finalDraft.json()).source).toBe(resumedSource);
   const finalStatus = await request.get('/api/status', { headers: auth });
   expect((await finalStatus.json()).revision).toBe(before.revision);
+
+  // "Load active" is destructive only to the local editor preview and must
+  // not silently erase unsaved HCL or the durable concurrent draft.
+  const scratch = resumedSource + '\n# temporary browser scratch\n';
+  await page.locator('#hcl-source').fill(scratch);
+  page.once('dialog', dialog => dialog.dismiss());
+  await page.getByRole('button', { name: 'Load active', exact: true }).click();
+  await expect(page.locator('#hcl-source')).toHaveValue(scratch);
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'Load active', exact: true }).click();
+  await expect(page.locator('#hcl-source')).toHaveValue(originalConfiguration.source);
+  const preserved = await request.get(`/api/drafts/${draft.id}`, { headers: auth });
+  expect((await preserved.json()).source).toBe(resumedSource);
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'Reload draft' }).click();
+  await expect(page.locator('#hcl-source')).toHaveValue(resumedSource);
+
+  // Only explicitly disposable CI environments opt into mutating the live
+  // revision. A local Playwright run against a user-managed gateway never
+  // activates or rolls back by default.
+  if (process.env.REGATE_E2E_ALLOW_ACTIVATION !== 'true') return;
+  expect(before.listen).toMatch(/^127\\.0\\.0\\.1:/);
+
+  page.once('dialog', dialog => dialog.accept());
+  const activateResponse = page.waitForResponse(response =>
+    response.url().endsWith('/api/activate') && response.request().method() === 'POST'
+  );
+  await page.getByRole('button', { name: 'Activate', exact: true }).click();
+  const activated = await activateResponse;
+  expect(activated.status(), await activated.text()).toBe(200);
+  const activatedConfigurationResponse = await request.get('/api/config', { headers: auth });
+  const activatedConfiguration = await activatedConfigurationResponse.json();
+  expect(activatedConfiguration.revision).not.toBe(before.revision);
+  expect(activatedConfiguration.source).toBe(resumedSource);
+
+  // The UI must restore a previous immutable source as a NEW revision,
+  // rather than rewinding the revision counter or restoring only the view.
+  await page.locator('.sidebar nav').getByRole('button', { name: 'Revisions', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Immutable revisions' })).toBeVisible();
+  const originalRow = page.locator('.revision').filter({ hasText: before.revision });
+  await expect(originalRow).toBeVisible();
+  page.once('dialog', dialog => dialog.accept());
+  const rollbackResponse = page.waitForResponse(response =>
+    response.url().endsWith('/api/rollback') && response.request().method() === 'POST'
+  );
+  await originalRow.getByRole('button', { name: 'Restore' }).click();
+  const rolledBack = await rollbackResponse;
+  expect(rolledBack.status(), await rolledBack.text()).toBe(200);
+  const restoredResponse = await request.get('/api/config', { headers: auth });
+  const restored = await restoredResponse.json();
+  expect(restored.source).toBe(originalConfiguration.source);
+  expect(restored.revision).not.toBe(before.revision);
+  expect(restored.revision).not.toBe(activatedConfiguration.revision);
 });
