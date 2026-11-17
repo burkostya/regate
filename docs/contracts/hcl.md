@@ -898,3 +898,41 @@ different result. This does not undo already dispatched external effects.
 **Exception:** named multi-terminal *called* pipelines deliberately
 aggregate all required child outputs into a typed object at their call
 boundary. They do not publish multiple independent MCP responses.
+
+
+### Optional named outputs from a called pipeline (PR #60)
+
+A called pipeline may have mutually exclusive conditional terminal outputs.
+The caller must still enumerate **every** multi-terminal child output in
+`output_ports`. To allow a child terminal to be skipped, declare:
+
+```hcl
+output_ports = {
+  yes = {optional = true, schema = {type = "string"}}
+  no  = {optional = true, schema = {type = "string"}}
+}
+```
+
+The `optional=true` wrapper is supported **only** for named
+`pipeline.call` output ports (not `value` and not MCP envelope ports).
+Its `schema` remains a full JSON Schema for **present** values. There
+is no implicit nullable transformation of that output schema: a present
+`null` must be explicitly permitted by the schema. For a single child
+object output, the optional property must still be directly declared
+in the child's `output_schema.properties`, but need not be in
+`required`.
+
+A data edge consuming an optional child output must bind to a declared
+nullable `input_ports` entry using the existing
+`{optional = true, schema = {...}}` wrapper, whose schema must accept
+`null`. On a skipped child terminal, the aggregate `nodes.call.value`
+omits that key, `ports.<name>` binds `null`, and
+`port_present.<name>` is `false`. If a terminal **produces** `null`,
+the key is present and `port_present.<name>` is `true`.
+
+A nonoptional terminal missing at completion is an error. The child
+must produce at least one output even when all terminals are optional,
+and the caller's own `output_schema` may require particular keys
+when appropriate. Optionality never suppresses schema validation for
+provided values, and downstream effects only activate after the
+caller and consumer contracts have passed.

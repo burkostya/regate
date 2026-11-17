@@ -722,3 +722,19 @@
   once-only HTTP response transformation, and a deliberately dropped
   HTTP hook response. Broader task grant authorization and remote
   reconciliation still require #5/#6/#9 acceptance.
+
+
+#### Optional conditional child outputs (PR #60)
+
+- `pipeline.call.output_ports` supports explicit optional named
+  schema wrappers for skipped child terminals and optional direct
+  properties of single-object child outputs, while preserving required
+  output validation and deterministic sparse aggregation.
+- Data edges from optional child outputs require nullable optional
+  consumer input ports. `port_present` differentiates absence from a
+  present `null`; no implicitly successful missing producer values.
+- Compile/runtime tests cover conditional output branches, sparse
+  aggregate objects, present nulls, incompatible declarations,
+  mandatory-output failure and single-child object optional fields.
+- Does not generalize to optional MCP envelope ports, automatic joins,
+  external side-effect rollback or multiple independent checkpoints.

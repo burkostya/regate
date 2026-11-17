@@ -532,6 +532,13 @@ func (r *Runtime) execute(ctx context.Context, revision string, cfg *config.Conf
 					if binding.fromPort != "value" && p.Nodes[binding.producer].Kind == "pipeline.call" {
 						object, isObject := state["value"].(map[string]any)
 						if isObject { value, ok = object[binding.fromPort] }
+						if isObject && !ok &&
+							cfg.Plans[p.Name].Nodes[binding.producer].OptionalOutputPorts[binding.fromPort] &&
+							cfg.Plans[p.Name].Nodes[name].OptionalPorts[port] {
+							ports[port] = nil
+							present[port] = false
+							continue
+						}
 						if !isObject || !ok {
 							results[i] = nodeResult{name: name, error: fmt.Errorf("data port %s missing named pipeline output %s", port, binding.fromPort)}
 							return
@@ -739,6 +746,7 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 			for _, terminalName := range terminalNames {
 				value, present := nested.NamedOutputs[terminalName]
 				if !present {
+					if plan.OptionalOutputPorts[terminalName] { continue }
 					ret.error = fmt.Errorf("called pipeline %s missing required child output %s", childName, terminalName)
 					break
 				}
@@ -990,6 +998,9 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 				object, isObject := ret.value.(map[string]any)
 				var provided bool
 				if isObject { value, provided = object[portName] }
+				if isObject && !provided && plan.OptionalOutputPorts[portName] {
+					continue
+				}
 				if !isObject || !provided {
 					ret.error = fmt.Errorf("node %s missing named pipeline output %s", n.Name, portName)
 					break
