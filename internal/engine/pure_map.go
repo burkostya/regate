@@ -20,6 +20,7 @@ func evaluatePureMap(ctx context.Context, plan *config.NodeIR, items []any, vars
 	if parallelism < 1 || parallelism > 16 {
 		return nil, fmt.Errorf("invalid pure map parallelism")
 	}
+    parallelism = effectivePureMapParallelism(ctx, parallelism)
 	for i, item := range items {
 		if err := plan.InputSchema.Validate(item); err != nil {
 			return nil, fmt.Errorf("map item %d failed schema validation", i)
@@ -29,21 +30,21 @@ func evaluatePureMap(ctx context.Context, plan *config.NodeIR, items []any, vars
 		return nil, err
 	}
 	values := make([]any, len(items))
-	evaluate := func(i int) (any, error) {
+	evaluate := func(evalCtx context.Context, i int) (any, error) {
 		local := map[string]any{
 			"input": items[i],
 			"nodes": vars["nodes"],
 			"ports": vars["ports"],
 			"port_present": vars["port_present"],
 		}
-		return plan.Expressions["mapping"].Eval(ctx, local)
+		return plan.Expressions["mapping"].Eval(evalCtx, local)
 	}
 	if parallelism == 1 {
 		for i := range items {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			value, err := evaluate(i)
+			value, err := evaluate(ctx, i)
 			if err != nil {
 				return nil, fmt.Errorf("map item %d: %w", i, err)
 			}
@@ -65,12 +66,13 @@ func evaluatePureMap(ctx context.Context, plan *config.NodeIR, items []any, vars
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+            workerCtx := withPureMapWorker(ctx)
 			for i := range jobs {
-				if err := ctx.Err(); err != nil {
+				if err := workerCtx.Err(); err != nil {
 					failures[i] = err
 					continue
 				}
-				values[i], failures[i] = evaluate(i)
+				values[i], failures[i] = evaluate(workerCtx, i)
 			}
 		}()
 	}
