@@ -618,3 +618,29 @@ fails after SQLite mutation, **do not manually remove the quarantine
 marker**: create a new empty state directory and repeat the verified
 restore/acknowledgment from the original immutable backup. Never
 automatically resume historical queued requests from a DR snapshot.
+
+### Draft source CAS and activation consistency
+
+Each draft response exposes `source_digest` as the **full hex SHA-256**
+of its exact persisted HCL source, independent of the shorter revision ID.
+A management caller can supply `expected_source_digest` to
+`regate_draft_patch`, `regate_graph_patch`,
+`regate_attribute_patch`, `regate_attribute_add`, or
+`regate_activate` to reject a stale reviewed source.
+
+The graph/attribute editors always perform a SQLite
+`UPDATE ... WHERE id=? AND source=?`, so concurrent edits cannot overwrite
+one another, even if the caller did not send an explicit digest.
+The full-source replacement API remains unconditional when invoked by
+an older client **without** a precondition; use the digest to avoid
+lost updates. A conflict never mutates the draft.
+
+Crucially, `Service.Activate` validates one exact draft snapshot,
+prepares the corresponding MCP catalog and commits **only if those
+same source bytes remain in SQLite**. An edit between compilation and
+the activation transaction fails closed. This prevents divergence
+between the activated source and in-memory enforcement/catalog.
+The optional activate digest pins the operator's reviewed snapshot.
+The visual editor refuses to reserialize a graph against a draft
+changed in HCL or another session. This is source snapshot concurrency,
+not automatic merge or provider execution fencing.
