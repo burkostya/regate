@@ -1219,3 +1219,16 @@
   for transparent write replays.
 - This does not implement cross-request quotas, bounded SSE lifetime,
   provider-level idempotency or production load/security acceptance.
+
+#### Strict untrusted upstream MCP JSON framing (#9)
+
+- Outbound MCP transport now validates the **entire** JSON response before
+  the official SDK interprets any result or catalog. Nested and
+  escaped-equivalent duplicate keys, extra frames, invalid UTF-8, excessive
+  depth and oversized responses fail closed, without raw provider payloads
+  in diagnostic errors.
+- Regression tests exercise a live untrusted MCP tool response with
+  conflicting `isError` keys and prove a failure instead of last-wins
+  acceptance, alongside exact response/frame syntax checks.
+- This does not provide strict per-SSE-event validation, full third-party
+  server interoperability, provider attestation, or complete #9/#10 gates.
