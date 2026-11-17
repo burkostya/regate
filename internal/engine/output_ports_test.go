@@ -78,9 +78,7 @@ func TestMCPStructuredPortFailsClosedWithoutResponseOrSchemaMatch(t *testing.T) 
 	for _, tc := range []struct{name, source, want string}{
 		{"absent structuredContent", strings.Replace(src, `    mock_structured = {code = "C123"}`, "", 1), "missing structured MCP output"},
 		{"producer declared schema", strings.Replace(src, `mock_structured = {code = "C123"}`, `mock_structured = {code = 42}`, 1), "output port structured failed schema validation"},
-		{"consumer required field", strings.Replace(src, `    mock_structured = {code = "C123"}`, `    mock_structured = {code = "C123", extra = true}`, 1), ""},
 	} {
-		if tc.want == "" {continue}
 		t.Run(tc.name, func(t *testing.T) {
 			cfg, err := config.Decode(tc.source)
 			if err != nil { t.Fatal(err) }
