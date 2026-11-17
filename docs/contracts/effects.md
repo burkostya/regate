@@ -160,3 +160,14 @@ Only property-verified adapters may claim an authoritative negative outcome.
 Audit actor identity is currently a management assertion authenticated by
 the shared admin bearer, not an individually signed attestation. No
 production exactly-once guarantee is claimed.
+
+### Evidence messages are not raw payload vaults
+
+The SQLite event writer now redacts and bounds `Effect.Reason`
+and operator `EffectResolution.Reason` before persistence.
+The immutable effect identity and the cryptographic evidence/intent
+digests remain unchanged. Investigations must retain protected
+original evidence in the authorized source system, not assume an
+arbitrary upstream error string is safe or complete proof.
+This redactor does not attest a provider's state or authorize
+reconciliation by itself.
