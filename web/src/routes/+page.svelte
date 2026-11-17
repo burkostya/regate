@@ -3,7 +3,7 @@
   import FlowCanvas from '$lib/FlowCanvas.svelte';
   import { api, setToken, type Catalog, type Pipeline, type Draft, type EdgeDef, type Trace } from '$lib/api';
   import { pipelineToHCL, createNode } from '$lib/hcl';
-  import { assertGraphSnapshot, assertSavedHCL, type GraphSourceSnapshot } from '$lib/draftGuard';
+  import { assertGraphSnapshot, assertSavedHCL, assertRunnableEditor, type GraphSourceSnapshot } from '$lib/draftGuard';
   import { editGraphEdge, removeGraphEdge } from '$lib/graphEditor';
 
   type Tab = 'Overview' | 'Upstreams' | 'Surfaces' | 'Rules' | 'Pipelines' | 'HCL' | 'Revisions' | 'Traces' | 'Effects';
@@ -209,14 +209,23 @@
     draft = null; await refresh(true); message = 'Rollback activated.';
   }
   async function runTool(live: boolean) {
+    assertRunnableEditor(dirty, draft, editorText, graphSnapshot, status?.revision ?? '');
     if (!catalog) return;
     const available = Object.entries(catalog.surfaces).flatMap(([surface,value]) => (value.tools ?? []).map((t:any) => ({surface,t})));
     const match = available.find(({t}) => t.pipeline === selected);
     if (!match) throw new Error('No surface tool exposes this pipeline');
-    if (live && !confirm('Perform LIVE execution? External tools can have side effects.')) return;
+    const revision = status?.revision;
+    if (!revision) throw new Error('No active revision is loaded.');
+    if (live && !confirm(`Execute LIVE ${match.surface}.${match.t.name} at ACTIVE revision ${revision.slice(0,12)}? Drafts are NOT executed; external side effects may occur.`)) return;
     const args = JSON.parse(testArguments);
     const endpoint = live ? 'run' : 'test';
-    const output = await api(endpoint,'POST',{draft_id:live?undefined:draft?.id,surface:match.surface,tool:match.t.name,arguments:args});
+    // The server verifies this optimistic precondition before any external
+    // effects. A concurrent draft edit or activation cannot change the
+    // program silently between operator review and dispatch.
+    const precondition = live || !draft
+      ? { expected_revision: revision }
+      : { draft_id: draft.id, expected_source_digest: draft.source_digest };
+    const output = await api(endpoint,'POST',{...precondition,surface:match.surface,tool:match.t.name,arguments:args});
     resultText = JSON.stringify(output,null,2);
   }
   function selectNode(id: string) {

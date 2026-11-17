@@ -30,8 +30,8 @@ var AdminTools = map[string][]Arg{
 	"regate_draft_patch":      {{"draft_id", "Draft identifier", true}, {"source", "Complete HCL source", true}, {"expected_source_digest", "Optional SHA-256 optimistic edit precondition", false}},
 	"regate_validate":         {{"source", "HCL to validate", false}, {"draft_id", "Existing draft identifier", false}},
 	"regate_diff":             {{"draft_id", "Draft identifier", true}},
-	"regate_test":             {{"draft_id", "Draft to test", false}, {"surface", "Surface name", true}, {"tool", "Tool name", true}, {"arguments", "Input object", false}},
-	"regate_simulate":         {{"draft_id", "Draft to simulate", false}, {"surface", "Surface name", true}, {"tool", "Tool name", true}, {"arguments", "Input object", false}},
+	"regate_test":             {{"draft_id", "Draft to test", false}, {"surface", "Surface name", true}, {"tool", "Tool name", true}, {"arguments", "Input object", false}, {"expected_source_digest", "Reviewed draft SHA-256 digest", false}, {"expected_revision", "Reviewed active revision (without draft_id)", false}},
+	"regate_simulate":         {{"draft_id", "Draft to simulate", false}, {"surface", "Surface name", true}, {"tool", "Tool name", true}, {"arguments", "Input object", false}, {"expected_source_digest", "Reviewed draft SHA-256 digest", false}, {"expected_revision", "Reviewed active revision (without draft_id)", false}},
 	"regate_activate":         {{"draft_id", "Validated draft", true}, {"expected_source_digest", "Optional exact reviewed source SHA-256", false}},
 	"regate_rollback":         {{"revision", "Revision to restore", true}},
 	"regate_graph_get":        {{"pipeline", "Pipeline name", true}},
@@ -42,7 +42,7 @@ var AdminTools = map[string][]Arg{
 	"regate_pipeline_trace":   {{"run_id", "Filter by run", false}},
 	"regate_impact_analyze":   {{"draft_id", "Draft identifier", true}},
 	"regate_upstream_refresh": {{"name", "Upstream name", true}},
-	"regate_run":              {{"surface", "Surface", true}, {"tool", "Tool", true}, {"arguments", "Arguments", false}},
+	"regate_run":              {{"surface", "Surface", true}, {"tool", "Tool", true}, {"arguments", "Arguments", false}, {"expected_revision", "Reviewed active revision (optimistic precondition)", false}},
 	"regate_resume":           {{"run_id", "Suspended run", true}, {"value", "Resume result", false}},
     "regate_task_resume_grant": {{"task_id","Suspended delegated task ID",true},{"value","Explicit continuation input",false}},
 	"regate_revisions":        {},
@@ -118,6 +118,20 @@ func checkExpectedDraftDigest(args map[string]any,d storage.Draft) error {
     value,ok:=raw.(string)
     if !ok || len(value)!=64 {return fmt.Errorf("expected_source_digest must be a SHA-256 hex string")}
     if value!=d.SourceDigest {return storage.ErrDraftSourceConflict}
+    return nil
+}
+// A caller may pin a reviewed active revision. Calls without this optional
+// precondition remain supported for existing management MCP clients.
+func checkExpectedExecutionRevision(args map[string]any, current string) error {
+    raw, present := args["expected_revision"]
+    if !present { return nil }
+    expected, ok := raw.(string)
+    if !ok || expected == "" {
+        return fmt.Errorf("expected_revision must be a non-empty revision identifier")
+    }
+    if expected != current {
+        return fmt.Errorf("active revision changed; refresh before execution")
+    }
     return nil
 }
 func (s *Service) Admin(ctx context.Context, name string, args map[string]any) (any, error) {
@@ -267,18 +281,42 @@ func (s *Service) Admin(ctx context.Context, name string, args map[string]any) (
 		c, e := s.Discover(ctx, str(args, "name"), true)
 		return c, e
 	case "regate_test", "regate_simulate", "regate_run":
+        // Dry-run can use an explicitly reviewed draft. LIVE effects must
+        // never run unactivated source, regardless of REST/MCP argument shape.
+        if name == "regate_run" {
+            if _, present := args["draft_id"]; present {
+                return nil, fmt.Errorf("live execution requires an activated revision; draft_id is forbidden")
+            }
+        }
 		selected := cfg
 		id := rev.ID
-		if did := str(args, "draft_id"); did != "" {
+        if raw, present := args["draft_id"]; present {
+            did, ok := raw.(string)
+            if !ok || did == "" {
+                return nil, fmt.Errorf("draft_id must be a non-empty string")
+            }
+            if _, present := args["expected_revision"]; present {
+                return nil, fmt.Errorf("expected_revision cannot be combined with draft_id")
+            }
 			d, e := s.Store.DraftGet(did)
 			if e != nil {
 				return nil, e
 			}
+            if e := checkExpectedDraftDigest(args, d); e != nil {
+                return nil, e
+            }
 			selected, e = s.Validate(d.Source)
 			if e != nil {
 				return nil, e
 			}
 			id = "draft:" + did
+        } else {
+            if _, present := args["expected_source_digest"]; present {
+                return nil, fmt.Errorf("expected_source_digest requires draft_id")
+            }
+            if e := checkExpectedExecutionRevision(args, rev.ID); e != nil {
+                return nil, e
+            }
 		}
 		dry := name != "regate_run"
 		out, e := s.Engine.Run(ctx, id, selected, str(args, "surface"), str(args, "tool"), obj(args, "arguments"), dry)
