@@ -1169,3 +1169,15 @@
   Exact-boundary and response/identity negative tests exercise this.
 - This does not establish remote provider attestation, trusted semantic
   decisions, end-to-end PII declassification or production readiness.
+
+#### Outbound HTTP hook body budget (#9)
+
+- Refuse HTTP hook inputs whose **fully encoded** JSON body exceeds
+  4 MiB, before registering any effect or making a remote request.
+  This prevents unbounded post-transform outbound transfers independent
+  of incoming MCP size limits.
+- Exact 4 MiB requests are accepted; byte-over-limit tests assert that
+  no network call or SQLite effect attempt occurs. Remote response
+  limits and unknown-write reconciliation remain unchanged.
+- This is a per-hook payload bound, not a global throughput quota or
+  cross-tenant concurrency scheduler.
