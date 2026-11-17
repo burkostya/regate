@@ -54,7 +54,7 @@ func (r *Runtime) callReadWithRetry(ctx context.Context, conn *mcp.Conn,
 			timer := time.NewTimer(policy.delay)
 			select {
 			case <-ctx.Done():
-				if !timer.Stop() { <-timer.C }
+				timer.Stop()
 				return nil, ctx.Err()
 			case <-timer.C:
 			}
