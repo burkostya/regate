@@ -262,18 +262,7 @@ func (s *Service) Admin(ctx context.Context, name string, args map[string]any) (
 		}
 		return s.Store.DraftUpdateIfSource(d.ID, d.Source, source)
 	case "regate_pipeline_trace":
-		traces := s.Store.Traces()
-		id := str(args, "run_id")
-		if id == "" {
-			return traces, nil
-		}
-		filtered := []any{}
-		for _, t := range traces {
-			if t.RunID == id {
-				filtered = append(filtered, t)
-			}
-		}
-		return filtered, nil
+        return s.Store.TracesFiltered(storage.TraceQuery{RunID:str(args,"run_id")}),nil
 	case "regate_upstream_refresh":
 		c, e := s.Discover(ctx, str(args, "name"), true)
 		return c, e
