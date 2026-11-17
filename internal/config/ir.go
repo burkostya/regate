@@ -143,7 +143,7 @@ func (c *Config) Compile() error {
 					}
 				}
 			}
-			for _, attr := range []string{"value", "mapping", "arguments", "test"} {
+			for _, attr := range []string{"value", "mapping", "items", "arguments", "test"} {
 				raw, ok := n.Attrs[attr]
 				if !ok {
 					continue

@@ -440,9 +440,15 @@ func (c *Config) Validate() error {
 		}
 		for n, node := range p.Nodes {
 			switch node.Kind {
-			case "input", "output", "transform", "filter", "validate", "condition", "parallel", "join", "mcp.call", "hook.call", "http.call", "policy.check", "suspend", "mask.pii":
+			case "input", "output", "transform", "filter", "validate", "condition", "parallel", "join", "map", "mcp.call", "hook.call", "http.call", "policy.check", "suspend", "mask.pii":
 			default:
 				return fmt.Errorf("pipeline %s node %s: unsupported kind %s", name, n, node.Kind)
+			}
+			if node.Kind == "map" {
+				count := node.Int("max_items", 0)
+				if count < 1 || count > 64 {
+					return fmt.Errorf("pipeline %s node %s: map max_items must be between 1 and 64", name, n)
+				}
 			}
 			if node.Kind == "mcp.call" {
 				if _, ok := c.Upstreams[node.Str("upstream")]; !ok {

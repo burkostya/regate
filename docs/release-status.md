@@ -529,3 +529,15 @@
 - Guard and remote resource semantics remain conservative; this is not
   authorization dominance, multi-output typing, nested pipeline execution or
   formal model-checker proof.
+
+
+#### Bounded CEL map (PR #47)
+
+- Pure `map` nodes compile `items` and `mapping` CEL once, require
+  `max_items` in 1–64, validate every item against an optional input JSON
+  Schema and the aggregate result against the output JSON Schema.
+- Per-item evaluation is synchronous, cancellable and effect-free; the
+  original control DAG and guaranteed predecessor analyses remain in force.
+  No partial output is exposed on item failure or bounds overflow.
+- This is deliberately **not** effectful map/subpipeline execution, bounded
+  retry, isolation across iterations or complete full-v1 DAG semantics.

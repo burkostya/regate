@@ -434,3 +434,39 @@ join; an `any` join cannot read an optional branch's value without an
 explicit optional-data contract (not implemented yet). No data edge counts
 as a branch vote. This proves local value availability, **not** remote
 side-effect atomicity, policy attestation, or a provider's schema correctness.
+
+
+### Bounded pure map nodes (PR #47)
+
+A pipeline `node` with `kind = "map"` evaluates a pure CEL mapping on a
+bounded array. `items` is evaluated **once** against the pipeline's input,
+completed nodes and bound ports. For each item, `mapping` is evaluated
+with CEL `input` referring to **that item**; the completed `nodes` snapshot
+and named `ports` are unchanged. The resulting array is the node's `value`.
+
+```hcl
+node "upper_names" {
+  kind      = "map"
+  items     = "input.names"
+  mapping   = "upper(input)"
+  max_items = 32
+  input_schema  = {type = "string"} # contract for each input item
+  output_schema = {
+    type = "array"
+    items = {type = "string"}
+  }
+}
+```
+
+The operator must set `max_items` between 1 and 64. Inputs must evaluate
+to an array and cannot exceed that bound; zero items produce an empty array.
+Every element is validated with `input_schema` (when present), then
+transformed using bounded, cancellable CEL. The complete output array is
+checked against `output_schema` before it becomes visible downstream.
+Invalid elements, runtime CEL errors and oversize arrays fail the node
+without publishing partial results.
+
+This node makes **no external calls in the per-item loop**. Mapping an
+HTTP/MCP agent subpipeline, retries and effectful loops need separate effect
+identities, fencing, retry contracts and explicit authorization; they are
+not implemented by `kind = "map"`.
