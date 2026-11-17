@@ -597,3 +597,23 @@
 - Security review closes the former top-level-only gap: Restricted-data
   destination trust and async delegated-OAuth requirements recursively inspect
   nested child calls. Invalid/missing runtime targets fail closed.
+
+#### Bounded nested suspension checkpoint (PR #52)
+
+- A named `pipeline.call` explicitly opts into child suspension using both
+  `allow_effects=true` and `allow_suspend=true`; every parent call
+  must opt in. Pure calls, cycles and depth violations still fail at compile time.
+- At suspension, one private checkpoint chain records immutable revision,
+  derived subrun IDs, original child arguments, states/values and settled
+  control activations. Only the root run publishes the chain to SQLite;
+  task/management APIs continue to reference the original run ID.
+- Resume validates the leaf against output and named value JSON Schemas,
+  preserves sibling results from a fully settled parallel wave, and resumes
+  children before completing parents. Completed writes retain their stable
+  effect journal identity; no implicit redispatch.
+- Simultaneous unrelated suspensions fail closed rather than pretending that
+  a single resume payload can satisfy both. Persist errors fail closed.
+- **Still open:** independent parallel suspension joins, automatic crash
+  continuation of working tasks, multi-process atomic task/checkpoint promotion,
+  provider idempotence/attestation, encrypted checkpoint vault, bounded safe
+  retries/compensation, formal model checks and full #7/#10 acceptance.
