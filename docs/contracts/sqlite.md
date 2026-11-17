@@ -536,3 +536,38 @@ continuations or MCP/HTTP actions.
 Perform this audit against the *offline* snapshot, never treating an active
 WAL-backed database file as a consistent backup. Use the ordinary
 `-verify-backup` separately for structural validation and digest inventory.
+
+
+## Bounded OAuth grant-key rotation (PR #41)
+
+Operator management provides `regate_grant_key_usage` and
+`regate_grant_rewrap` on the authenticated administrative MCP endpoint,
+and `GET /api/grant-key-usage` / `POST /api/grant-rewrap` on authenticated
+administrative REST. These operations do not accept or return token/key
+material. Key usage returns aggregate ciphertext counts per key ID and a
+`blocked` count for non-quiescent, expired or indeterminate grants.
+
+To rotate live `REGATE_GRANT_KEYS_JSON` credentials, preserve old and new
+32-byte encryption keys in the environment keyring, set the **new** key ID
+as active, and restart the worker to load both. Use the management tools
+to rewrap up to 32 quiescent suspended grants per call. Each authenticated
+AES-GCM old-key decryption and reseal under the new active key increments
+the credential generation, fencing stale continuations; task owner,
+revision, issuer, audience and scopes remain unchanged. All batch writes
+commit together under the SQLite execution-leader lease. A corrupted
+credential or binding rejects the entire batch.
+
+A `working` task, a grant currently `refreshing`, a credential beyond
+its expiration, or any unsuspended task **cannot be rotated**. Such
+ciphertext is reported as `blocked`; outstanding old-key ciphertext is
+always reflected in `remaining_old_key`. A `needs_reauth` or revoked
+record with erased ciphertext does not need the old key. Never force
+rewrap of an ambiguous refresh, replay a refresh request, or treat an
+admin key rotation as delegated permission.
+
+Before retiring an old key from the **live** ring, require stable
+`remaining_old_key=0` after all eligible grant batches. Check separately
+for archived SQLite snapshots/WAL pages that still depend on old keys;
+do not destroy historical keys until the retention and external KMS
+custody policy permits it. This does not attest the IdP's current grant
+validity, remote revocation or external resource fencing.

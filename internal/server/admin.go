@@ -49,6 +49,8 @@ var AdminTools = map[string][]Arg{
 	"regate_effects":          {},
     "regate_queue_key_usage": {},
     "regate_queue_rewrap": {},
+    "regate_grant_key_usage": {},
+    "regate_grant_rewrap": {},
     "regate_effect_compensate": {
         {"effect_id","Previously resolved-applied effect to compensate",true},
         {"contract","Named HCL compensation contract",true},
@@ -170,6 +172,10 @@ func (s *Service) Admin(ctx context.Context, name string, args map[string]any) (
         return s.Store.QueueKeyUsage(ctx)
     case "regate_queue_rewrap":
         return s.Store.RewrapQueuedBatch(ctx,32)
+    case "regate_grant_key_usage":
+        return s.Store.GrantKeyUsage(ctx)
+    case "regate_grant_rewrap":
+        return s.Store.RewrapGrantsBatch(ctx,32)
     case "regate_effect_compensate":
         return s.Engine.CompensateMCP(ctx,cfg,
             str(args,"effect_id"),str(args,"contract"),obj(args,"intent"),
