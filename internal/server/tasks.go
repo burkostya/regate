@@ -289,7 +289,10 @@ func (s *Service) TaskUpdateWithContext(ctx context.Context,id, owner string, in
 		updated.RunID = out.RunID
 		if out.Status == "suspended" {
 			updated.Status = "input_required"
-			updated.InputRequests = map[string]any{"resume_next": map[string]any{"method": "elicitation/create", "params": map[string]any{"mode": "form", "message": "Additional continuation data", "requestedSchema": map[string]any{"type": "object"}}}}
+			// The update protocol always accepts inputResponses["resume"].
+			// Publishing "resume_next" here previously stranded a task after
+			// a second suspension without a matching update handler.
+			updated.InputRequests = map[string]any{"resume": map[string]any{"method": "elicitation/create", "params": map[string]any{"mode": "form", "message": "Additional continuation data", "requestedSchema": map[string]any{"type": "object", "additionalProperties": true}}}}
 		} else {
 			updated.Status = "completed"
 			updated.Result = taskSafeResult(updated,out,err)
