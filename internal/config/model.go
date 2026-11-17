@@ -449,6 +449,29 @@ func (c *Config) Validate() error {
 				if count < 1 || count > 64 {
 					return fmt.Errorf("pipeline %s node %s: map max_items must be between 1 and 64", name, n)
 				}
+				if _, hasItems := node.Attrs["items"]; !hasItems {
+					return fmt.Errorf("pipeline %s node %s: map items expression required", name, n)
+				}
+				_, hasMapping := node.Attrs["mapping"]
+				childName := node.Str("pipeline")
+				if (childName == "") == !hasMapping {
+					return fmt.Errorf("pipeline %s node %s: map requires exactly one of mapping and pipeline", name, n)
+				}
+				if childName == "" {
+					if _, has := node.Attrs["allow_effects"]; has {
+						return fmt.Errorf("pipeline %s node %s: CEL map cannot declare allow_effects", name, n)
+					}
+				} else if node.Attrs["allow_effects"] == true {
+					// A write-capable batch must have a statically checked
+					// aggregate element type before dispatching any item.
+					raw, ok := node.Attrs["output_schema"].(map[string]any)
+					if !ok || raw["type"] != "array" {
+						return fmt.Errorf("pipeline %s node %s: effectful map requires array output_schema with items", name, n)
+					}
+					if _, ok := raw["items"].(map[string]any); !ok {
+						return fmt.Errorf("pipeline %s node %s: effectful map requires array output_schema with items", name, n)
+					}
+				}
 			}
 			if node.Kind == "mcp.call" {
 				if _, ok := c.Upstreams[node.Str("upstream")]; !ok {
@@ -676,7 +699,7 @@ func (c *Config) Validate() error {
 			switch node.Kind {
 			case "mcp.call", "http.call", "hook.call", "output", "suspend":
 				observable = append(observable, nodeName)
-			case "pipeline.call":
+			case "pipeline.call", "map":
 				if node.Attrs["allow_effects"] == true {
 					observable = append(observable, nodeName)
 				}

@@ -50,6 +50,32 @@ func (c *Config) validatePipelineCalls() error {
 			if pure && node.Kind == "pipeline.call" && node.Attrs["allow_effects"] == true {
 				return fmt.Errorf("pipeline %s node %s: pure pipeline.call cannot delegate effects", name, nodeName)
 			}
+			if node.Kind == "map" && node.Str("pipeline") != "" {
+				if pure && node.Attrs["allow_effects"] == true {
+					return fmt.Errorf("pipeline %s node %s: pure parent cannot delegate effects through map", name, nodeName)
+				}
+				childName := node.Str("pipeline")
+				child, ok := c.Pipelines[childName]
+				if !ok {
+					return fmt.Errorf("pipeline %s node %s: unknown mapped pipeline %s", name, nodeName, childName)
+				}
+				if child.Nodes[child.Entry].Kind != "input" || outputNodes(child) != 1 {
+					return fmt.Errorf("pipeline %s node %s: map child needs an input entry and exactly one output node", name, nodeName)
+				}
+				if node.Attrs["allow_effects"] == true {
+					terminalName := namedOutputNodes(child)[0]
+					if _, ok := child.Nodes[terminalName].Attrs["output_schema"].(map[string]any); !ok {
+						return fmt.Errorf("pipeline %s node %s: effectful map child output %s requires output_schema", name, nodeName, terminalName)
+					}
+				}
+				childPure := pure || node.Attrs["allow_effects"] != true
+				// A mapped child can never suspend: there is currently no
+				// durable per-item continuation/checkpoint protocol.
+				if err := check(childName, depth+1, childPure, false, stack); err != nil {
+					return fmt.Errorf("pipeline %s node %s: %w", name, nodeName, err)
+				}
+				continue
+			}
 			if node.Kind != "pipeline.call" { continue }
 			if node.Attrs["allow_suspend"] == true && node.Attrs["allow_effects"] != true {
 				return fmt.Errorf("pipeline %s node %s: allow_suspend requires allow_effects=true", name, nodeName)
