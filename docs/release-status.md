@@ -872,3 +872,18 @@
 - This does not imply exactly-once provider writes, cross-resource
   transactions, or automatic reconciliation of ambiguous effects.
   #7/#10 acceptance remains open.
+
+
+#### Multi-terminal child presence after durable resume (#7)
+
+- A child pipeline may complete two or more named `output` terminals
+  before a sibling branch suspends. The resumed child now reconstructs
+  both the named values **and** the fact that an output was produced
+  from its durable completed-node snapshot, even if no output node
+  executes in the final continuation wave.
+- A parent `pipeline.call` may aggregate and validate these outputs
+  normally; a root surface continues to fail closed on competing
+  terminals. Regression tests cover both completion and checkpoint
+  consumption after rejected root publication.
+- This does not add external idempotency, durable checkpoint encryption
+  or general release readiness. Issues #7/#10 remain open.
