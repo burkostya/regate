@@ -799,3 +799,19 @@
   suspended call, and competing outputs still fail closed.
 - Regression covers a PII-bearing earlier output redacted only on Resume,
   nullable output presence, fresh runtime recovery and checkpoint cleanup.
+
+#### Recoverable rejected async continuations (#7/#6)
+
+- A `tasks/update` attempt that fails leaf output schema validation or
+  fails in an unfinished resumed graph no longer permanently completes
+  the async task while its original SQLite checkpoint remains available.
+- The task returns to `input_required` with the retained pending node
+  paths; an authorized operator can submit a corrected explicit answer.
+  Neither the stored checkpoint nor external effects are retried
+  automatically. The user-visible message asks for effect verification.
+- A graph that fully completes but fails published tool output validation
+  or a response hook **still consumes its checkpoint** and becomes a
+  completed error task, preventing response interceptor replay.
+- Tests cover rejected typed continuation followed by successful
+  correction, and a final tool output contract failure. This does not
+  provide automatic reconciliation of ambiguous remote writes.
