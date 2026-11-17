@@ -440,7 +440,7 @@ func (c *Config) Validate() error {
 		}
 		for n, node := range p.Nodes {
 			switch node.Kind {
-			case "input", "output", "transform", "filter", "validate", "condition", "parallel", "join", "map", "mcp.call", "hook.call", "http.call", "policy.check", "suspend", "mask.pii":
+			case "input", "output", "transform", "filter", "validate", "condition", "parallel", "join", "map", "pipeline.call", "mcp.call", "hook.call", "http.call", "policy.check", "suspend", "mask.pii":
 			default:
 				return fmt.Errorf("pipeline %s node %s: unsupported kind %s", name, n, node.Kind)
 			}
@@ -655,6 +655,9 @@ func (c *Config) Validate() error {
 		if p.TimeoutMS < 1 || p.Concurrency < 1 {
 			return fmt.Errorf("pipeline %s invalid limits", name)
 		}
+	}
+	if err := c.validatePurePipelineCalls(); err != nil {
+		return err
 	}
 	for name, s := range c.Surfaces {
         if s.OAuth!="" {

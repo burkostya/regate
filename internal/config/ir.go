@@ -225,6 +225,27 @@ func (c *Config) Compile() error {
 		}
 		plans[name] = plan
 	}
+	// Nested pure pipeline calls have explicit input/output schema interfaces.
+	// The whole pipeline map has been compiled at this point; map iteration
+	// order cannot affect contract checking.
+	for parentName, parent := range c.Pipelines {
+		for nodeName, node := range parent.Nodes {
+			if node.Kind != "pipeline.call" { continue }
+			child := c.Pipelines[node.Str("pipeline")]
+			childInput := plans[child.Name].Nodes[child.Entry].InputSchema
+			call := plans[parentName].Nodes[nodeName]
+			if err := CheckKnownCompatibility(call.InputSchema, childInput); err != nil {
+				return fmt.Errorf("pipeline %s call %s input contract: %w", parentName, nodeName, err)
+			}
+			for _, output := range child.Nodes {
+				if output.Kind == "output" {
+					if err := CheckKnownCompatibility(plans[child.Name].Nodes[output.Name].OutputSchema, call.OutputSchema); err != nil {
+						return fmt.Errorf("pipeline %s call %s output contract: %w", parentName, nodeName, err)
+					}
+				}
+			}
+		}
+	}
 	// Compare each tool's published output contract with declared outputs.
 	for surfaceName, surface := range c.Surfaces {
 		for _, tool := range surface.Tools {
