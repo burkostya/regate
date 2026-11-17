@@ -27,17 +27,17 @@ var AdminTools = map[string][]Arg{
 	"regate_config_get":       {},
 	"regate_draft_create":     {},
 	"regate_draft_get":        {{"draft_id", "Draft identifier", true}},
-	"regate_draft_patch":      {{"draft_id", "Draft identifier", true}, {"source", "Complete HCL source", true}},
+	"regate_draft_patch":      {{"draft_id", "Draft identifier", true}, {"source", "Complete HCL source", true}, {"expected_source_digest", "Optional SHA-256 optimistic edit precondition", false}},
 	"regate_validate":         {{"source", "HCL to validate", false}, {"draft_id", "Existing draft identifier", false}},
 	"regate_diff":             {{"draft_id", "Draft identifier", true}},
 	"regate_test":             {{"draft_id", "Draft to test", false}, {"surface", "Surface name", true}, {"tool", "Tool name", true}, {"arguments", "Input object", false}},
 	"regate_simulate":         {{"draft_id", "Draft to simulate", false}, {"surface", "Surface name", true}, {"tool", "Tool name", true}, {"arguments", "Input object", false}},
-	"regate_activate":         {{"draft_id", "Validated draft", true}},
+	"regate_activate":         {{"draft_id", "Validated draft", true}, {"expected_source_digest", "Optional exact reviewed source SHA-256", false}},
 	"regate_rollback":         {{"revision", "Revision to restore", true}},
 	"regate_graph_get":        {{"pipeline", "Pipeline name", true}},
-	"regate_graph_patch":      {{"draft_id", "Draft identifier", true}, {"pipeline", "Pipeline name", true}, {"source", "Replacement HCL pipeline block", true}},
-	"regate_attribute_patch":  {{"draft_id", "Draft identifier", true}, {"path", "Block path e.g. pipeline/customer_summary/node/fetch", true}, {"attribute", "Existing attribute name", true}, {"expression", "HCL2 expression source", true}},
-	"regate_attribute_add":    {{"draft_id", "Draft identifier", true}, {"path", "Block path e.g. pipeline/customer_summary/node/fetch", true}, {"attribute", "New attribute name", true}, {"expression", "HCL2 expression source", true}},
+	"regate_graph_patch":      {{"draft_id", "Draft identifier", true}, {"pipeline", "Pipeline name", true}, {"source", "Replacement HCL pipeline block", true}, {"expected_source_digest", "Optional SHA-256 optimistic edit precondition", false}},
+	"regate_attribute_patch":  {{"draft_id", "Draft identifier", true}, {"path", "Block path e.g. pipeline/customer_summary/node/fetch", true}, {"attribute", "Existing attribute name", true}, {"expression", "HCL2 expression source", true}, {"expected_source_digest", "Optional SHA-256 optimistic edit precondition", false}},
+	"regate_attribute_add":    {{"draft_id", "Draft identifier", true}, {"path", "Block path e.g. pipeline/customer_summary/node/fetch", true}, {"attribute", "New attribute name", true}, {"expression", "HCL2 expression source", true}, {"expected_source_digest", "Optional SHA-256 optimistic edit precondition", false}},
 	"regate_hook_inspect":     {{"name", "Hook name", true}},
 	"regate_pipeline_trace":   {{"run_id", "Filter by run", false}},
 	"regate_impact_analyze":   {{"draft_id", "Draft identifier", true}},
@@ -110,6 +110,16 @@ func obj(a map[string]any, key string) map[string]any {
 	}
 	return x
 }
+// A missing precondition is accepted for compatibility with existing MCP
+// automation. The visual editor always supplies the snapshot it reviewed.
+func checkExpectedDraftDigest(args map[string]any,d storage.Draft) error {
+    raw,present:=args["expected_source_digest"]
+    if !present {return nil}
+    value,ok:=raw.(string)
+    if !ok || len(value)!=64 {return fmt.Errorf("expected_source_digest must be a SHA-256 hex string")}
+    if value!=d.SourceDigest {return storage.ErrDraftSourceConflict}
+    return nil
+}
 func (s *Service) Admin(ctx context.Context, name string, args map[string]any) (any, error) {
 	cfg, rev := s.Current()
 	switch name {
@@ -131,7 +141,14 @@ func (s *Service) Admin(ctx context.Context, name string, args map[string]any) (
         // unknown blocks/expressions so forward-compatible opaque fragments
         // survive editing; activation still requires full strict compilation.
         if _, e := config.ParseForEdit(source); e != nil { return nil, e }
-        return s.Store.DraftUpdate(str(args, "draft_id"), source)
+        id:=str(args,"draft_id")
+        if _,present:=args["expected_source_digest"];present {
+            d,e:=s.Store.DraftGet(id)
+            if e!=nil {return nil,e}
+            if e=checkExpectedDraftDigest(args,d);e!=nil {return nil,e}
+            return s.Store.DraftUpdateIfSource(id,d.Source,source)
+        }
+        return s.Store.DraftUpdate(id, source)
 	case "regate_validate":
 		source := str(args, "source")
 		if source == "" {
@@ -161,7 +178,12 @@ func (s *Service) Admin(ctx context.Context, name string, args map[string]any) (
 		}
 		return impact(previous, next, d.Base, rev.ID), nil
 	case "regate_activate":
-		return s.Activate(str(args, "draft_id"))
+        if _,present:=args["expected_source_digest"];present {
+            d,e:=s.Store.DraftGet(str(args,"draft_id"))
+            if e!=nil {return nil,e}
+            if e=checkExpectedDraftDigest(args,d);e!=nil {return nil,e}
+        }
+		return s.ActivateIfDigest(str(args, "draft_id"),str(args,"expected_source_digest"))
 	case "regate_rollback":
 		return s.Rollback(str(args, "revision"))
 	case "regate_revisions":
@@ -206,16 +228,18 @@ func (s *Service) Admin(ctx context.Context, name string, args map[string]any) (
 		if e != nil {
 			return nil, e
 		}
+        if e=checkExpectedDraftDigest(args,d);e!=nil {return nil,e}
 		source, e := config.ReplaceBlock(d.Source, "pipeline", str(args, "pipeline"), str(args, "source"))
 		if e != nil {
 			return nil, e
 		}
-		return s.Store.DraftUpdate(d.ID, source)
+		return s.Store.DraftUpdateIfSource(d.ID, d.Source, source)
 	case "regate_attribute_patch", "regate_attribute_add":
 		d, e := s.Store.DraftGet(str(args, "draft_id"))
 		if e != nil {
 			return nil, e
 		}
+        if e=checkExpectedDraftDigest(args,d);e!=nil {return nil,e}
 		parts := strings.Split(str(args, "path"), "/")
 		if len(parts)%2 != 0 || len(parts) == 0 {
 			return nil, fmt.Errorf("block path must contain type/label pairs")
@@ -236,7 +260,7 @@ func (s *Service) Admin(ctx context.Context, name string, args map[string]any) (
 		if e != nil {
 			return nil, e
 		}
-		return s.Store.DraftUpdate(d.ID, source)
+		return s.Store.DraftUpdateIfSource(d.ID, d.Source, source)
 	case "regate_pipeline_trace":
 		traces := s.Store.Traces()
 		id := str(args, "run_id")
