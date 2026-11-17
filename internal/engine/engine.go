@@ -127,6 +127,11 @@ type Checkpoint struct {
 	Fired       map[string]bool   `json:"fired"`
 	SuspendNode string            `json:"suspend_node"`
 }
+type dataPortBinding struct {
+	producer string
+	fromPort string
+}
+
 type nodeResult struct {
 	name     string
 	value    any
@@ -312,11 +317,13 @@ func (r *Runtime) execute(ctx context.Context, revision string, cfg *config.Conf
 	}
 	incoming := map[string][]config.Edge{}
 	outgoing := map[string][]config.Edge{}
-	dataInputs := map[string]map[string]string{}
+	dataInputs := map[string]map[string]dataPortBinding{}
 	for _, e := range p.Edges {
 		if e.Kind == "data" {
-			if dataInputs[e.To] == nil { dataInputs[e.To] = map[string]string{} }
-			dataInputs[e.To][e.ToPort] = e.From
+			if dataInputs[e.To] == nil { dataInputs[e.To] = map[string]dataPortBinding{} }
+			fromPort := e.FromPort
+			if fromPort == "" { fromPort = "value" }
+			dataInputs[e.To][e.ToPort] = dataPortBinding{producer:e.From, fromPort:fromPort}
 			continue
 		}
 		incoming[e.To] = append(incoming[e.To], e)
@@ -420,16 +427,30 @@ func (r *Runtime) execute(ctx context.Context, revision string, cfg *config.Conf
 				// Bind only authenticated, completed producer values. Validation
 				// precedes the consumer's external effect or interceptor.
 				ports := map[string]any{}
-				for port, producer := range dataInputs[name] {
-					state, ok := snap[producer].(map[string]any)
+				for port, binding := range dataInputs[name] {
+					state, ok := snap[binding.producer].(map[string]any)
 					if !ok {
 						results[i] = nodeResult{name: name, error: fmt.Errorf("data port %s unavailable", port)}
 						return
 					}
-					value, ok := state["value"]
-					if !ok {
-						results[i] = nodeResult{name: name, error: fmt.Errorf("data port %s has no producer value", port)}
-						return
+					var value any
+					if binding.fromPort == "structured" {
+						raw, ok := state["mcp"].(map[string]any)
+						if !ok {
+							results[i] = nodeResult{name: name, error: fmt.Errorf("data port %s missing structured MCP output", port)}
+							return
+						}
+						value, ok = raw["structuredContent"]
+						if !ok {
+							results[i] = nodeResult{name: name, error: fmt.Errorf("data port %s missing structured MCP output", port)}
+							return
+						}
+					} else {
+						value, ok = state["value"]
+						if !ok {
+							results[i] = nodeResult{name: name, error: fmt.Errorf("data port %s has no producer value", port)}
+							return
+						}
 					}
 					if err := cfg.Plans[p.Name].Nodes[name].InputPorts[port].Validate(value); err != nil {
 						results[i] = nodeResult{name: name, error: fmt.Errorf("data port %s failed schema validation", port)}
@@ -703,6 +724,9 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 		if dry {
 			if mock, ok := n.Attrs["mock"]; ok {
 				ret.value = mock
+				if structuredMock, provided := n.Attrs["mock_structured"]; provided {
+					ret.mcp = map[string]any{"structuredContent": structuredMock}
+				}
 			} else {
 				ret.error = fmt.Errorf("node %s has no mock for dry-run", n.Name)
 			}
@@ -764,6 +788,25 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 	if ret.error == nil && !ret.suspend {
 		if err := plan.OutputSchema.Validate(ret.value); err != nil {
 			ret.error = fmt.Errorf("node %s output: %w", n.Name, err)
+		}
+	}
+	if ret.error == nil && !ret.suspend {
+		for portName, contract := range plan.OutputPorts {
+			var value any
+			if portName == "value" {
+				value = ret.value
+			} else {
+				var provided bool
+				if ret.mcp != nil { value, provided = ret.mcp["structuredContent"] }
+				if !provided {
+					ret.error = fmt.Errorf("node %s missing structured MCP output", n.Name)
+					break
+				}
+			}
+			if err := contract.Validate(value); err != nil {
+				ret.error = fmt.Errorf("node %s output port %s failed schema validation", n.Name, portName)
+				break
+			}
 		}
 	}
 	return ret

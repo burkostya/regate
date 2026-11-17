@@ -554,3 +554,16 @@
 - This pure composition milestone does not implement effectful nested
   pipelines, durable subpipeline checkpoints, per-call resource budgets,
   or full #7/#10 v1 acceptance.
+
+
+#### Explicit validated MCP structuredContent port (PR #49)
+
+- A `mcp.call` may declare `output_ports.structured` JSON Schema and bind
+  that port to a named consumer input via `edge.from_port="structured"`.
+- Producer and consumer schemas are statically compared when possible and
+  both checked at runtime; missing structuredContent or post-interceptor
+  invalidation fails closed before downstream effects. Dry-run supports
+  explicit `mock_structured` for validation regression tests.
+- Ordinary value ports stay backward compatible. Multi-result envelopes,
+  remote schema attestation and full MCP content/metadata transformation
+  contracts remain open #7/#10 work.

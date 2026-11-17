@@ -31,6 +31,7 @@ type NodeIR struct {
 	InputSchema  *SchemaContract
 	OutputSchema *SchemaContract
 	InputPorts   map[string]*SchemaContract // Named JSON Schema bindings supplied only by data edges.
+	OutputPorts  map[string]*SchemaContract // Optional published value and explicit MCP structuredContent contracts.
 }
 type ToolContract struct {
 	Input  *SchemaContract
@@ -109,7 +110,7 @@ func (c *Config) Compile() error {
 			case "input":
 				resultType = PortObject
 			}
-			compiled := &NodeIR{Name: id, Kind: n.Kind, Span: n.Span, Output: resultType, Expressions: map[string]*expr.Value{}, InputPorts: map[string]*SchemaContract{}}
+			compiled := &NodeIR{Name: id, Kind: n.Kind, Span: n.Span, Output: resultType, Expressions: map[string]*expr.Value{}, InputPorts: map[string]*SchemaContract{}, OutputPorts: map[string]*SchemaContract{}}
 			if portSchemas, ok := n.Attrs["input_ports"].(map[string]any); ok {
 				for portName, raw := range portSchemas {
 					declared, ok := raw.(map[string]any)
@@ -117,6 +118,19 @@ func (c *Config) Compile() error {
 					schema, err := compileSchema(declared)
 					if err != nil { return fmt.Errorf("pipeline %s node %s port %s: %w", name, id, portName, err) }
 					compiled.InputPorts[portName] = schema
+				}
+			}
+			if portSchemas, ok := n.Attrs["output_ports"].(map[string]any); ok {
+				for portName, raw := range portSchemas {
+					if !portIdentifier.MatchString(portName) ||
+						(portName != "value" && !(portName == "structured" && n.Kind == "mcp.call")) {
+						return fmt.Errorf("pipeline %s node %s: unsupported output port %s", name, id, portName)
+					}
+					declared, ok := raw.(map[string]any)
+					if !ok { return fmt.Errorf("pipeline %s node %s output port %s needs a JSON Schema object", name, id, portName) }
+					schema, err := compileSchema(declared)
+					if err != nil { return fmt.Errorf("pipeline %s node %s output port %s: %w", name, id, portName, err) }
+					compiled.OutputPorts[portName] = schema
 				}
 			}
 			if raw, ok := n.Attrs["input_schema"].(map[string]any); ok {
@@ -132,6 +146,9 @@ func (c *Config) Compile() error {
 					return fmt.Errorf("pipeline %s node %s output_schema: %w", name, id, err)
 				}
 				compiled.OutputSchema = schema
+			}
+			if err := CheckKnownCompatibility(compiled.OutputSchema, compiled.OutputPorts["value"]); err != nil {
+				return fmt.Errorf("pipeline %s node %s value output port contract: %w", name, id, err)
 			}
 			if compiled.OutputSchema != nil {
 				if types := compiled.OutputSchema.Types(); len(types) == 1 {
@@ -217,10 +234,14 @@ func (c *Config) Compile() error {
 			if !guaranteed[edge.To][edge.From] {
 				return fmt.Errorf("pipeline %s node %s: data port %s source %s is not guaranteed to complete before activation", name, edge.To, edge.ToPort, edge.From)
 			}
-			producer := plan.Nodes[edge.From].OutputSchema
+			fromPort := edge.FromPort
+			if fromPort == "" { fromPort = "value" }
+			source := plan.Nodes[edge.From]
+			producer := source.OutputPorts[fromPort]
+			if producer == nil && fromPort == "value" { producer = source.OutputSchema }
 			consumer := plan.Nodes[edge.To].InputPorts[edge.ToPort]
 			if err := CheckKnownCompatibility(producer, consumer); err != nil {
-				return fmt.Errorf("pipeline %s data port %s.%s -> %s.%s: %w", name, edge.From, "value", edge.To, edge.ToPort, err)
+				return fmt.Errorf("pipeline %s data port %s.%s -> %s.%s: %w", name, edge.From, fromPort, edge.To, edge.ToPort, err)
 			}
 		}
 		plans[name] = plan

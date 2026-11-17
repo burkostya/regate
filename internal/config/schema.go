@@ -37,7 +37,7 @@ var nodeAttributes = map[string]map[string]string{
 	"join":         {"kind": "string", "mode": "string", "quorum": "positive-int", "value": "expression", "mapping": "expression"},
 	"map":          {"kind": "string", "items": "expression", "mapping": "expression", "max_items": "positive-int"},
 	"pipeline.call": {"kind": "string", "pipeline": "string", "arguments": "object-or-expression"},
-	"mcp.call":     {"kind": "string", "upstream": "string", "tool": "string", "effect": "string", "arguments": "object-or-expression", "mock": "any"},
+	"mcp.call":     {"kind": "string", "upstream": "string", "tool": "string", "effect": "string", "arguments": "object-or-expression", "mock": "any", "mock_structured": "any"},
 	"hook.call":    {"kind": "string", "hook": "string", "value": "expression"},
 	"http.call":    {"kind": "string", "url": "string", "auth_env": "string", "timeout_ms": "positive-int", "value": "expression", "trust_level": "string"},
 	"policy.check": {"kind": "string", "policy": "string", "value": "expression", "mandatory": "bool"},
@@ -96,6 +96,7 @@ func validateBlock(b *Block, parent string, top bool) error {
 		merged["input_schema"] = "object"
 		merged["output_schema"] = "object"
 		merged["input_ports"] = "object"
+		merged["output_ports"] = "object"
 		attrSpec = merged
 		if !present {
 			return fmt.Errorf("%s: unsupported kind %q", where, kind)
