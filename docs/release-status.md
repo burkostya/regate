@@ -986,3 +986,19 @@
   reviewed activation, browser-side projection guards and Web/Go CI.
   Full collaborative draft merges, true browser E2E and v1 #8/#10
   acceptance remain open.
+
+#### Visual typed data-port binding inspector (#8)
+
+- Svelte Flow now selects both control and typed data edges in the graph
+  and exposes their contracts in the inspector. Operators can create
+  a new data binding and edit/delete an existing one without manually
+  editing HCL, while leaving other edges unchanged.
+- Data source/target ports are checked against declared `output_ports`
+  and `input_ports`; duplicate target bindings, unsupported named source
+  ports, self-links, data-edge guards and silent kind conversion fail closed.
+  The Go compiler remains authoritative for full DAG semantics.
+- The node palette now offers `map` and `pipeline.call`.
+  Browser-side unit regressions cover valid and invalid typed bindings,
+  preservation of guards/other edges and resulting HCL serialization.
+- Full drag-to-connect typed port handles, browser E2E and complete #8/#10
+  release acceptance remain open.
