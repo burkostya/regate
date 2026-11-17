@@ -466,10 +466,51 @@ checked against `output_schema` before it becomes visible downstream.
 Invalid elements, runtime CEL errors and oversize arrays fail the node
 without publishing partial results.
 
-This node makes **no external calls in the per-item loop**. Mapping an
-HTTP/MCP agent subpipeline, retries and effectful loops need separate effect
-identities, fencing, retry contracts and explicit authorization; they are
-not implemented by `kind = "map"`.
+The **CEL mapping mode** makes no external calls. Its `mapping`
+attribute is mutually exclusive with the pipeline-backed mode below.
+
+### Bounded pipeline-backed map with explicit effects
+
+A `map` can instead invoke a named HCL pipeline exactly once per item.
+The `pipeline` mode requires object-valued items, an object
+`input_schema` and an array `output_schema` with an `items` schema.
+The called pipeline must have an `input` entry and **one** output terminal.
+
+```hcl
+node "create_many" {
+  kind          = "map"
+  items         = "input.customers"
+  pipeline      = "create_one"
+  allow_effects = true
+  max_items     = 8
+  input_schema  = {type = "object"}
+  output_schema = {
+    type = "array"
+    items = {type = "object"}
+  }
+}
+```
+
+Before any effect is dispatched, Regate validates **the whole array**
+against the configured bound, each item's declared schema, and its
+callee's input contract. Iterations then execute **sequentially and in
+array order**, each with a deterministic, distinct derived subrun identity
+for MCP/HTTP/hook journaling. The parent result becomes available only
+if every item completes successfully and the aggregate output schema
+validates. Empty arrays produce an empty result. An individual failure
+returns no partial public result; previously confirmed/unknown external
+effects remain journaled for reconciliation, not automatically undone.
+
+Effectful mapped children require explicit `allow_effects = true`.
+Every transitive callee participates in authorization, capability/OAuth
+delegation, Restricted-data trust checks, bounded call-depth and
+mandatory policy dominance; pure mapped children cannot secretly invoke
+effects. Multiple output terminals, recursive calls and **every
+transitive `suspend` inside a map** are rejected by the compiler.
+There is no per-item durable resume or automatic retry; unknown writes
+and already recorded attempts cannot be blindly replayed. This is a
+bounded sequential batch, not an unbounded fan-out scheduler, remote
+transaction or exactly-once delivery guarantee.
 
 
 ### Composable pure subpipelines (PR #48)

@@ -32,7 +32,7 @@ func walkExecutionPipeline(cfg *config.Config, root string, inspect func(config.
         for _, nodeName := range names {
             node := p.Nodes[nodeName]
             if err := inspect(node); err != nil { return err }
-            if node.Kind == "pipeline.call" {
+            if node.Kind == "pipeline.call" || (node.Kind == "map" && node.Str("pipeline") != "") {
                 if err := walk(node.Str("pipeline")); err != nil { return err }
             }
         }
