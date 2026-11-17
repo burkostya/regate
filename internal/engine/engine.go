@@ -1455,6 +1455,7 @@ func validateMappedFrame(cfg *config.Config, pipelineName, nodeName string,
 func validateSuspensionTree(cfg *config.Config, pipelineName string, cp *Checkpoint,
 	runID, revision, surface, tool string, depth int) error {
 	if depth > config.MaxPurePipelineCallDepth || cp == nil ||
+		cp.FrameKind != "" ||
 		cp.RunID != runID || cp.Revision != revision ||
 		cp.Surface != surface || cp.Tool != tool ||
 		cp.Input == nil || cp.States == nil || cp.Values == nil || cp.Fired == nil {
@@ -1495,6 +1496,18 @@ func validateSuspensionTree(cfg *config.Config, pipelineName string, cp *Checkpo
 				derivedSubrunID(runID, name, childName), revision, surface, tool, depth+1); err != nil {
 				return err
 			}
+		case "map":
+			if cp.States[name] != "pending" {
+				return fmt.Errorf("mapped checkpoint node is not pending")
+			}
+			if err := validateMappedFrame(cfg, pipelineName, name, child,
+				runID, revision, surface, tool); err != nil {
+				return err
+			}
+			childName := node.Str("pipeline")
+			if err := validateSuspensionTree(cfg, childName, child.Child,
+				mappedIterationRunID(runID,name,childName,child.MapIndex),
+				revision,surface,tool,depth+1); err != nil { return err }
 		default:
 			return fmt.Errorf("checkpoint target is not a suspension boundary")
 		}
@@ -1533,6 +1546,19 @@ func completeSuspendedCheckpoint(cfg *config.Config, pipelineName string,
 		return completeSuspendedCheckpoint(cfg, childName, child,
 			derivedSubrunID(runID, node.Name, childName),
 			revision, surface, tool, path[1:], value, depth+1)
+	case "map":
+		if cp.States[name] != "pending" || len(path) < 3 {
+			return fmt.Errorf("mapped suspension path invalid")
+		}
+		if err := validateMappedFrame(cfg,pipelineName,name,child,
+			runID,revision,surface,tool);err!=nil {return err}
+		if path[1] != strconv.Itoa(child.MapIndex) {
+			return fmt.Errorf("unknown mapped suspension iteration")
+		}
+		childName:=node.Str("pipeline")
+		return completeSuspendedCheckpoint(cfg,childName,child.Child,
+			mappedIterationRunID(runID,name,childName,child.MapIndex),
+			revision,surface,tool,path[2:],value,depth+1)
 	case "suspend":
 		if len(path) != 1 || child != nil || cp.States[name] != "pending" {
 			return fmt.Errorf("suspend leaf already answered or path invalid")
