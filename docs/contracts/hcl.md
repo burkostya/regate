@@ -1075,3 +1075,19 @@ Structural patch operations use atomic SQLite source CAS even when
 an older MCP caller omits the digest. Activation also pins the
 compiled source against concurrent edits. A conflict requires
 refresh/review; there is no implicit three-way merge.
+
+### Visual creation of typed data bindings
+
+The graphical inspector may add a separate `kind = "data"` edge
+between an existing producer and consumer while preserving any
+independent control-flow edge between those same nodes. The target
+`to_port` must exist in the consumer's declared `input_ports`;
+named source ports (other than implicit `value`) must be an explicit
+`output_ports` on a compatible `mcp.call` or `pipeline.call` node.
+
+Data edges never accept `when`. Control edges cannot declare data
+ports. Editing an existing edge cannot change its kind; instead add
+a separate binding. UI checks block obvious invalid declarations,
+but the compiled HCL graph remains the final authority for ordering,
+dominance, types, trust and effect permissions. All unrelated graph
+edges and their guards are preserved through serialization.
