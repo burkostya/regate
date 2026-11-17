@@ -753,3 +753,21 @@
 - Regression tests use a root output completed in one execution wave
   followed by an invalid terminal in a later wave, for both run and
   resume. This does not undo or automatically retry external effects.
+
+
+#### Bounded mapped child pipelines and per-item effects (PR #62)
+
+- A `map` node may invoke one typed child pipeline per item instead
+  of a CEL-only `mapping` expression; item order and max 1–64 bounds
+  are retained. Each child input is `{item, index}`.
+- All item and child-input contracts are prevalidated before the first
+  mapped effect. Typed child/aggregate output incompatibilities fail
+  at compilation; effectful mode requires explicit `allow_effects`,
+  child output schema and aggregate items schema.
+- Distinct stable per-item subrun identities scope MCP/HTTP effects in
+  SQLite. Unknown/confirmed write results cannot be silently retried
+  in the same logical run; one failed item halts later dispatch.
+- Transitive mandatory policy, Restricted data-trust and delegated
+  OAuth checks now traverse mapped pipeline edges.
+- No simultaneous mapped suspensions, atomic rollback of prior writes,
+  general effectful retry, automatic compensation or multi-item resume.

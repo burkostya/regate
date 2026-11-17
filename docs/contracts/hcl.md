@@ -958,3 +958,55 @@ to prevent duplicate post-graph response hooks.
 
 This protection concerns public result isolation, not atomic
 rollback of effects already issued during a failed graph wave.
+
+
+### Bounded map over child pipelines (PR #62)
+
+The existing CEL-only `map` node remains unchanged. In the new
+subpipeline mode, replace `mapping` with `pipeline`:
+
+```hcl
+node "batch" {
+  kind       = "map"
+  items      = "input.items"
+  pipeline   = "writer"
+  max_items  = 3
+  allow_effects = true
+  input_schema  = {type = "object"}
+  output_schema = {type = "array", items = {type = "object"}}
+}
+```
+
+Each mapped child receives an object `{item, index}`, where `index`
+is the zero-based input ordinal. The child must start at an `input`
+node and have **one** `output` node. The parent validates the whole
+batch (1–64 items, plus each per-item and child input schema) **before**
+executing any mapped child. Items execute in stable input order.
+Results are collected in an array, and every child output undergoes
+its own schema checks. The aggregate is validated against the map's
+array `output_schema`; provable child item/aggregate incompatibilities
+fail at compilation.
+
+The `allow_effects=true` flag is opt-in and enables external MCP/HTTP
+and hook effects in a mapped child, including transitive effectful
+`pipeline.call` children (only with their own `allow_effects`).
+An effectful mapped child **must** declare its output `output_schema`,
+and the map must declare an array output schema with `items`. Mandatory
+Decision policy dominance applies to the outer map boundary.
+Restricted-data trust and delegated OAuth checks walk the mapped
+child's whole call graph before dispatch.
+
+For each item Regate derives a stable independent child run identity from
+parent run, map node name, child pipeline and item ordinal. All nested
+external effects use this identity in the durable SQLite journal.
+An unknown outcome halts the batch and is **never blindly retried**.
+A known confirmed effect also cannot be executed twice in the same
+logical run. Prior remote writes are **not compensated automatically**
+if a later item fails. A new independent public tool invocation is a
+new logical run and may trigger effects again.
+
+Mapped children are intentionally non-suspendable at every nesting
+level: independent per-item checkpoints and partial batch resume have
+not been implemented yet. Concurrent per-item execution, arbitrary
+multi-terminal child aggregation and cross-run resource idempotence
+are also out of scope for this stage.
