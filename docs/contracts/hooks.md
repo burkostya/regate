@@ -43,3 +43,25 @@ Interceptors are sorted by `order` and then `name`, optionally scoped to surface
 - Avoid logging request or response values that could contain PII. Trace journal stores statuses and messages rather than full values by default, but error text can still contain sensitive data.
 - Fail-closed is necessary but not sufficient: trustworthy classification, audit and authorization enforcement are required before production.
 - The PII masker should return a verifiable declassification result only after a trusted, testable procedure. The current prototype does not remove data labels or implement information-flow proofs.
+
+
+## Resuming a suspended pipeline (PR #59)
+
+The final public response boundary is shared by the initial `Run` and
+durable `Resume` paths. A still-suspended execution does **not** run
+`before_response`. When a resumed root completes, Regate enforces
+root-output exclusivity, validates the public tool's `output_schema`,
+runs the ordered `before_response` interceptors, and validates the
+transformed result again. A changed result clears an earlier MCP envelope;
+failed validation or a failed hook clears all public result fields and
+marks the run failed.
+
+Once the graph completes, the consumed durable checkpoint is deleted even
+when its final response schema or response hook fails. It cannot be
+resumed again to replay an already dispatched external HTTP/MCP effect;
+unknown hook outcomes instead remain in the effect journal for explicit
+reconciliation. Failures are traced with redacted diagnostics and the
+best-effort `on_error` observer. This does **not** mean an external
+effect has been rolled back, and a partially completed *graph* that
+fails before reaching the final response boundary still follows its
+separate effect reconciliation policy.

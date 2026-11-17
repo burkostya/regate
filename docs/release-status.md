@@ -707,3 +707,18 @@
 - Explicit multi-terminal `pipeline.call` child contracts are unaffected;
   this is not proof of general idempotency, effect rollback or full
   #7/#10 release acceptance.
+
+
+#### Resumed response validation and hook parity (PR #59)
+
+- `Resume` now enforces the same published tool output schema and
+  ordered `before_response` interceptor chain as initial `Run`,
+  validating both before and after transformation.
+- Rejected output fields/MCP envelopes are cleared. Completed checkpoints
+  are consumed on final response failure, so repeat resume cannot replay a
+  lost-response HTTP hook. Response errors are redacted, traced and
+  sent to best-effort `on_error` observers.
+- Go tests cover built-in PII masking, pre/post transform schema failures,
+  once-only HTTP response transformation, and a deliberately dropped
+  HTTP hook response. Broader task grant authorization and remote
+  reconciliation still require #5/#6/#9 acceptance.
