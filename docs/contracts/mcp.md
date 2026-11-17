@@ -39,7 +39,8 @@ error, never silently converted into a successful empty list.
 | Modern inbound tool/resource/prompt/public and admin skills | Independent official SDK client tests + raw HTTP conformance |
 | Legacy 2025-06-18 negotiation | Official SDK legacy server fixture + raw HTTP initialize |
 | Modern method/name/metadata mismatch | Raw HTTP negative tests, must fail before side effects |
-| Body-size rejection | Raw HTTP payload > 4 MiB -> 413 |
+| Inbound body-size rejection | Raw HTTP payload > 4 MiB -> 413 |
+| Outbound request body budget | 4 MiB fully encoded HTTP body accepted; one-byte excess blocked before network/tool dispatch |
 | Upstream pagination | Official SDK small pages across tools/resources/templates/prompts |
 | Malicious repeated cursor / excessive items | Unit tests for bounded collector |
 | Unknown result on interrupted write | Official SDK no-blind-retry test |
@@ -55,3 +56,17 @@ This is not a substitute for production OAuth, issuer/audience/scope checks
 and independent external-server conformance (issue #9). Stateless HTTP does
 not imply replayable SSE sessions: disconnected listeners must reconnect and
 refresh their catalog until a durable event store is implemented and tested.
+
+## Outbound MCP request boundary (#9)
+
+Every outgoing HTTP MCP request with a body is buffered under a **4 MiB
+total-body limit** in the credential transport, before DNS resolution, network
+dispatch or an upstream tool side effect. The check covers the serialized
+JSON-RPC envelope and any transformed arguments, not only the raw input map.
+The limit is inclusive; one extra byte rejects the request without sending
+a partial body. The transport does not expose `GetBody` for buffered calls:
+unknown write results must never become eligible for transparent replay.
+The independent 8 MiB upstream response budget remains in force.
+
+This is a per-request limit, not a global throughput quota, a complete SSE
+stream-volume policy, or a comprehensive data-classification guarantee.
