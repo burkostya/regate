@@ -1138,3 +1138,20 @@
 - HTTP regression tests cover maliciously malformed filters alongside
   normal filtered and legacy requests; no claims of external telemetry or
   full production hardening are made by this change.
+
+#### Complete MCP POST JSON framing before SDK dispatch (#9)
+
+- The 4 MiB input limit and structural JSON check now apply to **all**
+  incoming MCP POST requests, not only those using the legacy discovery
+  and task-start compatibility shims. Every JSON document must be complete,
+  with no trailing frame, duplicate object members (including escaped
+  equivalents) or invalid UTF-8.
+- Reject ambiguous input before passing it to the official Go MCP SDK,
+  which would otherwise apply last-wins JSON member decoding, including
+  on the management surface. GET/SSE and standard valid JSON-RPC requests
+  retain the SDK transport behavior.
+- Real HTTP tests cover modern and legacy public effect calls, management
+  draft writes, escaped/nested duplicate members, extra frames, invalid
+  UTF-8 and zero external or persistent effects on rejection.
+- This only hardens framing. It is not a complete MCP conformance, load,
+  authentication or production security audit.

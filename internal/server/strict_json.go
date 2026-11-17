@@ -5,6 +5,7 @@ import (
     "encoding/json"
     "fmt"
     "io"
+    "unicode/utf8"
 )
 
 // Admin operations may activate revisions, write external effects, change
@@ -40,6 +41,9 @@ func strictJSONObject(reader io.Reader) (map[string]any,error) {
 // names at any nesting depth. Decoder.Token honors JSON string escaping,
 // unlike regex or substring searches; the byte and depth caps bound work.
 func checkUniqueJSONKeys(raw []byte) error {
+    if !utf8.Valid(raw) {
+        return fmt.Errorf("invalid UTF-8 in JSON request")
+    }
     decoder:=json.NewDecoder(bytes.NewReader(raw))
     var walk func(int)error
     walk=func(depth int)error {

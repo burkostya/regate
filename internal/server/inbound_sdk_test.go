@@ -3,9 +3,11 @@ package server
 import (
     "bytes"
     "encoding/json"
+    "fmt"
     "io"
     "net/http"
     "net/http/httptest"
+    "strconv"
     "strings"
     "testing"
 )
@@ -138,4 +140,70 @@ func TestIncomingSDKTaskStartRequiresModernHeaders(t *testing.T) {
     world.mu.Lock()
     defer world.mu.Unlock()
     if len(world.calls) != 0 { t.Fatalf("MCP tool ran with invalid headers: %v",world.calls) }
+}
+
+func TestIncomingMCPRejectsAmbiguousFramesBeforeEffects(t *testing.T) {
+    svc,server,world:=fixture(t)
+    draft,err:=svc.Store.DraftCreate()
+    if err!=nil {t.Fatal(err)}
+    badAdminSource:=draft.Source+"\n# should never be committed by ambiguous MCP\n"
+    adminBody:=fmt.Sprintf(`{"jsonrpc":"2.0","id":104,"method":"tools/call","params":{"name":"regate_draft_patch","arguments":{"draft_id":%s,"source":%s,"source":%s}}}`,
+        strconv.Quote(draft.ID),strconv.Quote(draft.Source),strconv.Quote(badAdminSource))
+    cases:=[]struct{name,path,version,tool,token,body string}{
+        {
+            name:"legacy-duplicate-effect-arguments",path:"/mcp/support",version:"2025-06-18",
+            tool:"get_customer_direct",
+            body:`{"jsonrpc":"2.0","id":100,"method":"tools/call","params":{"name":"get_customer_direct","arguments":{"customer_id":"C123","customer_id":"C456"}}}`,
+        },
+        {
+            name:"modern-escaped-effect-arguments",path:"/mcp/support",version:"2026-07-28",
+            tool:"get_customer_direct",
+            body:`{"jsonrpc":"2.0","id":101,"method":"tools/call","params":{"name":"get_customer_direct","arguments":{"customer_id":"C123","customer_i\u0064":"C456"},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`,
+        },
+        {
+            name:"admin-duplicate-source",path:"/mcp/admin",version:"2026-07-28",
+            tool:"regate_draft_patch",token:"test-secret",body:adminBody,
+        },
+        {
+            name:"legacy-second-frame",path:"/mcp/support",version:"2025-06-18",
+            tool:"get_customer_direct",
+            body:`{"jsonrpc":"2.0","id":102,"method":"tools/call","params":{"name":"get_customer_direct","arguments":{"customer_id":"C123"}}}{"jsonrpc":"2.0","id":103,"method":"tools/list"}`,
+        },
+        {
+            name:"legacy-invalid-utf8",path:"/mcp/support",version:"2025-06-18",
+            tool:"get_customer_direct",
+            body:`{"jsonrpc":"2.0","id":105,"method":"tools/call","params":{"name":"get_customer_direct","arguments":{"customer_id":"`+string([]byte{0xff})+`"}}}`,
+        },
+    }
+    for _,tc:=range cases {
+        t.Run(tc.name,func(t *testing.T) {
+            req,err:=http.NewRequest(http.MethodPost,server.URL+tc.path,strings.NewReader(tc.body))
+            if err!=nil {t.Fatal(err)}
+            req.Header.Set("Content-Type","application/json")
+            req.Header.Set("Accept","application/json, text/event-stream")
+            req.Header.Set("Mcp-Protocol-Version",tc.version)
+            if tc.version=="2026-07-28" {
+                req.Header.Set("Mcp-Method","tools/call")
+                req.Header.Set("Mcp-Name",tc.tool)
+            }
+            if tc.token!="" {req.Header.Set("Authorization","Bearer "+tc.token)}
+            resp,err:=http.DefaultClient.Do(req)
+            if err!=nil {t.Fatal(err)}
+            defer resp.Body.Close()
+            if resp.StatusCode!=http.StatusBadRequest {
+                data,_:=io.ReadAll(resp.Body)
+                t.Fatalf("ambiguous MCP frame reached handler: HTTP %d, %s",resp.StatusCode,data)
+            }
+            saved,err:=svc.Store.DraftGet(draft.ID)
+            if err!=nil {t.Fatal(err)}
+            if saved.Source!=draft.Source || saved.SourceDigest!=draft.SourceDigest {
+                t.Fatal("invalid admin MCP frame changed draft state")
+            }
+        })
+    }
+    world.mu.Lock()
+    defer world.mu.Unlock()
+    if len(world.calls)!=0 {
+        t.Fatalf("invalid MCP request reached upstream effect: %v",world.calls)
+    }
 }

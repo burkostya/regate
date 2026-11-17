@@ -131,12 +131,23 @@ func (m *inboundMCP) handle(s *Service, w http.ResponseWriter, r *http.Request, 
     // the new protocol. Keep only this legacy handshake on the old dispatcher.
     // Versioned discovery, standard methods and subscriptions are SDK-owned.
     version := r.Header.Get("Mcp-Protocol-Version")
-    if r.Method == http.MethodPost && (version == "" || version == "2026-07-28") {
-        body, err := io.ReadAll(io.LimitReader(r.Body, (4<<20)+1))
+    // Every MCP POST, including admin tools and legacy SDK sessions, must
+    // have one unambiguous JSON frame before it can reach an external effect.
+    // The task-start compatibility shim reuses these exact guarded bytes.
+    var body []byte
+    if r.Method == http.MethodPost {
+        var err error
+        body, err = io.ReadAll(io.LimitReader(r.Body, (4<<20)+1))
         if err != nil { http.Error(w, "invalid MCP request body", http.StatusBadRequest); return }
         _ = r.Body.Close()
         if len(body) > 4<<20 { http.Error(w, "MCP request exceeds 4 MiB", http.StatusRequestEntityTooLarge); return }
+        if err:=checkUniqueJSONKeys(body);err!=nil {
+            http.Error(w,"invalid or ambiguous MCP JSON frame",http.StatusBadRequest)
+            return
+        }
         r.Body = io.NopCloser(bytes.NewReader(body))
+    }
+    if r.Method == http.MethodPost && (version == "" || version == "2026-07-28") {
         var q request
         if json.Unmarshal(body, &q) == nil {
             if version == "" && q.Method == "server/discover" {
