@@ -846,6 +846,11 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 		}
 		ret.mcp, ret.error = r.mcpCall(callContext, cfg, u, n.Str("tool"), args, runID, n.Name, kind)
 		if ret.error == nil {
+			if err := validateMCPToolOutcome(ret.mcp); err != nil {
+				ret.error = err
+				ret.mcp = nil
+				break
+			}
 			ret.value = ret.mcp["structuredContent"]
 			if ret.value == nil {
 				ret.value = ret.mcp
@@ -995,6 +1000,9 @@ func (r *Runtime) runHook(ctx context.Context, h config.Hook, cfg *config.Config
         if err!=nil{return nil,err}
         raw, e := r.mcpCall(ctx, cfg, u, h.Tool, args, scope.runID, scope.node, "unknown")
 		if e != nil {
+			return nil, e
+		}
+		if e = validateMCPToolOutcome(raw); e != nil {
 			return nil, e
 		}
 		if h.Contract == "decision" {
