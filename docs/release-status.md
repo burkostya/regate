@@ -646,3 +646,17 @@
   invalidate raw-envelope ports. This does **not** implement multi-output
   subpipeline interfaces, media decoding, arbitrary envelope rewrites,
   or full #7/#10 acceptance.
+
+#### MCP tool-level errors fail pipeline execution (PR #55)
+
+- Pipeline `mcp.call` and MCP hook callers reject an upstream
+  `isError=true` response before downstream effects/output or a
+  Decision `allow` can be released, even if HTTP/JSON-RPC succeeded.
+  Malformed error flags also fail closed.
+- Transparent MCP proxy surfaces still propagate standard tool error
+  envelopes unchanged. An effect journal retains write admission/outcome
+  evidence independently of application success.
+- Regression tests cover downstream write suppression, Decision/transform
+  hooks, correct proxy forwarding, no replay of an application-errored
+  write, and typed flag validation. This does not provide rollback,
+  compensation or full #7/#10 semantics.
