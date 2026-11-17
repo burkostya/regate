@@ -36,3 +36,35 @@ func TestOfflineBackupVerifierWritesOnlyManifest(t *testing.T) {
         t.Fatalf("missing backup was not rejected: %v",err)
     }
 }
+
+func TestOfflineRestoreCLIProducesOnlyVerifiedManifest(t *testing.T) {
+	s, err := storage.New(t.TempDir(), "regate {}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	archive := filepath.Join(t.TempDir(), "backup.sqlite")
+	if err := s.Backup(archive); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(t.TempDir(), "fresh")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("REGATE_ADMIN_TOKEN", "")
+	var output bytes.Buffer
+	if err := restoreBackupToWriter(archive, dir, &output); err != nil {
+		t.Fatal(err)
+	}
+	var manifest storage.BackupManifest
+	if err := json.Unmarshal(output.Bytes(), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	verified, err := storage.VerifyBackup(filepath.Join(dir, "regate.sqlite"))
+	if err != nil || verified != manifest {
+		t.Fatalf("CLI restore did not install a verified snapshot: %#v %v", verified, err)
+	}
+	if bytes.Contains(output.Bytes(), []byte("regate {}")) {
+		t.Fatal("restored source leaked into manifest")
+	}
+}

@@ -463,3 +463,41 @@ the sweeper will not fabricate a TTL or silently delete them.
 This is not secure erasure of historical WAL, snapshots or backups.
 Real-world compliance requires an explicit retention, recovery and
 key-destruction policy separate from SQLite row deletion.
+
+
+## Offline, no-overwrite recovery from a verified snapshot (PR #39)
+
+To restore, first fence/stop the original worker and isolate the old and new
+environments from concurrent access to the same external resources. Copy or
+retain the separately protected OAuth grant and encrypted task queue keyrings.
+Prepare an **already existing, empty private** state directory (mode 0700):
+
+```sh
+mkdir -m 700 /secure/regate-recovery
+go run ./cmd/regate -restore-backup /secure/backups/regate.sqlite \
+  -state /secure/regate-recovery
+go run ./cmd/regate -verify-backup /secure/regate-recovery/regate.sqlite
+```
+
+The offline restore path does not read the HCL configuration, require the
+admin bearer, open the running Store, acquire the execution lease, or run
+migrations/recovery. An explicit `-state` argument is mandatory. Symlink,
+nonprivate, missing or nonempty state directories are rejected; an existing
+`regate.sqlite` or other preexisting state is never overwritten.
+
+`RestoreVerifiedBackup` verifies the archive, copies it into a 0700 private
+staging directory under the target, syncs it, verifies it again and requires
+an identical SHA-256 and application manifest. It publishes the 0600
+`regate.sqlite` by an atomic no-overwrite hard link, syncs the parent
+directory and removes staging files. Failed/racing publishers cannot replace
+previous state. An interrupted restore may leave a verified published file
+even if final directory fsync reported failure; inspect and verify before
+retrying rather than overwriting it.
+
+The copied database **retains the original leader lease**, encrypted queue,
+grants and ambiguous effect journal outcomes. Starting a restored worker
+before the copied lease expires fails closed. Lease expiry alone is not proof
+that an old worker or an in-flight upstream write has been fenced: the
+operator must independently establish resource isolation. The procedure
+does not prove KMS key availability, grant validity, remote-effect
+reconciliation or secure erasure of old snapshots. Those remain open for v1.
