@@ -738,3 +738,18 @@
   mandatory-output failure and single-child object optional fields.
 - Does not generalize to optional MCP envelope ports, automatic joins,
   external side-effect rollback or multiple independent checkpoints.
+
+
+#### Fail-closed partial output isolation (PR #61)
+
+- Failed initial or resumed root executions scrub any earlier completed
+  public `output`, MCP response, output flags, node payload and
+  transient checkpoint. Error statuses are explicit and diagnostics
+  are redacted, with best-effort audit and error hooks.
+- Legitimate suspension retains its required durable checkpoint; a
+  *failed graph* after resume leaves the prior checkpoint available
+  for explicit correction, unlike a completed graph with failed
+  final response validation.
+- Regression tests use a root output completed in one execution wave
+  followed by an invalid terminal in a later wave, for both run and
+  resume. This does not undo or automatically retry external effects.
