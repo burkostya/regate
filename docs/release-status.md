@@ -1125,3 +1125,16 @@
   official MCP SDK transport has its own framing and conformance
   gates; this does not claim to replace MCP protocol validation,
   load testing or comprehensive production security acceptance.
+
+#### Strict trace selector parsing (#9)
+
+- The authenticated REST trace reader parses the raw query with checked
+  percent-escape errors rather than `URL.Query()`, which silently drops
+  malformed pairs. An invalid filter cannot degrade into an unfiltered
+  historical read.
+- Explicit empty `run_id` / `status`, malformed or non-UTF-8 values,
+  duplicate/unknown selectors and queries over 1024 bytes are rejected.
+  Omitted selectors retain the previous bounded 2000-event admin view.
+- HTTP regression tests cover maliciously malformed filters alongside
+  normal filtered and legacy requests; no claims of external telemetry or
+  full production hardening are made by this change.

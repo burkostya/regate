@@ -49,6 +49,10 @@ func TestProtectedTraceAPIValidatesBoundedExactSelectors(t *testing.T) {
         "?run_id="+strings.Repeat("x",129),
         "?status="+strings.Repeat("s",49),
         "?unexpected=x",
+        "?run_id=", "?status=",
+        "?run_id=%", "?status=%ZZ", "?run_id=alpha&unused=%",
+        "?run_id=%FF", "?status=%FF",
+        "?run_id="+strings.Repeat("a",maxTraceQueryBytes+1),
     }{
         t.Run(fmt.Sprintf("invalid-%s",query),func(t *testing.T){
             if status,_:=get("/api/traces"+query,"test-secret");status!=400 {
