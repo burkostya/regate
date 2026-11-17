@@ -505,12 +505,34 @@ Effectful mapped children require explicit `allow_effects = true`.
 Every transitive callee participates in authorization, capability/OAuth
 delegation, Restricted-data trust checks, bounded call-depth and
 mandatory policy dominance; pure mapped children cannot secretly invoke
-effects. Multiple output terminals, recursive calls and **every
-transitive `suspend` inside a map** are rejected by the compiler.
-There is no per-item durable resume or automatic retry; unknown writes
-and already recorded attempts cannot be blindly replayed. This is a
-bounded sequential batch, not an unbounded fan-out scheduler, remote
-transaction or exactly-once delivery guarantee.
+effects. Multiple output terminals and recursive calls are rejected.
+
+**Optional durable per-item suspend** requires `allow_suspend = true`
+alongside `allow_effects = true` on the mapped node and every enclosing
+effectful `pipeline.call`/map frame. The child must declare a JSON Schema
+for its single output terminal. On suspension, the root SQLite checkpoint
+includes the **original immutable items**, the current integer index, a
+validated prefix of completed item results, and the child's nested
+checkpoint. For example, the first waiting leaf may be addressed by:
+
+```json
+["create_many", "0", "wait_for_approval"]
+```
+
+On `ResumeAt`, Regate validates the frozen array and output prefix
+against the exact revision's input/output contracts, verifies derived
+subrun identity, and resumes only the selected iteration. Earlier
+iterations and their external effects are never reexecuted. After
+answering one leaf, the map can progress to the next bounded item,
+potentially suspending again with index `"1"`. Concurrent independent
+suspended branches remain under a single root checkpoint and cannot
+race to overwrite answers. A pathless resume remains compatible only
+when a single leaf is pending.
+
+There is no automatic retry or rollback; unknown writes and already
+recorded attempts cannot be blindly replayed. This is a bounded
+sequential batch, not an unbounded fan-out scheduler, remote transaction
+or exactly-once delivery guarantee.
 
 
 ### Composable pure subpipelines (PR #48)
