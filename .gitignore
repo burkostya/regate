@@ -5,3 +5,5 @@ web/build/
 *.log
 *.exe
 .DS_Store
+web/playwright-report/
+web/test-results/
