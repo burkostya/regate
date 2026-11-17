@@ -158,6 +158,31 @@ type Interceptor struct {
 	Order   int    `json:"order"`
 }
 
+// reachableAvoidingNode returns true if an entry-to-target control-flow
+// path does not pass through a required authorization gate. Conditional edge
+// guards are deliberately ignored: guards can change at runtime, and a
+// declared mandatory policy must remain a structural precondition.
+func reachableAvoidingNode(entry, target, avoided string, adjacency map[string][]string) bool {
+	seen := map[string]bool{}
+	var visit func(string) bool
+	visit = func(name string) bool {
+		if name == avoided || seen[name] {
+			return false
+		}
+		if name == target {
+			return true
+		}
+		seen[name] = true
+		for _, next := range adjacency[name] {
+			if visit(next) {
+				return true
+			}
+		}
+		return false
+	}
+	return visit(entry)
+}
+
 func Decode(src string) (*Config, error) {
 	blocks, err := Parse(src)
 	if err != nil {
@@ -427,8 +452,18 @@ func (c *Config) Validate() error {
 				}
 			}
 			if node.Kind == "policy.check" {
-				if _, ok := c.Policies[node.Str("policy")]; !ok {
+				policy, ok := c.Policies[node.Str("policy")]
+				if !ok {
 					return fmt.Errorf("pipeline %s node %s: missing policy", name, n)
+				}
+				if node.Attrs["mandatory"] == true {
+					if _, ok := node.Attrs["value"]; !ok {
+						return fmt.Errorf("pipeline %s mandatory policy %s needs a decision input value", name, n)
+					}
+					hook, ok := c.Hooks[policy.DecisionHook]
+					if policy.DecisionHook == "" || !ok || hook.Contract != "decision" || hook.Transport == "builtin" {
+						return fmt.Errorf("pipeline %s mandatory policy %s requires a non-builtin decision hook", name, n)
+					}
 				}
 			}
 			if node.Kind == "http.call" {
@@ -526,6 +561,30 @@ func (c *Config) Validate() error {
 		for n := range p.Nodes {
 			if !reachable[n] {
 				return fmt.Errorf("pipeline %s: unreachable node %s", name, n)
+			}
+		}
+		// An explicit mandatory policy must dominate every outbound call,
+		// externally visible output, and suspension in the pipeline.
+		// Dominance is computed over *all* control paths independent of
+		// edge guards: a conditional branch or any/quorum join must never
+		// bypass an authorization decision.
+		mandatory := []string{}
+		for nodeName, node := range p.Nodes {
+			if node.Kind == "policy.check" && node.Attrs["mandatory"] == true {
+				mandatory = append(mandatory, nodeName)
+			}
+		}
+		sort.Strings(mandatory)
+		for nodeName, node := range p.Nodes {
+			switch node.Kind {
+			case "mcp.call", "http.call", "hook.call", "output", "suspend":
+			default:
+				continue
+			}
+			for _, gate := range mandatory {
+				if reachableAvoidingNode(p.Entry, nodeName, gate, adj) {
+					return fmt.Errorf("pipeline %s mandatory policy %s does not dominate observable node %s", name, gate, nodeName)
+				}
 			}
 		}
 		if p.TimeoutMS < 1 || p.Concurrency < 1 {

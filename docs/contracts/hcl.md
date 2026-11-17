@@ -321,3 +321,40 @@ and duplicate predecessors even if their edges use different guards.
 These are control-flow guarantees only: arbitrary policy placement,
 upstream side effects and data compatibility still require separate
 validation and security review.
+
+
+### Explicit mandatory policy dominance in pipeline DAGs (PR #44)
+
+A pipeline `node` with `kind = "policy.check"` can now declare
+`mandatory = true`. This is an **opt-in authorization contract**:
+the compiler requires a named policy with a non-builtin decision hook
+(`contract = "decision"`) and a decision-input `value` expression.
+A no-op/unspecified hook or a mandatory policy without input fails
+activation.
+
+For each such gate, the HCL compiler proves **structural dominance**:
+every control-flow path from the pipeline entry to any `mcp.call`,
+`hook.call`, `http.call`, `output`, or `suspend` node must traverse
+the mandatory policy node. This protects external effects **and**
+returnable outputs, independently of any/threshold join semantics.
+Potentially true guards are treated conservatively: one alternative
+route around the gate rejects the configuration even if the operator
+expects the route to be rarely taken.
+
+```hcl
+node "authorize" {
+  kind      = "policy.check"
+  policy    = "customer_read"
+  mandatory = true
+  value     = "input"
+}
+```
+
+Once compiled, the runtime continues to execute the existing fail-closed
+Decision hook. A denial, indeterminate response, or unavailable hook
+cannot activate downstream protected nodes. The dominance rule is
+**per pipeline**, not a claim that direct tools on the same MCP surface
+are covered by a pipeline policy; a direct tool needs its own surface
+authorization and interceptors. Mandatory policy domination is distinct
+from tenant/owner identity, evidence-backed grant validation, and
+verified remote-effect fencing, all of which have separate contracts.
