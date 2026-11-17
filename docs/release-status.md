@@ -1206,3 +1206,16 @@
 - This expands release acceptance coverage but is still a deterministic
   loopback fixture, not a production/provider interoperability matrix,
   exhaustive fault injection, performance validation or formal DLP proof.
+
+#### Bounded outbound SDK MCP request bodies (#9)
+
+- The upstream MCP HTTP credential transport now limits the **entire serialized**
+  outgoing request body to 4 MiB, before dispatching any network call.
+  This includes large JSON-RPC tool arguments produced by pipeline transforms,
+  independent of the incoming 4 MiB public MCP frame limit.
+- A 4 MiB body succeeds; a one-byte overflow fails without reaching the
+  upstream handler. Official Go SDK tests assert an oversized tools/call
+  never invokes a remote effect. Buffered requests do not expose `GetBody`
+  for transparent write replays.
+- This does not implement cross-request quotas, bounded SSE lifetime,
+  provider-level idempotency or production load/security acceptance.
