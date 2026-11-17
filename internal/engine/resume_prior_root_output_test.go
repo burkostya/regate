@@ -82,7 +82,7 @@ func TestResumeRetainsPresenceOfPriorNullOutput(t *testing.T) {
     store:=effectTestStore(t)
     initial,err:=New(store).Run(context.Background(),"rev",cfg,"root","read",map[string]any{},false)
     if err==nil || initial.Status!="suspended" {t.Fatalf("expected suspend: %#v %v",initial,err)}
-    finished,err:=New(store).Resume(context.Background(),cfg,"rev",initial.RunID,"valid")
+    finished,err:=New(store).Resume(context.Background(),cfg,"rev",initial.RunID,nil)
     if err!=nil || finished.Status!="success" || !finished.OutputProduced || finished.Value!=nil {
         t.Fatalf("prior null output lost presence or incorrectly rewritten: %#v %v",finished,err)
     }
