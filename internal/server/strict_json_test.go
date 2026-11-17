@@ -88,7 +88,7 @@ func TestStrictAdminJSONExactBodySizeAndNestedDuplicateKeys(t *testing.T) {
     for _,raw:=range []string{
         `{"a":[{"name":"a"},{"name":"b"}]}`,
         `{"a":{"scope":"one","other":"two"}}`,
-        `{"a":"hello"}   \n`,
+        "{\"a\":\"hello\"}   \n",
     }{
         if _,err:=strictJSONObject(strings.NewReader(raw));err!=nil {
             t.Fatalf("valid nested structure rejected %s: %v",raw,err)
