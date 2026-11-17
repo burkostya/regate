@@ -737,3 +737,66 @@ idempotent-write verification, attested provider semantics or an automatic
 recovery mechanism for interrupted tasks. Unsafe operator classification may
 still cause a real side effect to repeat, so production deployments require
 provider-specific verification and audit before enabling a read retry.
+
+### Explicit typed MCP content output port (PR #54)
+
+An `mcp.call` exposes the upstream's standard `content` array separately
+from the existing `structuredContent` and the node's default `value`.
+Consumers may bind `edge.from_port = "content"` to a declared input port;
+the source must explicitly declare `output_ports.content` with a JSON
+Schema whose top-level `type` is exactly `array`.
+
+```hcl
+node "fetch" {
+  kind      = "mcp.call"
+  upstream  = "crm"
+  tool      = "lookup"
+  effect    = "read"
+  arguments = "input"
+  output_ports = {
+    content = {
+      type = "array"
+      items = {type = "object"}
+    }
+  }
+  mock = {id = "C123"}
+  mock_content = [{type = "text", text = "Customer C123"}]
+}
+node "consume" {
+  kind = "output"
+  input_ports = {
+    blocks = {
+      type = "array"
+      items = {type = "object"}
+    }
+  }
+  value = "ports.blocks[0].text"
+}
+edge {
+  from = "fetch"
+  to   = "consume"
+}
+edge {
+  kind = "data"
+  from = "fetch"
+  from_port = "content"
+  to   = "consume"
+  to_port = "blocks"
+}
+```
+
+The producer's `content` and the consumer's named input JSON Schemas
+are checked for known incompatibility at compilation and checked against
+actual values at runtime. A missing content field, malformed array or
+invalid item fails the node before downstream effects or output release.
+Declaring `content` on a non-MCP producer, or binding it without a
+matching source contract, is rejected. Dry runs use explicit
+`mock_content` (independent of `mock_structured`). If an
+`after_call` interceptor transforms the ordinary node result, the
+original MCP envelope is discarded and named raw ports fail closed
+rather than exposing stale pre-interceptor content.
+
+`content` is the original MCP SDK content-block array, **not** an
+automatic text concatenation, decoding of image/audio blocks, or a
+multi-output contract for `pipeline.call`. Typed MCP content and
+structured ports may coexist but have separate requirements.
