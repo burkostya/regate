@@ -151,6 +151,20 @@ func RestoreVerifiedBackup(archive, stateDir string) (BackupManifest, error) {
 		_ = os.Remove(markerPath)
 		return empty, markerError
 	}
+	// Persist the directory entry for the quarantine marker BEFORE
+	// publishing any SQLite data. A power loss must not be able to retain
+	// the database while silently losing the execution guard.
+	markerParent,err:=os.Open(stateDir)
+	if err!=nil{
+		_=os.Remove(markerPath)
+		return empty,err
+	}
+	markerSyncErr:=markerParent.Sync()
+	if closeErr:=markerParent.Close();markerSyncErr==nil{markerSyncErr=closeErr}
+	if markerSyncErr!=nil{
+		_=os.Remove(markerPath)
+		return empty,markerSyncErr
+	}
 	databasePublished := false
 	defer func() {
 		if !databasePublished { _ = os.Remove(markerPath) }

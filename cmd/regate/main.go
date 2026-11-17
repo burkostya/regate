@@ -30,6 +30,12 @@ func verifyBackupKeysToWriter(path string, w io.Writer) error {
 	return json.NewEncoder(w).Encode(report)
 }
 
+func acknowledgeRestoreToWriter(dir, sha, actor, evidence string, w io.Writer) error {
+	receipt,err:=storage.AcknowledgeRestoredState(dir,sha,actor,evidence)
+	if err!=nil{return err}
+	return json.NewEncoder(w).Encode(receipt)
+}
+
 func restoreBackupToWriter(archive, stateDir string, w io.Writer) error {
 	manifest, err := storage.RestoreVerifiedBackup(archive, stateDir)
 	if err != nil {
@@ -45,13 +51,29 @@ func main() {
     verifyBackup:=flag.String("verify-backup","","verify standalone SQLite backup and print non-secret JSON manifest")
     restoreBackup:=flag.String("restore-backup","","restore a verified snapshot into a pre-existing empty private -state directory")
     verifyBackupKeys:=flag.String("verify-backup-keys","","authenticate encrypted queued inputs and grants in a standalone backup using environment keyrings")
+    ackRestore:=flag.Bool("acknowledge-restore",false,"OFFLINE: discard historical executable work and lift restored-state quarantine (irreversible)")
+    ackSHA:=flag.String("snapshot-sha256","","exact SHA-256 digest from the restored backup manifest")
+    ackActor:=flag.String("operator","","identity of the responsible recovery operator")
+    ackEvidence:=flag.String("fence-evidence","","operator statement of old-worker and upstream isolation; stored as digest only")
 	flag.Parse()
     commands:=0
     for _,path:=range []string{*verifyBackup,*restoreBackup,*verifyBackupKeys}{
         if path!="" {commands++}
     }
+    if *ackRestore {commands++}
     if commands>1 {
-        log.Fatal("only one of -verify-backup, -verify-backup-keys, -restore-backup may be used")
+        log.Fatal("only one offline backup/restore command may be used")
+    }
+    if *ackRestore {
+        stateExplicit:=false
+        flag.Visit(func(f *flag.Flag){if f.Name=="state" {stateExplicit=true}})
+        if !stateExplicit || *ackSHA=="" || *ackActor=="" || *ackEvidence==""{
+            log.Fatal("-acknowledge-restore requires -state, -snapshot-sha256, -operator and -fence-evidence")
+        }
+        if err:=acknowledgeRestoreToWriter(*state,*ackSHA,*ackActor,*ackEvidence,os.Stdout);err!=nil{
+            log.Fatal(err)
+        }
+        return
     }
     if *restoreBackup!="" {
         stateExplicit:=false

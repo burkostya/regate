@@ -571,3 +571,50 @@ for archived SQLite snapshots/WAL pages that still depend on old keys;
 do not destroy historical keys until the retention and external KMS
 custody policy permits it. This does not attest the IdP's current grant
 validity, remote revocation or external resource fencing.
+
+
+## Mandatory restored-state execution quarantine (PR #42)
+
+Every `regate -restore-backup ARCHIVE -state EMPTY_PRIVATE_DIR` now writes a
+durable `.regate-restore-quarantine` sentinel before publishing
+`regate.sqlite`. `Store.New`, lease acquisition and effect boundaries
+refuse a quarantined state. This prevents an old snapshot from replaying
+queued tasks or OAuth grants executed/revoked **after** the backup.
+It supersedes the earlier note that copied-lease expiry alone was a
+sufficient precondition for starting the restored worker.
+
+After explicitly fencing the old process, all its upstream resource access,
+and in-flight external effects, load the original encrypted keyrings.
+Use the offline key audit, then acknowledge the exact snapshot digest:
+
+```sh
+go run ./cmd/regate -verify-backup-keys /secure/regate-recovery/regate.sqlite
+go run ./cmd/regate -acknowledge-restore \
+  -state /secure/regate-recovery \
+  -snapshot-sha256 ORIGINAL_BACKUP_SHA256 \
+  -operator recovery-operator \
+  -fence-evidence "Original Regate process and remote resource writes were fenced, and unknown outcomes will be reconciled."
+```
+
+Acknowledge is a deliberately destructive recovery barrier, NOT a blind
+resume. It requires the matching pristine snapshot, an offline private
+state directory, authenticatable retained ciphertext, and an expired
+copied execution lease. In one SQLite transaction it marks **all**
+`queued`, `working`, and `input_required` historical tasks failed,
+discards queued ciphertext and suspended checkpoints, and revokes every
+historical active/refreshing OAuth grant (incrementing generations and
+erasing live ciphertext). Effect journals and revision history are
+preserved for independent reconciliation. No HTTP or OAuth calls occur.
+The result is reverified and a `0600` acknowledgment receipt containing
+only actor, SHA-256 digests, timestamp and anonymized counts is synced
+before the quarantine marker is removed.
+
+The operator's `-fence-evidence` is an **unverified human assertion**
+stored only as a digest. It does not prove remote resource isolation,
+unknown effect outcomes, historical key destruction or that future user
+requests are safe. Unknown historical writes must be reconciled with
+upstream readback before submitting fresh changes. If acknowledgment
+fails after SQLite mutation, **do not manually remove the quarantine
+marker**: create a new empty state directory and repeat the verified
+restore/acknowledgment from the original immutable backup. Never
+automatically resume historical queued requests from a DR snapshot.
