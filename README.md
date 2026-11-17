@@ -184,3 +184,13 @@ gateway, never activates it. Use an isolated local state directory;
 do not run browser tests against production or shared administrator
 drafts. On CI the browser job provisions temporary SQLite state,
 automatically checks server readiness and retains failure traces.
+
+### Recover an outdated console draft
+
+If the console reports `draft source conflict`, another writer updated
+the same draft after you loaded it. In the HCL tab choose **Reload draft**
+to fetch the current persisted source and SHA-256, review the other
+writer's changes, then save your next edit. If you have unsaved local
+HCL or graph changes, you must explicitly confirm their discard; cancel
+to preserve them. Reload never performs an automatic three-way merge,
+and a draft with a stale base revision cannot be activated as-is.
