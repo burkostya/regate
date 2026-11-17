@@ -905,3 +905,18 @@
   enforced at final publication.
 - This does not add parallel map execution, provider fencing or automatic
   retry of unknown writes. Issues #7/#10 remain open.
+
+
+#### Missing root outputs fail closed (#7)
+
+- A root surface pipeline must complete **exactly one** `output`
+  terminal. Completing with zero outputs (all routes skipped, or no
+  output node) is now a failure, not an implicit successful JSON null.
+  One completed output whose actual value is JSON null remains valid.
+- The same release check applies after durable `Resume`. A fully
+  executed graph that yields no terminal consumes its completed
+  checkpoint even on response failure; it cannot replay post-resume
+  effects through a second answer.
+- Coverage includes initial missing output, explicit null and resumed
+  missing output, alongside existing competing-output rejection.
+  #7/#10 remain open; provider idempotency is not implied.
