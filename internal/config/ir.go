@@ -31,8 +31,9 @@ type NodeIR struct {
 	InputSchema  *SchemaContract
 	OutputSchema *SchemaContract
 	InputPorts   map[string]*SchemaContract // Named JSON Schema bindings supplied only by data edges.
-	OptionalPorts map[string]bool // A skipped control ancestor may bind an explicit nullable port.
+	OptionalPorts map[string]bool // A skipped control ancestor or optional child port may bind an explicit nullable input.
 	OutputPorts  map[string]*SchemaContract // Value, MCP envelope, or named pipeline.call result contracts.
+	OptionalOutputPorts map[string]bool // Child result fields which may be absent; never inferred from null.
 }
 type ToolContract struct {
 	Input  *SchemaContract
@@ -111,7 +112,7 @@ func (c *Config) Compile() error {
 			case "input":
 				resultType = PortObject
 			}
-			compiled := &NodeIR{Name: id, Kind: n.Kind, Span: n.Span, Output: resultType, Expressions: map[string]*expr.Value{}, InputPorts: map[string]*SchemaContract{}, OptionalPorts: map[string]bool{}, OutputPorts: map[string]*SchemaContract{}}
+			compiled := &NodeIR{Name: id, Kind: n.Kind, Span: n.Span, Output: resultType, Expressions: map[string]*expr.Value{}, InputPorts: map[string]*SchemaContract{}, OptionalPorts: map[string]bool{}, OutputPorts: map[string]*SchemaContract{}, OptionalOutputPorts: map[string]bool{}}
 			if portSchemas, ok := n.Attrs["input_ports"].(map[string]any); ok {
 				for portName, raw := range portSchemas {
 					declared, ok := raw.(map[string]any)
@@ -144,7 +145,22 @@ func (c *Config) Compile() error {
 					}
 					declared, ok := raw.(map[string]any)
 					if !ok { return fmt.Errorf("pipeline %s node %s output port %s needs a JSON Schema object", name, id, portName) }
-					schema, err := compileSchema(declared)
+					schemaDefinition := declared
+					if _, hasSchema := declared["schema"]; hasSchema || declared["optional"] != nil {
+						if n.Kind != "pipeline.call" || portName == "value" {
+							return fmt.Errorf("pipeline %s node %s output port %s: only named pipeline.call outputs may be optional", name, id, portName)
+						}
+						optional, ok := declared["optional"].(bool)
+						if !ok || !optional || len(declared) != 2 {
+							return fmt.Errorf("pipeline %s node %s output port %s: optional output requires optional=true and schema only", name, id, portName)
+						}
+						schemaDefinition, ok = declared["schema"].(map[string]any)
+						if !ok {
+							return fmt.Errorf("pipeline %s node %s output port %s: optional schema must be an object", name, id, portName)
+						}
+						compiled.OptionalOutputPorts[portName] = true
+					}
+					schema, err := compileSchema(schemaDefinition)
 					if err != nil { return fmt.Errorf("pipeline %s node %s output port %s: %w", name, id, portName, err) }
 					if n.Kind == "mcp.call" && portName == "content" {
 						types := schema.Types()
@@ -264,6 +280,9 @@ func (c *Config) Compile() error {
 			fromPort := edge.FromPort
 			if fromPort == "" { fromPort = "value" }
 			source := plan.Nodes[edge.From]
+			if source.OptionalOutputPorts[fromPort] && !plan.Nodes[edge.To].OptionalPorts[edge.ToPort] {
+				return fmt.Errorf("pipeline %s data port %s.%s -> %s.%s: optional child output requires optional consumer input port", name, edge.From, fromPort, edge.To, edge.ToPort)
+			}
 			producer := source.OutputPorts[fromPort]
 			if producer == nil && fromPort == "value" { producer = source.OutputSchema }
 			consumer := plan.Nodes[edge.To].InputPorts[edge.ToPort]
@@ -288,8 +307,9 @@ func (c *Config) Compile() error {
 			for _, outputName := range namedOutputNodes(child) {
 				childOutput := plans[child.Name].Nodes[outputName].OutputSchema
 				if outputNodes(child) > 1 {
-					// Each terminal is a required named field in the caller's
-					// aggregate object. No last-writer-wins outcome is allowed.
+					// Each terminal has an explicit schema; only operator-declared
+					// optional terminals may be absent from the child result.
+					// No last-writer-wins outcome is allowed.
 					if childOutput == nil {
 						return fmt.Errorf("pipeline %s call %s: child terminal %s requires output_schema", parentName, nodeName, outputName)
 					}
@@ -313,7 +333,10 @@ func (c *Config) Compile() error {
 						}
 						properties, _ := childOutput.Raw["properties"].(map[string]any)
 						rawProperty, present := properties[portName].(map[string]any)
-						if !present || !isRequired(childOutput.Raw, portName) {
+						if !present {
+							return fmt.Errorf("pipeline %s call %s: child output_schema must declare named output %s", parentName, nodeName, portName)
+						}
+						if !call.OptionalOutputPorts[portName] && !isRequired(childOutput.Raw, portName) {
 							return fmt.Errorf("pipeline %s call %s: child output_schema must require named output %s", parentName, nodeName, portName)
 						}
 						producer, err := compileSchema(rawProperty)
@@ -329,7 +352,9 @@ func (c *Config) Compile() error {
 				required := []any{}
 				for _, outputName := range namedOutputNodes(child) {
 					fields[outputName] = plans[child.Name].Nodes[outputName].OutputSchema.Raw
-					required = append(required, outputName)
+					if !call.OptionalOutputPorts[outputName] {
+						required = append(required, outputName)
+					}
 				}
 				aggregate := &SchemaContract{Raw: map[string]any{
 					"type": "object", "required": required,
