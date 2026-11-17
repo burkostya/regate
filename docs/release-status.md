@@ -1002,3 +1002,20 @@
   preservation of guards/other edges and resulting HCL serialization.
 - Full drag-to-connect typed port handles, browser E2E and complete #8/#10
   release acceptance remain open.
+
+#### Chromium end-to-end console acceptance slice (#8/#9)
+
+- The Web CI workflow now starts the real demo MCP provider, the
+  Regate Go server with an isolated SQLite state directory, and the
+  SvelteKit dev console, then runs Playwright in Chromium.
+- The test authenticates through the protected UI, declares a typed
+  consumer input port, adds a valid data edge alongside its existing
+  control dependency, saves the source-preserving graph and compiles
+  the resulting HCL through the actual management API.
+- A second authenticated REST client mutates the same draft; the
+  browser's stale SHA-256 save is rejected and cannot overwrite the
+  other client's source or change the active revision.
+- Browser traces/screenshots and backend logs are retained on CI
+  failures. This covers one realistic console workflow, not a full
+  cross-browser suite, accessibility audit, OAuth/provider behavior
+  or complete #8/#9/#10 release acceptance.

@@ -165,3 +165,22 @@ See [security notes](docs/security.md) and [release status](docs/release-status.
 ## License
 
 No license has been selected yet. The source is provided for review and development; select a license before public redistribution.
+
+### Browser end-to-end acceptance test
+
+The Web workflow also provides an opt-in Chromium E2E suite against a
+real Go gateway, the local demo MCP upstream and SvelteKit. Run all
+three processes using the local demonstration commands above, then:
+
+```sh
+cd web
+npm install
+npx playwright install chromium
+REGATE_E2E_ADMIN_TOKEN="$REGATE_ADMIN_TOKEN" npm run test:e2e
+```
+
+The E2E test creates and edits a disposable draft in the running
+gateway, never activates it. Use an isolated local state directory;
+do not run browser tests against production or shared administrator
+drafts. On CI the browser job provisions temporary SQLite state,
+automatically checks server readiness and retains failure traces.
