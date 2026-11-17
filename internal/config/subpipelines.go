@@ -67,10 +67,7 @@ func (c *Config) validatePipelineCalls() error {
 			if len(outputs) == 0 {
 				return fmt.Errorf("pipeline %s node %s: called pipeline %s needs at least one output", name, nodeName, childName)
 			}
-			if node.Kind == "map" && len(outputs) != 1 {
-				return fmt.Errorf("pipeline %s node %s: mapped child requires exactly one output terminal", name, nodeName)
-			}
-			if len(outputs) > 1 {
+			if len(outputs) > 1 && node.Kind == "pipeline.call" {
 				ports, _ := node.Attrs["output_ports"].(map[string]any)
 				for _, outputName := range outputs {
 					if outputName == "value" {

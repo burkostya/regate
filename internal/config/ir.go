@@ -30,6 +30,7 @@ type NodeIR struct {
 	Dependencies []string
 	InputSchema  *SchemaContract
 	OutputSchema *SchemaContract
+	MapItemSchema *SchemaContract // Compiled element contract for pipeline-backed map results and restored prefixes.
 	InputPorts   map[string]*SchemaContract // Named JSON Schema bindings supplied only by data edges.
 	OptionalPorts map[string]bool // A skipped control ancestor or optional child port may bind an explicit nullable input.
 	OutputPorts  map[string]*SchemaContract // Value, MCP envelope, or named pipeline.call result contracts.
@@ -322,13 +323,58 @@ func (c *Config) Compile() error {
 				if err := CheckKnownCompatibility(mapped.InputSchema, childInput); err != nil {
 					return fmt.Errorf("pipeline %s node %s: map child input contract: %w", parentName, nodeName, err)
 				}
-				outputName := namedOutputNodes(child)[0] // Validated at call graph boundary.
-				childOutput := plans[child.Name].Nodes[outputName].OutputSchema
-				if node.Attrs["allow_suspend"] == true && childOutput == nil {
-					return fmt.Errorf("pipeline %s node %s: suspendable map requires child output_schema for durable prefix validation", parentName, nodeName)
-				}
-				if err := CheckKnownCompatibility(childOutput, itemContract); err != nil {
-					return fmt.Errorf("pipeline %s node %s: map child output contract: %w", parentName, nodeName, err)
+				mapped.MapItemSchema = itemContract
+				outputs := namedOutputNodes(child) // Validated at the call graph boundary.
+				if len(outputs) == 1 {
+					childOutput := plans[child.Name].Nodes[outputs[0]].OutputSchema
+					if node.Attrs["allow_suspend"] == true && childOutput == nil {
+						return fmt.Errorf("pipeline %s node %s: suspendable map requires child output_schema for durable prefix validation", parentName, nodeName)
+					}
+					if err := CheckKnownCompatibility(childOutput, itemContract); err != nil {
+						return fmt.Errorf("pipeline %s node %s: map child output contract: %w", parentName, nodeName, err)
+					}
+				} else {
+					// Multiple child terminals become *fields of each mapped item*,
+					// never independent output ports of the map node. The element
+					// contract must name exactly those fields and close the object.
+					if len(itemContract.Types()) != 1 || itemContract.Types()[0] != "object" ||
+						itemRaw["additionalProperties"] != false {
+						return fmt.Errorf("pipeline %s node %s: multi-output map requires closed object items schema", parentName, nodeName)
+					}
+					properties, ok := itemRaw["properties"].(map[string]any)
+					if !ok || len(properties) != len(outputs) {
+						return fmt.Errorf("pipeline %s node %s: multi-output map must declare exactly the child terminal fields", parentName, nodeName)
+					}
+					requiredRaw, ok := itemRaw["required"].([]any)
+					if !ok || len(requiredRaw) == 0 {
+						return fmt.Errorf("pipeline %s node %s: multi-output map requires at least one required terminal", parentName, nodeName)
+					}
+					for _, rawName := range requiredRaw {
+						requiredName, ok := rawName.(string)
+						if !ok || properties[requiredName] == nil {
+							return fmt.Errorf("pipeline %s node %s: unknown required mapped child terminal", parentName, nodeName)
+						}
+					}
+					for _, outputName := range outputs {
+						if outputName == "value" {
+							return fmt.Errorf("pipeline %s node %s: multi-output child cannot name a terminal value", parentName, nodeName)
+						}
+						rawField, ok := properties[outputName].(map[string]any)
+						if !ok {
+							return fmt.Errorf("pipeline %s node %s: missing mapped child terminal field %s", parentName, nodeName, outputName)
+						}
+						childOutput := plans[child.Name].Nodes[outputName].OutputSchema
+						if childOutput == nil {
+							return fmt.Errorf("pipeline %s node %s: mapped child terminal %s requires output_schema", parentName, nodeName, outputName)
+						}
+						fieldContract, err := compileSchema(rawField)
+						if err != nil {
+							return fmt.Errorf("pipeline %s node %s: mapped child terminal %s: %w", parentName, nodeName, outputName, err)
+						}
+						if err := CheckKnownCompatibility(childOutput, fieldContract); err != nil {
+							return fmt.Errorf("pipeline %s node %s: mapped child terminal %s: %w", parentName, nodeName, outputName, err)
+						}
+					}
 				}
 				continue
 			}

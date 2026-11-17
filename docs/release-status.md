@@ -887,3 +887,21 @@
   consumption after rejected root publication.
 - This does not add external idempotency, durable checkpoint encryption
   or general release readiness. Issues #7/#10 remain open.
+
+#### Multiple typed child terminals in bounded map (#7)
+
+- A pipeline-backed `map` may now aggregate multiple named child
+  `output` terminals into one validated object **per item**, retaining
+  deterministic array order and per-iteration effect identities.
+- The `output_schema.items` must be a closed object with exactly one
+  declared property per child terminal, at least one required property,
+  and explicit schemas for each terminal. Optional terminals may be
+  absent only when omitted from `required`; they are never substituted
+  with JSON null. Unnamed or extra terminal fields fail compilation.
+- Runtime validates each individual mapped item before proceeding to
+  the next (potentially effectful) iteration. Durable checkpoint prefixes
+  are validated against the same compiled item schema on every Resume,
+  including after a SQLite restart. The parent array schema is still
+  enforced at final publication.
+- This does not add parallel map execution, provider fencing or automatic
+  retry of unknown writes. Issues #7/#10 remain open.
