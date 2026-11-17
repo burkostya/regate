@@ -52,7 +52,7 @@ func (c *Config) validatePipelineCalls() error {
 				return fmt.Errorf("pipeline %s node %s: pure parent cannot delegate effects", name, nodeName)
 			}
 			if node.Kind != "pipeline.call" && (node.Kind != "map" || node.Str("pipeline") == "") { continue }
-			if node.Kind == "pipeline.call" && node.Attrs["allow_suspend"] == true && node.Attrs["allow_effects"] != true {
+			if (node.Kind == "pipeline.call" || node.Kind == "map") && node.Attrs["allow_suspend"] == true && node.Attrs["allow_effects"] != true {
 				return fmt.Errorf("pipeline %s node %s: allow_suspend requires allow_effects=true", name, nodeName)
 			}
 			childName := node.Str("pipeline")
@@ -92,11 +92,9 @@ func (c *Config) validatePipelineCalls() error {
 				}
 			}
 			childPure := pure || node.Attrs["allow_effects"] != true
-			// A mapped child has no per-item durable checkpoint representation.
-			// Reject every transitive suspend even when effects are explicitly
-			// permitted: otherwise partial external writes could be reissued.
-			childAllowSuspend := node.Kind == "pipeline.call" && allowSuspend &&
-				node.Attrs["allow_suspend"] == true
+			// Every call frame, including a bounded map iteration, must
+			// explicitly opt into durable suspension. A pure parent never can.
+			childAllowSuspend := allowSuspend && node.Attrs["allow_suspend"] == true
 			if err := check(childName, depth+1, childPure, childAllowSuspend, stack); err != nil {
 				return fmt.Errorf("pipeline %s node %s: %w", name, nodeName, err)
 			}
