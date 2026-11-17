@@ -26,9 +26,14 @@ contracts and array result contracts. Explicitly set `allow_effects = true`
 for a child that performs external writes. Regate prevalidates all input
 items before dispatch and journals each iteration under a distinct
 subrun ID; it does not automatically roll back a partially applied
-batch or retry unknown external effects. Nested `suspend` is not
-supported in mapped children. For suspendable work, use an explicitly
-authorized `pipeline.call` outside a mapped loop.
+batch or retry unknown external effects. For a mapped child that may
+`suspend`, explicitly set `allow_suspend = true` as well and declare
+the child's single terminal `output_schema`. The continuation path includes
+the map node, its zero-based index as a string, and the nested suspend leaf
+(e.g. `["create_many","0","review"]`). Regate saves the original items,
+completed result prefix and active child checkpoint in SQLite; it never
+restarts earlier iterations after an accepted answer. Every enclosing
+call/map frame must opt into durable suspension.
 
 Pipeline node expressions are compiled CEL programs with runtime cost limits and typed checking; static configuration uses HCL2/cty. `input`/`nodes` are dynamically typed at runtime, so verify external JSON Schemas and trust boundaries separately. See `docs/contracts/hcl.md`.
 
