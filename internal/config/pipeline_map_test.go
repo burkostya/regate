@@ -99,7 +99,7 @@ func TestMappedPipelineInvalidDeclarationsFailClosed(t *testing.T) {
   edge {
     from = "start"
     to = "done"
-  }`,1),"mapped child requires exactly one output"},
+  }`,1),"multi-output map requires closed object items schema"},
     }
     for _,tc:=range cases {
         t.Run(tc.name,func(t *testing.T){
