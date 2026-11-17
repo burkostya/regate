@@ -649,6 +649,10 @@ func (c *Config) Validate() error {
 			switch node.Kind {
 			case "mcp.call", "http.call", "hook.call", "output", "suspend":
 				observable = append(observable, nodeName)
+			case "pipeline.call":
+				if node.Attrs["allow_effects"] == true {
+					observable = append(observable, nodeName)
+				}
 			}
 		}
 		sort.Strings(observable)
@@ -663,7 +667,7 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("pipeline %s invalid limits", name)
 		}
 	}
-	if err := c.validatePurePipelineCalls(); err != nil {
+	if err := c.validatePipelineCalls(); err != nil {
 		return err
 	}
 	for name, s := range c.Surfaces {

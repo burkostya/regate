@@ -3,12 +3,44 @@ package engine
 import (
     "errors"
     "fmt"
+    "sort"
     "strings"
 
     "github.com/burkostya/regate/internal/config"
 )
 
 var ErrUntrustedDestination = errors.New("restricted data cannot reach an untrusted destination")
+
+// walkExecutionPipeline checks the transitive executable call graph, not just
+// the published top-level pipeline. Using a visited set prevents redundant
+// checks for shared callees; cycles and missing targets fail closed even if
+// an invalid Config somehow reaches the runtime without compilation.
+func walkExecutionPipeline(cfg *config.Config, root string, inspect func(config.Node) error) error {
+    done := map[string]bool{}
+    active := map[string]bool{}
+    var walk func(string) error
+    walk = func(name string) error {
+        if active[name] { return fmt.Errorf("cyclic pipeline call at %s", name) }
+        if done[name] { return nil }
+        p, exists := cfg.Pipelines[name]
+        if !exists { return fmt.Errorf("missing called pipeline %s", name) }
+        active[name] = true
+        defer delete(active, name)
+        names := make([]string,0,len(p.Nodes))
+        for nodeName := range p.Nodes {names=append(names,nodeName)}
+        sort.Strings(names)
+        for _, nodeName := range names {
+            node := p.Nodes[nodeName]
+            if err := inspect(node); err != nil { return err }
+            if node.Kind == "pipeline.call" {
+                if err := walk(node.Str("pipeline")); err != nil { return err }
+            }
+        }
+        done[name] = true
+        return nil
+    }
+    return walk(root)
+}
 
 // For an authenticated surface, every potentially sensitive input is
 // conservatively Restricted until independently verified declassification
@@ -44,8 +76,7 @@ func enforceDataTrust(cfg *config.Config,surfaceName string,tool config.Tool) er
         u:=cfg.Upstreams[upstream]
         return require("upstream "+u.Name,u.TrustLevel)
     }
-    pipeline:=cfg.Pipelines[tool.Pipeline]
-    for _,n:=range pipeline.Nodes {
+    return walkExecutionPipeline(cfg,tool.Pipeline,func(n config.Node)error {
         switch n.Kind {
         case "policy.check":
             policy:=cfg.Policies[n.Str("policy")]
@@ -60,8 +91,8 @@ func enforceDataTrust(cfg *config.Config,surfaceName string,tool config.Tool) er
         case "http.call":
             if err:=require("HTTP node "+n.Name,n.Str("trust_level"));err!=nil{return err}
         }
-    }
-    return nil
+        return nil
+    })
 }
 
 // ToolNeedsDelegation means an async tool would need a reusable delegated
@@ -83,15 +114,19 @@ func ToolNeedsDelegation(cfg *config.Config,surfaceName string,tool config.Tool)
         u,_,_:=strings.Cut(tool.Source,".")
         return cfg.Upstreams[u].OAuthExchange!=""
     }
-    for _,n:=range cfg.Pipelines[tool.Pipeline].Nodes {
+    requiresDelegation:=false
+    err:=walkExecutionPipeline(cfg,tool.Pipeline,func(n config.Node)error {
         switch n.Kind {
         case "mcp.call":
-            if cfg.Upstreams[n.Str("upstream")].OAuthExchange!="" {return true}
+            if cfg.Upstreams[n.Str("upstream")].OAuthExchange!="" {requiresDelegation=true}
         case "hook.call":
-            if isHook(cfg.Hooks[n.Str("hook")]) {return true}
+            if isHook(cfg.Hooks[n.Str("hook")]) {requiresDelegation=true}
         case "policy.check":
-            if isHook(cfg.Hooks[cfg.Policies[n.Str("policy")].DecisionHook]) {return true}
+            if isHook(cfg.Hooks[cfg.Policies[n.Str("policy")].DecisionHook]) {requiresDelegation=true}
         }
-    }
-    return false
+        return nil
+    })
+    // Invalid or mutable executable graph is not safe to queue without
+    // delegated execution credentials and an immutable published revision.
+    return requiresDelegation || err!=nil
 }

@@ -561,8 +561,10 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 			}
 		}
 	case "pipeline.call":
-		// Only compiler-verified, acyclic pure DAGs may be called. No nested
-		// effects or checkpoints are admissible without hierarchical fencing.
+		// Acyclic bounded child DAGs may be pure, or explicitly effectful.
+		// Effectful children use a derived stable subrun identity and the
+		// existing durable effect admission barrier; nested suspension remains
+		// forbidden at compile time until nested checkpoints are durable.
 		value, err := get("arguments")
 		if err != nil { ret.error = err; break }
 		args, ok := value.(map[string]any)
@@ -580,6 +582,14 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 		sum := sha256.Sum256([]byte(runID + "\x00" + n.Name + "\x00" + childName))
 		nestedRunID := fmt.Sprintf("%s/sub-%x", runID, sum[:8])
 		nestedContext, cancel := context.WithTimeout(ctx, time.Duration(child.TimeoutMS)*time.Millisecond)
+		// Keep MCP, hook and HTTP effect identities on the same derived
+		// child scope. This scopes every nested external write to its
+		// immutable parent run and call frame.
+		nestedContext = withEffectScope(nestedContext, nestedRunID)
+		if !dry && r.Store != nil {
+			r.Store.WriteTrace(storage.Trace{RunID:runID, Revision:revision, Surface:surface, Tool:toolName,
+				Node:n.Name, Status:"subrun", Message:"nested run "+nestedRunID})
+		}
 		nested, nestedErr := r.execute(nestedContext, revision, cfg, child, nestedRunID, surface, toolName, args, dry, nil)
 		cancel()
 		if nestedErr != nil {

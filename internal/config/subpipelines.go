@@ -7,11 +7,11 @@ import (
 
 const MaxPurePipelineCallDepth = 8
 
-// validatePurePipelineCalls bounds recursion and prevents any invoked
-// subpipeline from acquiring hidden effects or suspension points. A child may
-// call another pure child, but arbitrary effectful nesting requires a durable,
-// hierarchical effect identity and checkpoint contract first.
-func (c *Config) validatePurePipelineCalls() error {
+// validatePipelineCalls bounds recursion and requires explicit operator
+// opt-in for effectful children. Every called graph is prohibited from
+// suspending until durable nested checkpoint replay can be proven safe.
+// A pure call may not transitively delegate effects through another call.
+func (c *Config) validatePipelineCalls() error {
 	pipelineNames := make([]string, 0, len(c.Pipelines))
 	for name := range c.Pipelines { pipelineNames = append(pipelineNames, name) }
 	sort.Strings(pipelineNames)
@@ -31,18 +31,24 @@ func (c *Config) validatePurePipelineCalls() error {
 		nodeNames := make([]string, 0, len(pipeline.Nodes))
 		for n := range pipeline.Nodes { nodeNames = append(nodeNames, n) }
 		sort.Strings(nodeNames)
-		if pure {
+		if depth > 1 {
 			if pipeline.Nodes[pipeline.Entry].Kind != "input" {
-				return fmt.Errorf("pipeline %s: called pure pipeline entry must be an input node", name)
+				return fmt.Errorf("pipeline %s: called pipeline entry must be an input node", name)
 			}
 			if outputNodes(pipeline) != 1 {
-				return fmt.Errorf("pipeline %s: called pure pipeline needs exactly one output node", name)
+				return fmt.Errorf("pipeline %s: called pipeline needs exactly one output node", name)
 			}
 		}
 		for _, nodeName := range nodeNames {
 			node := pipeline.Nodes[nodeName]
+			if depth > 1 && node.Kind == "suspend" {
+				return fmt.Errorf("pipeline %s node %s: suspend requires durable nested checkpoint support", name, nodeName)
+			}
 			if pure && !pureCompositionNode(node.Kind) {
 				return fmt.Errorf("pipeline %s node %s: %s cannot execute inside a pure pipeline.call", name, nodeName, node.Kind)
+			}
+			if pure && node.Kind == "pipeline.call" && node.Attrs["allow_effects"] == true {
+				return fmt.Errorf("pipeline %s node %s: pure pipeline.call cannot delegate effects", name, nodeName)
 			}
 			if node.Kind != "pipeline.call" { continue }
 			childName := node.Str("pipeline")
@@ -56,7 +62,8 @@ func (c *Config) validatePurePipelineCalls() error {
 			if outputNodes(child) != 1 {
 				return fmt.Errorf("pipeline %s node %s: called pipeline %s needs exactly one output", name, nodeName, childName)
 			}
-			if err := check(childName, depth+1, true, stack); err != nil {
+			childPure := pure || node.Attrs["allow_effects"] != true
+			if err := check(childName, depth+1, childPure, stack); err != nil {
 				return fmt.Errorf("pipeline %s node %s: %w", name, nodeName, err)
 			}
 		}

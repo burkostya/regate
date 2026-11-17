@@ -608,3 +608,47 @@ gate, or relax the node's output or effect contracts.
 with static port-name checking identical to `ports`. Direct unsafe
 `nodes.maybe.value` expressions remain rejected for skipped branches; use
 an explicit optional binding when data may be absent.
+
+
+### Explicit effectful subpipeline admission (PR #51)
+
+`pipeline.call` defaults to **pure only** as in #48. To invoke an effectful
+child, the call node must declare `allow_effects = true` in HCL. The
+compiler checks the transitive call graph: pure callers cannot hide effects
+inside further nested calls, and all recursion and depth limits still apply.
+
+```hcl
+node "write_via_child" {
+  kind          = "pipeline.call"
+  pipeline      = "write_customer"
+  allow_effects = true
+  arguments     = "input"
+}
+```
+
+Every nested call has a stable, deterministic child run ID derived from its
+parent run, call-node name and callee. The child inherits execution revision,
+authorization/grant/queue context and its own timeout. Child MCP writes and
+external HTTP/MCP hooks use the **same child effect scope**; the journal
+enforces atomic write admission and blocks replay after an unknown or already
+resolved effect. An audit trace links the outer call to the derived subrun.
+The parent receives only the completed child output.
+
+Mandatory Decision gates in the parent now treat an effectful
+`pipeline.call` as an observable side-effect boundary; a bypass path cannot
+invoke a child before the gate. Each child independently enforces its
+declared mandatory gates. A nested `suspend` is forbidden even with
+`allow_effects=true`; a failed child propagates an error and does not
+publish partial output, while its already journaled effects remain available
+for reconciliation (not silently rolled back).
+
+This opt-in does **not** make operator-declared `effect="read"` a verified
+idempotence proof, permit automatic retries, grant new OAuth capabilities,
+or provide nested checkpoint resume. Effect classification, trust policy,
+provider response semantics and recovery are still operator/provider
+contracts which require their own evidence.
+
+Authenticated surface trust checks and queued-task OAuth delegation detection
+walk **all transitive called pipelines**, including shared subpipelines. Missing
+targets or recursive runtime mutations fail closed. A child writing Restricted
+data requires the same explicit trusted destination as a top-level write.
