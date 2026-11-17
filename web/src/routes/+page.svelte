@@ -22,6 +22,7 @@
   let dirty = $state(false);
   let draft = $state<Draft | null>(null);
   let editorText = $state('');
+  let hclTouched = $state(false);
   let graphSnapshot = $state<GraphSourceSnapshot | null>(null);
   let testArguments = $state('{"customer_id":"C123"}');
   let resultText = $state('');
@@ -95,20 +96,22 @@
     const created = await api<Draft>('drafts', 'POST', {});
     draft = created;
     editorText = created.source;
+    hclTouched = false;
     return created;
   }
   async function createDraft() {
     if (draft && !confirm('Discard the current draft from this editor and create a new one?')) return;
-    if (!draft && editorText.trim() && editorText !== graphSnapshot?.source &&
+    if (!draft && (hclTouched || editorText) && editorText !== graphSnapshot?.source &&
       !confirm('Discard unsaved HCL editor changes and create a new draft?')) return;
     const created = await api<Draft>('drafts', 'POST', {});
     draft = created;
     editorText = created.source;
+    hclTouched = false;
     message = `Draft ${created.id.slice(0,8)} created`;
   }
   async function loadActiveHCL() {
     const unsaved = dirty || (draft ? editorText !== draft.source :
-      Boolean(editorText) && editorText !== graphSnapshot?.source);
+      (hclTouched || Boolean(editorText)) && editorText !== graphSnapshot?.source);
     if ((draft || unsaved) &&
         !confirm('Replace the HCL editor with active source? Unsaved local edits will be discarded; the persisted draft will remain unchanged.')) return;
     const active = await api<GraphSourceSnapshot>('config');
@@ -118,6 +121,7 @@
       dirty = false;
     }
     editorText = active.source;
+    hclTouched = false;
     insight = '';
     message = draft
       ? 'Active HCL loaded as a preview; the saved draft is unchanged. Use Reload draft to return to the latest draft source.'
@@ -135,6 +139,7 @@
     if (draft?.id !== previous.id) throw new Error('Draft selection changed while reloading.');
     draft = latest;
     editorText = latest.source;
+    hclTouched = false;
     insight = '';
     // Drop the old graph projection as well as its dirty flag. Never retain
     // graph edits that the operator explicitly chose to discard.
@@ -159,12 +164,13 @@
     const d = await ensureDraft();
     draft = await api('draft-update','POST',{draft_id:d.id,source,expected_source_digest:d.source_digest});
     editorText = source;
+    hclTouched = false;
     message = 'HCL syntax checked and saved in draft. Run Validate before activation; active configuration is unchanged.';
   }
   async function saveGraph() {
     if (!activePipeline || !graphSnapshot) return;
     // Do not create a new draft while unsaved standalone HCL text exists.
-    if (!draft && editorText.trim() && editorText !== graphSnapshot.source) {
+    if (!draft && (hclTouched || editorText) && editorText !== graphSnapshot.source) {
       throw new Error('Unsaved HCL edits exist. Save or discard them before graphical editing.');
     }
     const d = await ensureDraft();
@@ -187,7 +193,7 @@
     if (dirty) throw new Error('Unsaved graph edits exist. Save the graph to a draft before validating HCL.');
     // Validate the visible editor, including unsaved HCL without a draft.
     // Never report the active source as valid when the preview is invalid.
-    const source = draft || editorText ? editorText : (await api<{source:string}>('config')).source;
+    const source = draft || hclTouched || editorText ? editorText : (await api<{source:string}>('config')).source;
     const data = await api('validate','POST',{source});
     insight = JSON.stringify(data,null,2);
     tab = 'HCL';
@@ -195,34 +201,34 @@
   }
   async function diff() {
     // Creating an implicit draft replaces editorText. Guard local edits first.
-    assertNoPendingEdits(dirty, draft, editorText, graphSnapshot);
+    assertNoPendingEdits(dirty, draft, editorText, graphSnapshot, hclTouched);
     const d = await ensureDraft();
     insight = JSON.stringify(await api('diff','POST',{draft_id:d.id}),null,2);
     tab='HCL';
   }
   async function activate() {
     if (!draft) throw new Error('Create and validate a draft first');
-    assertNoPendingEdits(dirty, draft, editorText, graphSnapshot);
+    assertNoPendingEdits(dirty, draft, editorText, graphSnapshot, hclTouched);
     assertSavedHCL(draft, editorText);
     const result = await api('validate','POST',{draft_id:draft.id});
     if (!result.valid) throw new Error(result.error);
     if (!confirm('Activate this configuration revision? Existing calls continue on the previous revision.')) return;
     await api('activate','POST',{draft_id:draft.id,expected_source_digest:draft.source_digest});
-    draft = null; editorText = ''; insight='';
+    draft = null; editorText = ''; hclTouched = false; insight='';
     await refresh(true); message = 'New revision activated.';
   }
   async function rollback(id: string) {
-    assertNoPendingEdits(dirty, draft, editorText, graphSnapshot);
+    assertNoPendingEdits(dirty, draft, editorText, graphSnapshot, hclTouched);
     const draftNotice = draft
       ? ' Your saved draft will remain stored, but will be deselected in this browser.'
       : '';
     if (!confirm(`Restore revision ${id.slice(0,12)} as a new activation?${draftNotice}`)) return;
     await api('rollback','POST',{revision:id});
-    draft = null; editorText = ''; insight = '';
+    draft = null; editorText = ''; hclTouched = false; insight = '';
     await refresh(true); message = 'Rollback activated.';
   }
   async function runTool(live: boolean) {
-    assertRunnableEditor(dirty, draft, editorText, graphSnapshot, status?.revision ?? '');
+    assertRunnableEditor(dirty, draft, editorText, graphSnapshot, status?.revision ?? '', hclTouched);
     if (!catalog) return;
     const available = Object.entries(catalog.surfaces).flatMap(([surface,value]) => (value.tools ?? []).map((t:any) => ({surface,t})));
     const match = available.find(({t}) => t.pipeline === selected);
@@ -429,7 +435,7 @@
           {/if}
         {:else if tab==='HCL'}
           <div class="page-title"><div><p class="eyebrow">DECLARATIVE SOURCE</p><h1>HCL editor</h1></div><div class="actions"><button class="secondary" onclick={() => task(loadActiveHCL)}>Load active</button><button class="secondary" onclick={() => task(diff)}>Diff</button><button class="secondary" onclick={() => task(validate)}>Validate</button>{#if draft}<button class="secondary" onclick={() => task(reloadDraft)}>Reload draft</button>{/if}<button class="primary" onclick={() => task(saveHCL)}>Save draft</button><button class="primary" onclick={() => task(activate)}>Activate</button></div></div>
-          <div class="pane"><label for="hcl-source">Regate configuration {draft ? '· Draft '+draft.id.slice(0,8) : '· Active preview'}</label><textarea id="hcl-source" class="hcl-editor" spellcheck="false" bind:value={editorText} placeholder="Create a draft or load the active HCL source..."></textarea></div>
+          <div class="pane"><label for="hcl-source">Regate configuration {draft ? '· Draft '+draft.id.slice(0,8) : '· Active preview'}</label><textarea id="hcl-source" class="hcl-editor" spellcheck="false" bind:value={editorText} oninput={() => { hclTouched = true; }} placeholder="Create a draft or load the active HCL source..."></textarea></div>
           {#if insight}<div class="pane"><h3>Validation / Impact</h3><pre class="output">{insight}</pre></div>{/if}
         {:else if tab==='Revisions'}
           <div class="page-title"><div><p class="eyebrow">HISTORY</p><h1>Immutable revisions</h1></div></div>

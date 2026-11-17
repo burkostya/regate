@@ -68,3 +68,12 @@ test('activation and rollback cannot discard dirty graph or unsaved HCL', () => 
   assert.doesNotThrow(() => assertNoPendingEdits(false, draft, draft.source, graph));
   assert.doesNotThrow(() => assertNoPendingEdits(false, null, graph.source, graph));
 });
+
+test('explicitly cleared active HCL is pending, not a blank untouched editor', () => {
+  assert.throws(() => assertNoPendingEdits(false, null, '', graph, true),
+    /Unsaved HCL edits/);
+  assert.throws(() => assertRunnableEditor(false, null, '', graph, graph.revision, true),
+    /Unsaved HCL edits/);
+  // The landing page starts with an untouched empty editor.
+  assert.doesNotThrow(() => assertNoPendingEdits(false, null, '', graph, false));
+});

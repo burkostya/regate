@@ -357,3 +357,40 @@ test('diff never creates a draft over unsaved HCL, and cleared HCL is not replac
   await result;
   await expect(page.locator('#hcl-source')).toHaveValue('');
 });
+
+test('clearing a loaded active HCL preview cannot be discarded by diff or execution', async ({ page }) => {
+  const mutatingDraftRequests: string[] = [];
+  const executionRequests: string[] = [];
+  page.on('request', r => {
+    if (r.method() === 'POST' && new URL(r.url()).pathname === '/api/drafts') {
+      mutatingDraftRequests.push(r.url());
+    }
+    if (r.method() === 'POST' && /\/api\/(test|run)$/.test(new URL(r.url()).pathname)) {
+      executionRequests.push(r.url());
+    }
+  });
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveAttribute('data-regate-hydrated', 'true');
+  await page.getByLabel('Admin bearer token').fill(token);
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Execution graph' })).toBeVisible();
+  await page.locator('.sidebar nav').getByRole('button', { name: 'HCL', exact: true }).click();
+  await page.getByRole('button', { name: 'Load active', exact: true }).click();
+  await expect(page.locator('#hcl-source')).not.toHaveValue('');
+  await page.locator('#hcl-source').fill('');
+  await page.getByRole('button', { name: 'Diff', exact: true }).click();
+  await expect(page.locator('.toast.error')).toContainText('Unsaved HCL edits');
+  expect(mutatingDraftRequests).toHaveLength(0);
+  await expect(page.locator('#hcl-source')).toHaveValue('');
+
+  await page.locator('.sidebar nav').getByRole('button', { name: 'Pipelines', exact: true }).click();
+  await page.getByRole('button', { name: 'Dry-run' }).click();
+  await expect(page.locator('.toast.error')).toContainText('Unsaved HCL edits');
+  expect(executionRequests).toEqual([]);
+
+  await page.locator('.sidebar nav').getByRole('button', { name: 'HCL', exact: true }).click();
+  page.once('dialog', dialog => dialog.dismiss());
+  await page.getByRole('button', { name: 'New draft' }).click();
+  await expect(page.locator('#hcl-source')).toHaveValue('');
+  expect(mutatingDraftRequests).toHaveLength(0);
+});

@@ -33,14 +33,15 @@ export function assertNoPendingEdits(
   dirtyGraph: boolean,
   draft: Pick<Draft, 'source'> | null,
   editorText: string,
-  snapshot: GraphSourceSnapshot | null
+  snapshot: GraphSourceSnapshot | null,
+  editorTouched = false
 ): void {
   if (dirtyGraph) {
     throw new Error('Unsaved graph edits exist. Save the graph before continuing.');
   }
   if (draft) {
     assertSavedHCL(draft, editorText);
-  } else if (editorText && editorText !== snapshot?.source) {
+  } else if ((editorTouched || editorText) && editorText !== snapshot?.source) {
     throw new Error('Unsaved HCL edits exist. Save a draft before continuing.');
   }
 }
@@ -51,9 +52,10 @@ export function assertRunnableEditor(
   draft: Pick<Draft, 'source'> | null,
   editorText: string,
   snapshot: GraphSourceSnapshot | null,
-  activeRevision: string
+  activeRevision: string,
+  editorTouched = false
 ): void {
-  assertNoPendingEdits(dirtyGraph, draft, editorText, snapshot);
+  assertNoPendingEdits(dirtyGraph, draft, editorText, snapshot, editorTouched);
   if (!snapshot || !activeRevision || snapshot.revision !== activeRevision) {
     throw new Error('The active revision changed. Refresh the graph before executing a tool.');
   }
