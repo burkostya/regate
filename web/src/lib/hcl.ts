@@ -21,6 +21,9 @@ export function pipelineToHCL(p: Pipeline): string {
   for (const edge of p.edges) {
     rows.push('', '  edge {', `    from = ${literal(edge.from)}`, `    to = ${literal(edge.to)}`);
     if (edge.when) rows.push(`    when = ${literal(edge.when)}`);
+    if (edge.kind) rows.push(`    kind = ${literal(edge.kind)}`);
+    if (edge.from_port) rows.push(`    from_port = ${literal(edge.from_port)}`);
+    if (edge.to_port) rows.push(`    to_port = ${literal(edge.to_port)}`);
     rows.push('  }');
   }
   rows.push('}');
