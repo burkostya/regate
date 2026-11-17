@@ -2,7 +2,7 @@
 
 GitHub CI runs the pinned TLA+ TLC 1.8.0 model checker (SHA-256
 `7e53aa636dac8a3cb0533f343115c0548e03fc0ce5edc7739becf58d3d0fb84f`)
-against two **finite** safety models:
+against two **finite** safety models (with two- and three-branch configurations):
 
 - `EffectLifecycle.tla` with `EffectLifecycle.cfg`: effect admission,
   uncertain outcomes, and the no-blind-write-retry invariant.
@@ -17,6 +17,7 @@ Run locally with a Java 11+ runtime and the pinned release's `tla2tools.jar`:
 cd docs/formal
 java -XX:+UseParallelGC -jar /path/to/tla2tools.jar -workers 1 -deadlock -config EffectLifecycle.cfg EffectLifecycle.tla
 java -XX:+UseParallelGC -jar /path/to/tla2tools.jar -workers 1 -deadlock -config ParallelSuspensions.cfg ParallelSuspensions.tla
+java -XX:+UseParallelGC -jar /path/to/tla2tools.jar -workers 1 -deadlock -config ParallelSuspensions3.cfg ParallelSuspensions.tla
 ```
 
 The `-deadlock` switch suppresses terminal-state warnings for intentionally
