@@ -799,35 +799,48 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 			ret.value = nested.Value
 		}
 	case "map":
-		// Pure, bounded mapping: each CEL evaluation runs with the item as
-		// its local input. No hook, MCP request or external effect is invoked
-		// per element; each evaluation retains its own CEL cost budget.
-		raw, e := get("items")
-		if e != nil {
-			ret.error = e
-			break
-		}
-		items, ok := raw.([]any)
-		if !ok {
-			ret.error = fmt.Errorf("map items must be an array")
-			break
-		}
-		maxItems := n.Int("max_items", 0)
-		if maxItems < 1 || maxItems > 64 || len(items) > maxItems {
-			ret.error = fmt.Errorf("map item count exceeds configured bound")
-			break
-		}
-		result := make([]any, 0, len(items))
+		// Both modes are bounded and ordered. Pipeline-backed maps can
+		// checkpoint one suspended child iteration with a frozen array and
+		// immutable prefix of already completed item results.
 		childName := n.Str("pipeline")
 		child, hasChild := cfg.Pipelines[childName]
+		var items []any
+		start := 0
+		result := []any{}
+		if childCheckpoint != nil {
+			if childName == "" || childCheckpoint.FrameKind != "map" ||
+				childCheckpoint.RunID != mappedFrameRunID(runID, n.Name, childName) ||
+				childCheckpoint.Revision != revision || childCheckpoint.Surface != surface ||
+				childCheckpoint.Tool != toolName || childCheckpoint.Child == nil {
+				ret.error = fmt.Errorf("invalid durable mapped iteration identity")
+				break
+			}
+			items = childCheckpoint.MapItems
+			start = childCheckpoint.MapIndex
+			result = append(result, childCheckpoint.MapResults...)
+		} else {
+			raw, err := get("items")
+			if err != nil { ret.error = err; break }
+			var ok bool
+			items, ok = raw.([]any)
+			if !ok { ret.error = fmt.Errorf("map items must be an array"); break }
+		}
+		maxItems := n.Int("max_items", 0)
+		if maxItems < 1 || maxItems > 64 || len(items) > maxItems ||
+			start < 0 || start > len(items) || (childCheckpoint != nil &&
+			(start >= len(items) || len(result) != start)) {
+			ret.error = fmt.Errorf("map item count or restored prefix exceeds configured bound")
+			break
+		}
 		if childName != "" {
-			if !hasChild || cfg.Plans[childName] == nil {
+			if !hasChild || cfg.Plans[childName] == nil ||
+				cfg.Plans[childName].Nodes[child.Entry] == nil {
 				ret.error = fmt.Errorf("map child pipeline missing")
 				break
 			}
-			// Preflight *every* item's own and callee schema before the first
-			// externally observable write. A malformed later item must not
-			// leave a partially applied batch which was avoidable at admission.
+			// Preflight the *whole* array even on Resume. No malformed later
+			// item can trigger avoidable partial writes, and the restored input
+			// cannot override a child's original contract.
 			childInput := cfg.Plans[childName].Nodes[child.Entry].InputSchema
 			for i, item := range items {
 				arguments, ok := item.(map[string]any)
@@ -846,41 +859,43 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 			}
 			if ret.error != nil { break }
 		}
-		for i, item := range items {
-			if e := ctx.Err(); e != nil {
-				ret.error = e
-				break
-			}
-			if e := plan.InputSchema.Validate(item); e != nil {
+		for i := start; i < len(items); i++ {
+			if err := ctx.Err(); err != nil {ret.error = err;break}
+			item := items[i]
+			if err := plan.InputSchema.Validate(item); err != nil {
 				ret.error = fmt.Errorf("map item %d failed schema validation", i)
 				break
 			}
 			if childName != "" {
-				if !hasChild {
-					ret.error = fmt.Errorf("map child pipeline missing")
-					break
-				}
 				arguments, ok := item.(map[string]any)
 				if !ok || arguments == nil {
 					ret.error = fmt.Errorf("map item %d: pipeline argument must be an object", i)
 					break
 				}
-				// Each iteration has a distinct logical effect identity, derived
-				// from the immutable parent run, map node, child and item index.
-				// Process in input order: no hidden fan-out or ambiguous partial
-				// retry after a failed effectful iteration.
-				subrunID := derivedSubrunID(runID, n.Name, fmt.Sprintf("map:%s:%d", childName, i))
+				subrunID := mappedIterationRunID(runID, n.Name, childName, i)
 				childCtx, cancel := context.WithTimeout(ctx, time.Duration(child.TimeoutMS)*time.Millisecond)
 				childCtx = withEffectScope(childCtx, subrunID)
 				if !dry && r.Store != nil {
 					r.Store.WriteTrace(storage.Trace{RunID:runID, Revision:revision, Surface:surface, Tool:toolName,
 						Node:fmt.Sprintf("%s[%d]",n.Name,i), Status:"subrun", Message:"nested run "+subrunID})
 				}
+				var activeChild *Checkpoint
+				if childCheckpoint != nil && i == start {
+					activeChild = childCheckpoint.Child
+				}
 				nested, nestedErr := r.execute(childCtx, revision, cfg, child, subrunID,
-					surface, toolName, arguments, dry, nil)
+					surface, toolName, arguments, dry, activeChild)
 				cancel()
 				if nested.Status == "suspended" {
-					ret.error = fmt.Errorf("map item %d: child suspension has no durable per-item checkpoint", i)
+					if n.Attrs["allow_suspend"] != true || n.Attrs["allow_effects"] != true ||
+						nested.Checkpoint == nil || nestedErr == nil {
+						ret.error = fmt.Errorf("map item %d: child suspension is not authorized", i)
+					} else {
+						ret.suspend = true
+						ret.checkpoint = &Checkpoint{RunID:mappedFrameRunID(runID,n.Name,childName),
+							Revision:revision,Surface:surface,Tool:toolName,FrameKind:"map",
+							MapIndex:i,MapItems:items,MapResults:result,Child:nested.Checkpoint}
+					}
 					break
 				}
 				if nestedErr != nil {
@@ -894,7 +909,6 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 				result = append(result, nested.Value)
 				continue
 			}
-			// Existing pure CEL map remains unchanged.
 			local := map[string]any{
 				"input": item, "nodes": vars["nodes"], "ports": vars["ports"], "port_present": vars["port_present"],
 			}
@@ -902,16 +916,14 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 				ret.error = fmt.Errorf("map mapping expression unavailable")
 				break
 			}
-			mapped, e := plan.Expressions["mapping"].Eval(ctx, local)
-			if e != nil {
-				ret.error = fmt.Errorf("map item %d: %w", i, e)
+			mapped, err := plan.Expressions["mapping"].Eval(ctx, local)
+			if err != nil {
+				ret.error = fmt.Errorf("map item %d: %w", i, err)
 				break
 			}
 			result = append(result, mapped)
 		}
-		if ret.error == nil {
-			ret.value = result
-		}
+		if ret.error == nil && !ret.suspend { ret.value = result }
 	case "mask.pii":
 		v, e := get("value")
 		if e != nil {
