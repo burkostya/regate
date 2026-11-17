@@ -7,6 +7,7 @@ import (
     "net/http/httptest"
     "os"
     "strings"
+    "sync/atomic"
     "testing"
 )
 
@@ -17,11 +18,11 @@ func TestTwoUpstreamCuratedSurfacesDecisionAndAgentDataBoundary(t *testing.T) {
     t.Setenv("REGATE_ADMIN_TOKEN","two-upstream-admin")
     crmWorld:=&mockWorld{}
     agentWorld:=&mockWorld{}
-    var decisions int
+    var decisions atomic.Int64
     // The policy hook and CRM tool share a server in this fixture; the MCP
     // agent has an independently hosted MCP endpoint and isolated call log.
     crm:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
-        if r.URL.Path=="/decision" {decisions++}
+        if r.URL.Path=="/decision" {decisions.Add(1)}
         crmWorld.ServeHTTP(w,r)
     }))
     defer crm.Close()
@@ -120,7 +121,7 @@ surface "agent_only" {
     if countToolCalls(crmWorld)!=crmBefore || countToolCalls(agentWorld)!=agentBefore {
         t.Fatal("denied request dispatched to protected CRM or agent")
     }
-    if decisions!=2 {t.Fatalf("expected both requests to pass Decision API: %d",decisions)}
+    if decisions.Load()!=2 {t.Fatalf("expected both requests to pass Decision API: %d",decisions.Load())}
     if len(svc.Store.Traces())<4 {t.Fatal("composed execution lacked node traces")}
     // Prove opaque provider responses are routed over actual network HTTP:
     // all protocol and effect calls were executed by the two live handlers.
