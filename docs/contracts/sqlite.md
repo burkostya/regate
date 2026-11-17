@@ -644,3 +644,19 @@ The optional activate digest pins the operator's reviewed snapshot.
 The visual editor refuses to reserialize a graph against a draft
 changed in HCL or another session. This is source snapshot concurrency,
 not automatic merge or provider execution fencing.
+
+### Durable trace and effect diagnostic masking
+
+New trace messages and free-form effect and resolution reasons are
+bounded and scrubbed with the shared diagnostic redactor immediately
+before their JSON records are inserted into SQLite. The storage API
+does not rely on every runtime, MCP or adapter call site remembering
+to mask its own error. Existing effect intent digests, evidence
+digests, status and resource identity are preserved verbatim to avoid
+corrupting audit identity. Known bearer-token, secret-assignment and
+email patterns are removed from new raw records.
+
+This is layered best-effort redaction, **not** data-flow taint
+attestation or retrospective migration of older forensic records.
+Other free-text metadata, external KMS/backup key custody and the
+complete sensitive-data privacy matrix remain separate release gates.
