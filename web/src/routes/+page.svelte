@@ -91,13 +91,41 @@
     editorText = created.source;
     message = `Draft ${created.id.slice(0,8)} created`;
   }
+  async function reloadDraft() {
+    const previous = draft;
+    if (!previous) throw new Error('No draft selected for reload.');
+    if ((dirty || editorText !== previous.source) &&
+        !confirm('Discard unsaved HCL and graph edits to reload the latest server draft?')) return;
+    const [latest, active] = await Promise.all([
+      api<Draft>(`drafts/${encodeURIComponent(previous.id)}`),
+      api<GraphSourceSnapshot>('config')
+    ]);
+    if (draft?.id !== previous.id) throw new Error('Draft selection changed while reloading.');
+    draft = latest;
+    editorText = latest.source;
+    insight = '';
+    // Drop the old graph projection as well as its dirty flag. Never retain
+    // graph edits that the operator explicitly chose to discard.
+    if (catalog?.pipelines[selected]) {
+      activePipeline = $state.snapshot(catalog.pipelines[selected]);
+    }
+    selectedNode = ''; selectedEdgeIndex = null;
+    dirty = false;
+    if (latest.base !== active.revision) {
+      message = 'Latest draft loaded. Its base revision is stale; review/rebase in HCL before activation.';
+    } else if (graphSnapshot?.source !== latest.source) {
+      message = 'Latest draft loaded. This graph represents the active revision, not the changed draft; edit HCL until the draft is activated.';
+    } else {
+      message = 'Latest draft loaded; its current SHA-256 is now used for saves and activation.';
+    }
+  }
   async function saveHCL() {
     const changedSource = editorText;
     const d = await ensureDraft();
     const source = changedSource.trim() ? changedSource : d.source;
     draft = await api('draft-update','POST',{draft_id:d.id,source,expected_source_digest:d.source_digest});
     editorText = source;
-    message = 'HCL validated and saved in draft. Active configuration unchanged.';
+    message = 'HCL syntax checked and saved in draft. Run Validate before activation; active configuration is unchanged.';
   }
   async function saveGraph() {
     if (!activePipeline || !graphSnapshot) return;
@@ -346,7 +374,7 @@
             <div class="split-pane bottom"><div class="pane"><h3>Tool arguments</h3><textarea rows="5" spellcheck="false" bind:value={testArguments}></textarea><p>Dry-run requires mocks for external call nodes and doesn't contact upstream services.</p></div><div class="pane"><h3>Last execution</h3><pre class="output">{resultText || 'No execution yet.'}</pre></div></div>
           {/if}
         {:else if tab==='HCL'}
-          <div class="page-title"><div><p class="eyebrow">DECLARATIVE SOURCE</p><h1>HCL editor</h1></div><div class="actions"><button class="secondary" onclick={() => task(async()=>{const r=await api<{source:string}>('config');editorText=r.source;})}>Load active</button><button class="secondary" onclick={() => task(diff)}>Diff</button><button class="secondary" onclick={() => task(validate)}>Validate</button><button class="primary" onclick={() => task(saveHCL)}>Save draft</button><button class="primary" onclick={() => task(activate)}>Activate</button></div></div>
+          <div class="page-title"><div><p class="eyebrow">DECLARATIVE SOURCE</p><h1>HCL editor</h1></div><div class="actions"><button class="secondary" onclick={() => task(async()=>{const r=await api<{source:string}>('config');editorText=r.source;})}>Load active</button><button class="secondary" onclick={() => task(diff)}>Diff</button><button class="secondary" onclick={() => task(validate)}>Validate</button>{#if draft}<button class="secondary" onclick={() => task(reloadDraft)}>Reload draft</button>{/if}<button class="primary" onclick={() => task(saveHCL)}>Save draft</button><button class="primary" onclick={() => task(activate)}>Activate</button></div></div>
           <div class="pane"><label for="hcl-source">Regate configuration {draft ? '· Draft '+draft.id.slice(0,8) : '· Active preview'}</label><textarea id="hcl-source" class="hcl-editor" spellcheck="false" bind:value={editorText} placeholder="Create a draft or load the active HCL source..."></textarea></div>
           {#if insight}<div class="pane"><h3>Validation / Impact</h3><pre class="output">{insight}</pre></div>{/if}
         {:else if tab==='Revisions'}
