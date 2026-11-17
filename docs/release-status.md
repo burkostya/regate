@@ -1219,3 +1219,22 @@
   for transparent write replays.
 - This does not implement cross-request quotas, bounded SSE lifetime,
   provider-level idempotency or production load/security acceptance.
+
+#### Reviewed source for console dry-run and live effect execution (issue #91)
+
+- The console now refuses execution when the graph or HCL editor contains
+  unsaved changes. Dry-run is bound to an exact saved draft SHA-256 digest, or
+  to the reviewed active revision when no draft exists.
+- LIVE execution always selects the activated revision, explicitly identifies
+  the active revision and surface/tool in the approval prompt, and sends an
+  optional optimistic `expected_revision` checked before dispatch. Drafts
+  must be activated before their code can cause LIVE effects: even a crafted
+  REST/MCP `regate_run` with `draft_id` is rejected.
+- The management test/simulate endpoints accept an optional source digest for
+  a draft and an optional revision for active source, rejecting mixed or stale
+  selectors. Legacy clients may omit these preconditions; only the visual
+  console always supplies them.
+- Go security tests and Chromium browser tests cover stale preconditions,
+  dirty editors, zero dispatch on rejection and reviewed live requests. This
+  is not end-to-end approval attestation, full UI release acceptance (#8),
+  provider effect fencing, or a claim that full v1 (#10) is complete.

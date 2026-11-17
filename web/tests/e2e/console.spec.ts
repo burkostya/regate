@@ -198,3 +198,78 @@ test('trace filter works while pipeline graph has unsaved changes', async ({ pag
   await page.locator('.sidebar nav').getByRole('button', { name: 'Pipelines', exact: true }).click();
   await expect(page.locator('#node-attributes')).toHaveValue(/do-not-discard/);
 });
+
+test('execution buttons fail closed on unsaved graph and HCL changes', async ({ page }) => {
+  const executionRequests: string[] = [];
+  const dialogs: string[] = [];
+  page.on('request', r => {
+    if (/\/api\/(test|run)$/.test(new URL(r.url()).pathname)) executionRequests.push(r.url());
+  });
+  page.on('dialog', async dialog => {
+    dialogs.push(dialog.message());
+    await dialog.accept();
+  });
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveAttribute('data-regate-hydrated', 'true');
+  await page.getByLabel('Admin bearer token').fill(token);
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Execution graph' })).toBeVisible();
+
+  await page.locator('.palette .node-item').filter({ hasText: /^mask/ }).first().click();
+  const nodeInput = page.locator('#node-attributes');
+  const attrs = JSON.parse(await nodeInput.inputValue());
+  attrs.pending_change = 'not-saved';
+  await nodeInput.fill(JSON.stringify(attrs));
+  await page.getByRole('button', { name: 'Apply', exact: true }).click();
+
+  await page.getByRole('button', { name: 'Dry-run' }).click();
+  await expect(page.locator('.toast.error')).toContainText('Unsaved graph edits');
+  await page.getByRole('button', { name: 'Live run' }).click();
+  await expect(page.locator('.toast.error')).toContainText('Unsaved graph edits');
+  expect(executionRequests).toEqual([]);
+  expect(dialogs).toEqual([]);
+
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-regate-hydrated', 'true');
+  await page.getByLabel('Admin bearer token').fill(token);
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Execution graph' })).toBeVisible();
+  await page.getByRole('button', { name: 'New draft' }).click();
+  await page.locator('.sidebar nav').getByRole('button', { name: 'HCL', exact: true }).click();
+  await page.locator('#hcl-source').fill((await page.locator('#hcl-source').inputValue()) + '\n# unsaved local text\n');
+  await page.locator('.sidebar nav').getByRole('button', { name: 'Pipelines', exact: true }).click();
+  await page.getByRole('button', { name: 'Dry-run' }).click();
+  await expect(page.locator('.toast.error')).toContainText('Unsaved HCL edits');
+  await page.getByRole('button', { name: 'Live run' }).click();
+  await expect(page.locator('.toast.error')).toContainText('Unsaved HCL edits');
+  expect(executionRequests).toEqual([]);
+  expect(dialogs).toEqual([]);
+});
+
+test('live console execution identifies and pins the active revision', async ({ page, request }) => {
+  const statusResponse = await request.get('/api/status', { headers: auth });
+  expect(statusResponse.ok()).toBeTruthy();
+  const status = await statusResponse.json();
+
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveAttribute('data-regate-hydrated', 'true');
+  await page.getByLabel('Admin bearer token').fill(token);
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Execution graph' })).toBeVisible();
+
+  let approval = '';
+  page.once('dialog', async dialog => {
+    approval = dialog.message();
+    await dialog.accept();
+  });
+  const execution = page.waitForResponse(r => r.url().endsWith('/api/run') && r.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Live run' }).click();
+  const response = await execution;
+  expect(response.status(), await response.text()).toBe(200);
+  expect(approval).toContain('ACTIVE revision');
+  expect(approval).toContain('support.summarize_customer');
+  expect(approval).toContain(status.revision.slice(0, 12));
+  const submitted = response.request().postDataJSON();
+  expect(submitted.expected_revision).toBe(status.revision);
+  expect(submitted.draft_id).toBeUndefined();
+});

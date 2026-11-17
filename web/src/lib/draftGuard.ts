@@ -27,3 +27,24 @@ export function assertSavedHCL(draft: Pick<Draft, 'source'>, editorText: string)
     throw new Error('Unsaved HCL edits exist. Save the draft before activation.');
   }
 }
+
+/** Refuse to execute a different source than the operator is reviewing. */
+export function assertRunnableEditor(
+  dirtyGraph: boolean,
+  draft: Pick<Draft, 'source'> | null,
+  editorText: string,
+  snapshot: GraphSourceSnapshot | null,
+  activeRevision: string
+): void {
+  if (dirtyGraph) {
+    throw new Error('Unsaved graph edits exist. Save the graph before executing a tool.');
+  }
+  if (draft) {
+    assertSavedHCL(draft, editorText);
+  } else if (editorText && editorText !== snapshot?.source) {
+    throw new Error('Unsaved HCL edits exist. Save a draft before executing a tool.');
+  }
+  if (!snapshot || !activeRevision || snapshot.revision !== activeRevision) {
+    throw new Error('The active revision changed. Refresh the graph before executing a tool.');
+  }
+}
