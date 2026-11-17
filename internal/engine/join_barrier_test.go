@@ -1,0 +1,212 @@
+package engine
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/burkostya/regate/internal/config"
+	"github.com/burkostya/regate/internal/storage"
+)
+
+func joinFixture(mode string, quorum int) string {
+	attr := fmt.Sprintf("mode = %q",mode)
+	if mode=="quorum"{attr+=fmt.Sprintf("\n    quorum = %d",quorum)}
+	return fmt.Sprintf(`
+pipeline "votes" {
+	entry = "start"
+	node "start" {
+		kind = "input"
+	}
+	node "left" {
+		kind = "condition"
+		test = "input.left"
+	}
+	node "right" {
+		kind = "condition"
+		test = "input.right"
+	}
+	node "merge" {
+		kind = "join"
+		%s
+		value = "literal:approved"
+	}
+	node "done" {
+		kind = "output"
+		value = "nodes.merge.value"
+	}
+	edge {
+		from = "start"
+		to = "left"
+	}
+	edge {
+		from = "start"
+		to = "right"
+	}
+	edge {
+		from = "left"
+		to = "merge"
+		when = "true"
+	}
+	edge {
+		from = "right"
+		to = "merge"
+		when = "true"
+	}
+	edge {
+		from = "merge"
+		to = "done"
+	}
+}
+surface "voting" {
+	path = "/mcp/voting"
+	tool "vote" {
+		pipeline = "votes"
+		read_only = true
+	}
+}
+`, attr)
+}
+
+func TestJoinThresholdRequiresDistinctFiredBranches(t *testing.T) {
+	tests:=[]struct{mode string; quorum, threshold int}{
+		{mode:"all",threshold:2},
+		{mode:"any",threshold:1},
+		{mode:"quorum",quorum:2,threshold:2},
+		{mode:"quorum",quorum:1,threshold:1},
+		{mode:"",threshold:2}, // Unspecified mode is fail-closed all.
+	}
+	for _,tc:=range tests {
+		t.Run(fmt.Sprintf("%s-%d",tc.mode,tc.quorum),func(t *testing.T){
+			cfg,err:=config.Decode(joinFixture(tc.mode,tc.quorum))
+			if err!=nil{t.Fatal(err)}
+			for mask:=0;mask<4;mask++{
+				a,b:=mask&1!=0,mask&2!=0
+				out,err:=New(nil).Run(context.Background(),"r1",cfg,
+					"voting","vote",map[string]any{"left":a,"right":b},true)
+				if err!=nil{t.Fatalf("mask %d: %v",mask,err)}
+				count:=0
+				if a{count++}
+				if b{count++}
+				want:=count>=tc.threshold
+				got:=out.Value=="approved"
+				if got!=want{
+					t.Fatalf("mode=%s quorum=%d fired=%d got=%#v wantActivated=%t",
+						tc.mode,tc.quorum,count,out.Value,want)
+				}
+			}
+		})
+	}
+}
+
+func TestJoinCannotSpeculatePastPendingSuspension(t *testing.T) {
+	source:=`
+pipeline "fan" {
+	entry = "start"
+	node "start" {
+		kind = "input"
+	}
+	node "a" {
+		kind = "transform"
+		value = "literal:fast"
+	}
+	node "middle" {
+		kind = "transform"
+		value = "literal:slow"
+	}
+	node "zz_wait" {
+		kind = "suspend"
+	}
+	node "join" {
+		kind = "join"
+		mode = "any"
+		value = "literal:passed"
+	}
+	node "done" {
+		kind = "output"
+		value = "nodes.join.value"
+	}
+	edge {
+		from = "start"
+		to = "a"
+	}
+	edge {
+		from = "start"
+		to = "middle"
+	}
+	edge {
+		from = "a"
+		to = "join"
+	}
+	edge {
+		from = "middle"
+		to = "zz_wait"
+	}
+	edge {
+		from = "zz_wait"
+		to = "join"
+	}
+	edge {
+		from = "join"
+		to = "done"
+	}
+}
+surface "fan" {
+	path = "/mcp/fan"
+	tool "fan" {
+		pipeline = "fan"
+		read_only = true
+	}
+}
+`
+	cfg,err:=config.Decode(source)
+	if err!=nil{t.Fatal(err)}
+	s,err:=storage.New(t.TempDir(),source)
+	if err!=nil{t.Fatal(err)}
+	defer s.Close()
+	if err:=s.AcquireExecutionLease();err!=nil{t.Fatal(err)}
+	runtime:=New(s)
+	runID:=storage.ID()
+	out,err:=runtime.execute(context.Background(),"revision",cfg,
+		cfg.Pipelines["fan"],runID,"fan","fan",map[string]any{},
+		false,nil)
+	if err==nil || out.Status!="suspended"{
+		t.Fatalf("branch did not suspend: %#v %v",out,err)
+	}
+	var cp Checkpoint
+	if err:=s.GetSuspended(runID,&cp);err!=nil{t.Fatal(err)}
+	if cp.States["a"]!="completed" || cp.States["join"]!="pending"{
+		t.Fatalf("join executed before other branch settled: %#v",cp.States)
+	}
+}
+
+func TestJoinValidationRejectsDuplicatedVotesAndImpossibleQuorums(t *testing.T){
+	fixture:=joinFixture("quorum",2)
+	duplicate:=strings.Replace(fixture,`
+	edge {
+		from = "right"
+		to = "merge"
+		when = "true"
+	}
+`,`
+	edge {
+		from = "left"
+		to = "merge"
+		when = "false"
+	}
+`,1)
+	if duplicate==fixture{t.Fatal("duplicate test fixture not modified")}
+	cases:=[]struct{source,marker string}{
+		{strings.Replace(fixture,"quorum = 2","quorum = 3",1),"quorum"},
+		{strings.Replace(joinFixture("all",0),
+			"mode = \"all\"","mode = \"all\"\n    quorum = 1",1),"quorum"},
+		{duplicate,"duplicate predecessor"},
+	}
+	for _,tc:=range cases{
+		if _,err:=config.Decode(tc.source);err==nil ||
+			!strings.Contains(err.Error(),tc.marker){
+			t.Fatalf("invalid join accepted: %v",err)
+		}
+	}
+}
