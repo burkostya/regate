@@ -409,6 +409,11 @@ func (s *Store) RewrapTaskGrant(ctx context.Context,taskID,owner string)(GrantMe
     row,err:=s.grantRowTx(tx,taskID)
     if err!=nil{return GrantMetadata{},ErrGrantUnavailable}
     if err=validateGrantOwner(row,task,owner);err!=nil{return GrantMetadata{},err}
+    // Key rewrap changes the authenticated generation. Never invalidate
+    // an active task's in-flight authorization as an accidental side effect.
+    if task.Status!="input_required" || task.Phase!=""{
+        return GrantMetadata{},ErrGrantUnavailable
+    }
     if row.State!="active"{return GrantMetadata{},ErrGrantRefreshPending}
     token,err:=s.grantKeys.open(row.GrantMetadata,row.nonce,row.ciphertext)
     if err!=nil{return GrantMetadata{},err}

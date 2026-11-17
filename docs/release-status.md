@@ -430,3 +430,19 @@
   about actual IdP acceptance, KMS custody, external resource fencing,
   unknown-write reconciliation, automatic restart or production DR.
   Issues #5, #6 and #9 remain open.
+
+
+#### Bounded OAuth grant-key rotation (PR #41)
+
+- `regate_grant_key_usage` / `regate_grant_rewrap` and matching
+  admin REST APIs expose non-secret old-key inventory and re-encrypt
+  only `input_required`, quiescent, active AES-GCM task grants.
+- All selected grants are authenticated and resealed atomically in
+  batches of at most 32 (internal max 64) under the SQLite execution
+  lease. Generation changes fence stale consumers. In-flight tasks,
+  indeterminate refreshes and expired grants remain untouched and
+  explicitly count toward blocked/remaining old-key ciphertext.
+- Tests cover key retirement on restart, tamper rollback, leader fencing
+  and admin/public authorization boundaries. No OAuth remote refresh
+  occurs during rotation. Historical backups/WAL, KMS, vendor revocation
+  and recovery from ambiguous writes remain open gates for #5/#6/#9.
