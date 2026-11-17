@@ -853,6 +853,18 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 			ret.error = fmt.Errorf("map item count or restored prefix exceeds configured bound")
 			break
 		}
+		// Opt-in parallelism is deliberately limited to pure, effect-free CEL
+		// mappings. Effectful/suspendable child pipelines retain the durable,
+		// sequential per-item journal and checkpoint order.
+		if childName == "" {
+			parallelism := n.Int("parallelism", 1)
+			if parallelism < 1 || parallelism > 16 || parallelism > maxItems {
+				ret.error = fmt.Errorf("invalid pure map parallelism")
+			} else {
+				ret.value, ret.error = evaluatePureMap(ctx, plan, items, vars, parallelism)
+			}
+			break
+		}
 		if childName != "" {
 			if !hasChild || cfg.Plans[childName] == nil ||
 				cfg.Plans[childName].Nodes[child.Entry] == nil {
@@ -887,74 +899,58 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 				ret.error = fmt.Errorf("map item %d failed schema validation", i)
 				break
 			}
-			if childName != "" {
-				arguments, ok := item.(map[string]any)
-				if !ok || arguments == nil {
-					ret.error = fmt.Errorf("map item %d: pipeline argument must be an object", i)
-					break
-				}
-				subrunID := mappedIterationRunID(runID, n.Name, childName, i)
-				childCtx, cancel := context.WithTimeout(ctx, time.Duration(child.TimeoutMS)*time.Millisecond)
-				childCtx = withEffectScope(childCtx, subrunID)
-				if !dry && r.Store != nil {
-					r.Store.WriteTrace(storage.Trace{RunID:runID, Revision:revision, Surface:surface, Tool:toolName,
-						Node:fmt.Sprintf("%s[%d]",n.Name,i), Status:"subrun", Message:"nested run "+subrunID})
-				}
-				var activeChild *Checkpoint
-				if childCheckpoint != nil && i == start {
-					activeChild = childCheckpoint.Child
-				}
-				nested, nestedErr := r.execute(childCtx, revision, cfg, child, subrunID,
-					surface, toolName, arguments, dry, activeChild)
-				cancel()
-				if nested.Status == "suspended" {
-					if n.Attrs["allow_suspend"] != true || n.Attrs["allow_effects"] != true ||
-						nested.Checkpoint == nil || nestedErr == nil {
-						ret.error = fmt.Errorf("map item %d: child suspension is not authorized", i)
-					} else {
-						ret.suspend = true
-						ret.checkpoint = &Checkpoint{RunID:mappedFrameRunID(runID,n.Name,childName),
-							Revision:revision,Surface:surface,Tool:toolName,FrameKind:"map",
-							MapIndex:i,MapItems:items,MapResults:result,Child:nested.Checkpoint}
-					}
-					break
-				}
-				if nestedErr != nil {
-					ret.error = fmt.Errorf("map item %d: child pipeline failed: %w", i, nestedErr)
-					break
-				}
-				if !nested.OutputProduced {
-					ret.error = fmt.Errorf("map item %d: child pipeline produced no output", i)
-					break
-				}
-				var itemOutput any = nested.Value
-				if multiOutput {
-					// The per-item object contains each completed named terminal.
-					// Optional terminals may be absent, never silently null.
-					fields := make(map[string]any, len(nested.NamedOutputs))
-					for name, value := range nested.NamedOutputs { fields[name] = value }
-					itemOutput = fields
-				}
-				if plan.MapItemSchema == nil || plan.MapItemSchema.Validate(itemOutput) != nil {
-					ret.error = fmt.Errorf("map item %d failed typed child output contract", i)
-					break
-				}
-				result = append(result, itemOutput)
-				continue
-			}
-			local := map[string]any{
-				"input": item, "nodes": vars["nodes"], "ports": vars["ports"], "port_present": vars["port_present"],
-			}
-			if plan.Expressions["mapping"] == nil {
-				ret.error = fmt.Errorf("map mapping expression unavailable")
+			arguments, ok := item.(map[string]any)
+			if !ok || arguments == nil {
+				ret.error = fmt.Errorf("map item %d: pipeline argument must be an object", i)
 				break
 			}
-			mapped, err := plan.Expressions["mapping"].Eval(ctx, local)
-			if err != nil {
-				ret.error = fmt.Errorf("map item %d: %w", i, err)
+			subrunID := mappedIterationRunID(runID, n.Name, childName, i)
+			childCtx, cancel := context.WithTimeout(ctx, time.Duration(child.TimeoutMS)*time.Millisecond)
+			childCtx = withEffectScope(childCtx, subrunID)
+			if !dry && r.Store != nil {
+				r.Store.WriteTrace(storage.Trace{RunID:runID, Revision:revision, Surface:surface, Tool:toolName,
+					Node:fmt.Sprintf("%s[%d]",n.Name,i), Status:"subrun", Message:"nested run "+subrunID})
+			}
+			var activeChild *Checkpoint
+			if childCheckpoint != nil && i == start {
+				activeChild = childCheckpoint.Child
+			}
+			nested, nestedErr := r.execute(childCtx, revision, cfg, child, subrunID,
+				surface, toolName, arguments, dry, activeChild)
+			cancel()
+			if nested.Status == "suspended" {
+				if n.Attrs["allow_suspend"] != true || n.Attrs["allow_effects"] != true ||
+					nested.Checkpoint == nil || nestedErr == nil {
+					ret.error = fmt.Errorf("map item %d: child suspension is not authorized", i)
+				} else {
+					ret.suspend = true
+					ret.checkpoint = &Checkpoint{RunID:mappedFrameRunID(runID,n.Name,childName),
+						Revision:revision,Surface:surface,Tool:toolName,FrameKind:"map",
+						MapIndex:i,MapItems:items,MapResults:result,Child:nested.Checkpoint}
+				}
 				break
 			}
-			result = append(result, mapped)
+			if nestedErr != nil {
+				ret.error = fmt.Errorf("map item %d: child pipeline failed: %w", i, nestedErr)
+				break
+			}
+			if !nested.OutputProduced {
+				ret.error = fmt.Errorf("map item %d: child pipeline produced no output", i)
+				break
+			}
+			var itemOutput any = nested.Value
+			if multiOutput {
+				// The per-item object contains each completed named terminal.
+				// Optional terminals may be absent, never silently null.
+				fields := make(map[string]any, len(nested.NamedOutputs))
+				for name, value := range nested.NamedOutputs { fields[name] = value }
+				itemOutput = fields
+			}
+			if plan.MapItemSchema == nil || plan.MapItemSchema.Validate(itemOutput) != nil {
+				ret.error = fmt.Errorf("map item %d failed typed child output contract", i)
+				break
+			}
+			result = append(result, itemOutput)
 		}
 		if ret.error == nil && !ret.suspend { ret.value = result }
 	case "mask.pii":
