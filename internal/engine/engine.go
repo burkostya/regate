@@ -264,14 +264,9 @@ func (r *Runtime) Run(ctx context.Context, revision string, cfg *config.Config, 
 		runctx, cancel := context.WithTimeout(ctx, time.Duration(pipeline.TimeoutMS)*time.Millisecond)
 		defer cancel()
 		out, err = r.execute(runctx, revision, cfg, pipeline, out.RunID, surface, toolName, safeArgs, dry, nil)
-		if out.Status == "suspended" {
-			if dry || r.Store == nil || out.Checkpoint == nil {
-				out.Status = "failure"
-				err = fmt.Errorf("durable pipeline checkpoint unavailable")
-			} else if e := r.Store.PutSuspended(out.RunID, out.Checkpoint); e != nil {
-				out.Status = "failure"
-				err = fmt.Errorf("persist pipeline checkpoint: %w", e)
-			}
+		if out.Status == "suspended" && (dry || r.Store == nil || out.Checkpoint == nil) {
+			out.Status = "failure"
+			err = fmt.Errorf("durable pipeline checkpoint unavailable")
 		}
 	}
 	if err == nil {
@@ -545,6 +540,14 @@ func (r *Runtime) execute(ctx context.Context, revision string, cfg *config.Conf
 			cp := &Checkpoint{RunID: runID, Revision: revision, Surface: surface,
 				Tool: toolName, Input: input, States: states, Values: values, Fired: fired,
 				SuspendNode: suspended.name, Child: suspended.checkpoint}
+			// Only root run IDs are SQLite keys. Child frames carry private
+			// checkpoint fragments to the root; the root publishes the full
+			// chain after all in-flight siblings have settled.
+			if !dry && r.Store != nil && len(runID) == 24 {
+				if err := r.Store.PutSuspended(runID, cp); err != nil {
+					return out, fmt.Errorf("persist root pipeline checkpoint: %w", err)
+				}
+			}
 			out.Status = "suspended"
 			out.Checkpoint = cp
 			out.Value = map[string]any{"run_id": runID, "node": suspended.name}
@@ -1170,10 +1173,7 @@ func (r *Runtime) Resume(ctx context.Context, cfg *config.Config, revision strin
 			out.Status = "failure"
 			return out, fmt.Errorf("nested continuation checkpoint unavailable")
 		}
-		if e := r.Store.PutSuspended(runID, out.Checkpoint); e != nil {
-			out.Status = "failure"
-			return out, fmt.Errorf("persist nested continuation checkpoint: %w", e)
-		}
+		// execute has already atomically replaced the root checkpoint.
 	} else if err == nil {
 		if e := r.Store.DeleteSuspended(runID); e != nil {
 			out.Status = "failure"
