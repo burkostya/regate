@@ -297,6 +297,41 @@ func (c *Config) Compile() error {
 	// order cannot affect contract checking.
 	for parentName, parent := range c.Pipelines {
 		for nodeName, node := range parent.Nodes {
+			if node.Kind == "map" && node.Str("pipeline") != "" {
+				child := c.Pipelines[node.Str("pipeline")]
+				mapped := plans[parentName].Nodes[nodeName]
+				childInput := plans[child.Name].Nodes[child.Entry].InputSchema
+				if childInput != nil {
+					types := childInput.Types()
+					if len(types) == 1 && types[0] != "object" {
+						return fmt.Errorf("pipeline %s map %s: child input_schema must accept object", parentName, nodeName)
+					}
+					properties, _ := childInput.Raw["properties"].(map[string]any)
+					if item, ok := properties["item"].(map[string]any); ok {
+						consumer, err := compileSchema(item)
+						if err != nil { return fmt.Errorf("pipeline %s map %s child item schema: %w", parentName, nodeName, err) }
+						if err := CheckKnownCompatibility(mapped.InputSchema, consumer); err != nil {
+							return fmt.Errorf("pipeline %s map %s item contract: %w", parentName, nodeName, err)
+						}
+					}
+				}
+				if mapped.OutputSchema != nil {
+					types := mapped.OutputSchema.Types()
+					if len(types) != 1 || types[0] != "array" {
+						return fmt.Errorf("pipeline %s map %s: child pipeline map output_schema must be array", parentName, nodeName)
+					}
+					if items, ok := mapped.OutputSchema.Raw["items"].(map[string]any); ok {
+						consumer, err := compileSchema(items)
+						if err != nil { return fmt.Errorf("pipeline %s map %s aggregate item schema: %w", parentName, nodeName, err) }
+						outputName := namedOutputNodes(child)[0]
+						producer := plans[child.Name].Nodes[outputName].OutputSchema
+						if err := CheckKnownCompatibility(producer, consumer); err != nil {
+							return fmt.Errorf("pipeline %s map %s output item contract: %w", parentName, nodeName, err)
+						}
+					}
+				}
+				continue
+			}
 			if node.Kind != "pipeline.call" { continue }
 			child := c.Pipelines[node.Str("pipeline")]
 			childInput := plans[child.Name].Nodes[child.Entry].InputSchema

@@ -783,24 +783,86 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 			break
 		}
 		result := make([]any, 0, len(items))
-		for i, item := range items {
-			if e := ctx.Err(); e != nil {
-				ret.error = e
+		if childName := n.Str("pipeline"); childName != "" {
+			child, exists := cfg.Pipelines[childName]
+			if !exists {
+				ret.error = fmt.Errorf("unknown mapped pipeline %s", childName)
 				break
 			}
-			if e := plan.InputSchema.Validate(item); e != nil {
-				ret.error = fmt.Errorf("map item %d failed schema validation", i)
-				break
+			// Validate the entire batch and all child input contracts
+			// before dispatching the first potentially external effect.
+			prepared := make([]map[string]any, len(items))
+			for i, item := range items {
+				if err := ctx.Err(); err != nil {
+					ret.error = err
+					break
+				}
+				if err := plan.InputSchema.Validate(item); err != nil {
+					ret.error = fmt.Errorf("map item %d failed schema validation", i)
+					break
+				}
+				args := map[string]any{"item": item, "index": i}
+				if err := cfg.Plans[childName].Nodes[child.Entry].InputSchema.Validate(args); err != nil {
+					ret.error = fmt.Errorf("map item %d child input schema validation failed", i)
+					break
+				}
+				prepared[i] = args
 			}
-			local := map[string]any{
-				"input": item, "nodes": vars["nodes"], "ports": vars["ports"], "port_present": vars["port_present"],
+			if ret.error != nil { break }
+			for i, args := range prepared {
+				if err := ctx.Err(); err != nil {
+					ret.error = err
+					break
+				}
+				// The immutable item ordinal is part of the durable child
+				// run identity. Every mapped MCP/HTTP/hook effect receives
+				// its own journal key even if all items use the same tool.
+				subrunID := derivedSubrunID(runID, fmt.Sprintf("%s[item:%d]", n.Name, i), childName)
+				nestedContext, cancel := context.WithTimeout(ctx, time.Duration(child.TimeoutMS)*time.Millisecond)
+				nestedContext = withEffectScope(nestedContext, subrunID)
+				if !dry && r.Store != nil {
+					r.Store.WriteTrace(storage.Trace{RunID:runID, Revision:revision,
+						Surface:surface, Tool:toolName, Node:n.Name, Status:"map_item",
+						Message:fmt.Sprintf("index=%d subrun=%s", i, subrunID)})
+				}
+				nested, nestedErr := r.execute(nestedContext, revision, cfg, child,
+					subrunID, surface, toolName, args, dry, nil)
+				cancel()
+				if nested.Status == "suspended" {
+					ret.error = fmt.Errorf("map item %d attempted unsupported suspension", i)
+					break
+				}
+				if nestedErr != nil {
+					ret.error = fmt.Errorf("map item %d: %w", i, nestedErr)
+					break
+				}
+				if !nested.OutputProduced {
+					ret.error = fmt.Errorf("map item %d child did not produce an output", i)
+					break
+				}
+				result = append(result, nested.Value)
 			}
-			mapped, e := plan.Expressions["mapping"].Eval(ctx, local)
-			if e != nil {
-				ret.error = fmt.Errorf("map item %d: %w", i, e)
-				break
+		} else {
+			// Existing bounded CEL-only map is unchanged.
+			for i, item := range items {
+				if e := ctx.Err(); e != nil {
+					ret.error = e
+					break
+				}
+				if e := plan.InputSchema.Validate(item); e != nil {
+					ret.error = fmt.Errorf("map item %d failed schema validation", i)
+					break
+				}
+				local := map[string]any{
+					"input": item, "nodes": vars["nodes"], "ports": vars["ports"], "port_present": vars["port_present"],
+				}
+				mapped, e := plan.Expressions["mapping"].Eval(ctx, local)
+				if e != nil {
+					ret.error = fmt.Errorf("map item %d: %w", i, e)
+					break
+				}
+				result = append(result, mapped)
 			}
-			result = append(result, mapped)
 		}
 		if ret.error == nil {
 			ret.value = result
