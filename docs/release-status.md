@@ -414,3 +414,19 @@
   Offsite key custody and test drills, source-worker fencing, KMS,
   autonomous grant recovery, remote idempotency and vendor-verified
   reconciliation remain release gates. #6 stays open.
+
+
+#### Offline encrypted recovery-key verification (PR #40)
+
+- `regate -verify-backup-keys PATH` verifies a standalone backup and
+  authenticates retained encrypted queued payloads and task grants using
+  environment-only keyrings without opening a Store or doing any remote
+  work. The report contains only the snapshot digest and anonymous counts.
+- Missing/wrong keys, tampered queued-task metadata and grant binding drift
+  fail closed. Erased revoked/reauthorization grants are not misclassified
+  as executable; in-flight token refresh remains indeterminate even when
+  old ciphertext decrypts.
+- This establishes **local key recoverability only**. No claim is made
+  about actual IdP acceptance, KMS custody, external resource fencing,
+  unknown-write reconciliation, automatic restart or production DR.
+  Issues #5, #6 and #9 remain open.

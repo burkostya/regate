@@ -501,3 +501,38 @@ that an old worker or an in-flight upstream write has been fenced: the
 operator must independently establish resource isolation. The procedure
 does not prove KMS key availability, grant validity, remote-effect
 reconciliation or secure erasure of old snapshots. Those remain open for v1.
+
+
+## Offline encryption-key recoverability audit (PR #40)
+
+A structurally valid backup may retain encrypted task inputs or OAuth grant
+credentials that cannot be recovered with the available keyrings. Before
+promoting any restored worker, load the separately escrowed
+`REGATE_QUEUE_KEYS_JSON` and `REGATE_GRANT_KEYS_JSON` into the **offline**
+audit process and run:
+
+```sh
+go run ./cmd/regate -verify-backup-keys /secure/backups/regate.sqlite
+```
+
+The command first performs structural backup verification, then opens the
+standalone SQLite snapshot read-only and authenticates every retained queued
+AES-GCM payload and active/grant-refresh ciphertext against its original
+owner, revision, scope and resource metadata. A failed/missing/wrong key or
+altered bound metadata rejects the audit without returning secret contents.
+Only anonymous counts and the verified snapshot digest are printed; the
+source HCL, ciphertext, queued arguments, refresh credentials and key IDs
+are never returned.
+
+Revoked or `needs_reauth` grants with erased ciphertext are non-executable
+and do not need the retired keys. A grant left `refreshing` after an
+ambiguous IdP rotation is **also non-executable** regardless of whether old
+ciphertext authenticates; the operator must reauthorize it. Decryption
+proves only local ciphertext/key compatibility, **not** present IdP
+acceptance, current owner authority or right to replay an unknown effect.
+The audit neither starts a Store nor runs migrations, OAuth exchanges,
+continuations or MCP/HTTP actions.
+
+Perform this audit against the *offline* snapshot, never treating an active
+WAL-backed database file as a consistent backup. Use the ordinary
+`-verify-backup` separately for structural validation and digest inventory.

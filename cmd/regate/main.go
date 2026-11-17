@@ -22,6 +22,14 @@ func verifyBackupToWriter(path string,w io.Writer)error {
     return json.NewEncoder(w).Encode(manifest)
 }
 
+func verifyBackupKeysToWriter(path string, w io.Writer) error {
+	report, err := storage.VerifyBackupKeys(path)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(w).Encode(report)
+}
+
 func restoreBackupToWriter(archive, stateDir string, w io.Writer) error {
 	manifest, err := storage.RestoreVerifiedBackup(archive, stateDir)
 	if err != nil {
@@ -36,9 +44,14 @@ func main() {
 	listen := flag.String("listen", "", "override HTTP listen address")
     verifyBackup:=flag.String("verify-backup","","verify standalone SQLite backup and print non-secret JSON manifest")
     restoreBackup:=flag.String("restore-backup","","restore a verified snapshot into a pre-existing empty private -state directory")
+    verifyBackupKeys:=flag.String("verify-backup-keys","","authenticate encrypted queued inputs and grants in a standalone backup using environment keyrings")
 	flag.Parse()
-    if *verifyBackup!="" && *restoreBackup!="" {
-        log.Fatal("-verify-backup and -restore-backup are mutually exclusive")
+    commands:=0
+    for _,path:=range []string{*verifyBackup,*restoreBackup,*verifyBackupKeys}{
+        if path!="" {commands++}
+    }
+    if commands>1 {
+        log.Fatal("only one of -verify-backup, -verify-backup-keys, -restore-backup may be used")
     }
     if *restoreBackup!="" {
         stateExplicit:=false
@@ -47,6 +60,12 @@ func main() {
             log.Fatal("-restore-backup requires an explicit -state destination")
         }
         if err:=restoreBackupToWriter(*restoreBackup,*state,os.Stdout);err!=nil {
+            log.Fatal(err)
+        }
+        return
+    }
+    if *verifyBackupKeys!="" {
+        if err:=verifyBackupKeysToWriter(*verifyBackupKeys,os.Stdout);err!=nil {
             log.Fatal(err)
         }
         return
