@@ -144,13 +144,13 @@ func TestOptionalPresentNullIsNotAnAbsentPort(t *testing.T) {
 func TestOptionalChildOutputRejectsUnsafeDeclarations(t *testing.T) {
 	base := optionalChildOutputsFixture()
 	yes := `yes = {optional = true, schema = {type = "string"}}`
-	no := `no = {optional = true, schema = {type = "string"}}`
 	left := `left = {optional = true, schema = {type = ["string", "null"]}}`
 	cases := []struct{name, source, want string}{
 		{"optional output without schema", strings.Replace(base, yes, `yes = {optional = true}`, 1), "optional output requires optional=true and schema only"},
 		{"optional false", strings.Replace(base, yes, `yes = {optional = false, schema = {type = "string"}}`, 1), "optional output requires optional=true and schema only"},
 		{"optional schema not object", strings.Replace(base, yes, `yes = {optional = true, schema = "string"}`, 1), "optional schema must be an object"},
-		{"optional value output", strings.Replace(base, yes, yes + `\n      value = {optional = true, schema = {type = "object"}}`, 1), "only named pipeline.call outputs may be optional"},
+		{"optional value output", strings.Replace(base, yes, yes + `
+      value = {optional = true, schema = {type = "object"}}`, 1), "only named pipeline.call outputs may be optional"},
 		{"required consumer", strings.Replace(base, left, `left = {type = "string"}`, 1), "optional child output requires optional consumer input port"},
 		{"unknown child source", strings.Replace(base, `from_port = "yes"`, `from_port = "unbound"`, 1), "requires declared pipeline.call output port unbound"},
 	}
