@@ -5,6 +5,7 @@ import (
     "encoding/json"
     "errors"
     "fmt"
+    "io"
     "net/http"
     "net/http/httptest"
     "path/filepath"
@@ -218,6 +219,10 @@ func TestHTTPHookRequestBodyBoundBeforeEffectAdmission(t *testing.T) {
     var calls atomic.Int64
     upstream:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request) {
         calls.Add(1)
+        if _,err:=io.Copy(io.Discard,r.Body);err!=nil {
+            t.Errorf("read outbound hook request: %v",err)
+            return
+        }
         w.Header().Set("Content-Type","application/json")
         fmt.Fprint(w,`{"value":{"ok":true}}`)
     }))
