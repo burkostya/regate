@@ -33,7 +33,10 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
         working-directory: web
-      - name: Launch demo MCP, Regate and SvelteKit
+      - name: Build production console
+        run: npm run build
+        working-directory: web
+      - name: Launch demo MCP, Regate and production SvelteKit
         shell: bash
         run: |
           set -euo pipefail
@@ -55,7 +58,7 @@ jobs:
           REGATE_ADMIN_TOKEN=regate-e2e-test-token \
             go run ./cmd/regate -config ./examples/regate.hcl -state "$RUNNER_TEMP/regate-browser" \
             > "$RUNNER_TEMP/regate-server.log" 2>&1 &
-          (cd web && npm run dev > "$RUNNER_TEMP/regate-vite.log" 2>&1) &
+          (cd web && REGATE_PROXY=http://127.0.0.1:8080 PORT=5173 HOST=127.0.0.1 node build > "$RUNNER_TEMP/regate-web.log" 2>&1) &
           ready=0
           for i in $(seq 1 90); do
             if curl -fsS http://127.0.0.1:8080/api/status \
@@ -67,7 +70,7 @@ jobs:
             sleep 2
           done
           if [ "$ready" -ne 1 ]; then
-            cat "$RUNNER_TEMP/regate-server.log" "$RUNNER_TEMP/regate-vite.log"
+            cat "$RUNNER_TEMP/regate-server.log" "$RUNNER_TEMP/regate-web.log"
             exit 1
           fi
       - name: Exercise Chromium console
@@ -86,5 +89,5 @@ jobs:
             web/test-results/
             ${{ runner.temp }}/regate-demo.log
             ${{ runner.temp }}/regate-server.log
-            ${{ runner.temp }}/regate-vite.log
+            ${{ runner.temp }}/regate-web.log
           if-no-files-found: ignore

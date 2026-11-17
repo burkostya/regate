@@ -12,7 +12,7 @@
 - Inspect, draft, validate, diff, activate and roll back configuration through a **separate authenticated management MCP** and matching REST API.
 - Use stateless MCP `2026-07-28` discovery/tools/tasks/skills requests and local `subscriptions/listen` change notifications; legacy `initialize` has basic compatibility.
 - Run dry-run scenarios with mocks, inspect durable SQLite traces and effect journal; use task IDs, encrypted bounded queues and suspended-run checkpoints.
-- View/edit a graph and its HCL from a SvelteKit/Svelte Flow console (requires external npm dependencies).
+- View/edit a graph and its HCL in an authenticated SvelteKit/Svelte Flow console, tested in Chromium against a real gateway and served by a production Node adapter (requires npm dependencies).
 
 ## Requirements
 
@@ -98,9 +98,17 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`, enter `REGATE_ADMIN_TOKEN`. The Vite development proxy sends `/api/*` to `http://127.0.0.1:8080`; override with `REGATE_PROXY` if Regate runs at another address. The token lives only in memory in the page in this prototype.
+Open `http://127.0.0.1:5173`, enter `REGATE_ADMIN_TOKEN`. The same-origin SvelteKit server proxy sends `/api/*` to `http://127.0.0.1:8080` in both development and built Node deployments; override its **server-side** `REGATE_PROXY` environment variable if Regate runs elsewhere. It forwards the admin bearer only to that configured backend, refuses backend redirects and does not cache responses. The token lives only in memory in the browser tab.
 
-> **Frontend CI:** `npm install`, `npm run check` and `npm run build` passed in GitHub Actions. This does **not** establish end-to-end browser behavior or production readiness; browser interaction tests are still required.
+To exercise the **built** console locally, still keeping it bound to loopback:
+
+```sh
+cd web
+npm run build
+REGATE_PROXY=http://127.0.0.1:8080 HOST=127.0.0.1 PORT=5173 node build
+```
+
+> **Frontend CI:** npm type checks, graph guard/unit tests, production Node build and Chromium E2E against the real Go gateway and disposable SQLite state pass. This is functional console acceptance, **not** a production security/a11y/browser-matrix audit or completion of #9/#10.
 
 ## Optional container image (for controlled local experiments)
 

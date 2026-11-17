@@ -273,3 +273,124 @@ test('live console execution identifies and pins the active revision', async ({ 
   expect(submitted.expected_revision).toBe(status.revision);
   expect(submitted.draft_id).toBeUndefined();
 });
+
+test('production console proxy requires authentication and validation targets visible HCL', async ({ page, request }) => {
+  const untrusted = await request.get('/api/status');
+  expect(untrusted.status()).toBe(401);
+  const trusted = await request.get('/api/status', { headers: auth });
+  expect(trusted.status()).toBe(200);
+
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveAttribute('data-regate-hydrated', 'true');
+  await page.getByLabel('Admin bearer token').fill(token);
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Execution graph' })).toBeVisible();
+
+  await page.locator('.sidebar nav').getByRole('button', { name: 'HCL', exact: true }).click();
+  const localSource = 'pipeline "incomplete" {';
+  await page.locator('#hcl-source').fill(localSource);
+  const validationRequest = page.waitForRequest(r =>
+    r.url().endsWith('/api/validate') && r.method() === 'POST'
+  );
+  await page.getByRole('button', { name: 'Validate', exact: true }).click();
+  const requestWithSource = await validationRequest;
+  expect(requestWithSource.postDataJSON().source).toBe(localSource);
+});
+
+test('activation refuses unsaved graphical edits before prompting or writing', async ({ page }) => {
+  const writes: string[] = [];
+  const dialogs: string[] = [];
+  page.on('request', r => {
+    if (/\/api\/(activate|rollback)$/.test(new URL(r.url()).pathname)) writes.push(r.url());
+  });
+  page.on('dialog', async dialog => { dialogs.push(dialog.message()); await dialog.accept(); });
+
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveAttribute('data-regate-hydrated', 'true');
+  await page.getByLabel('Admin bearer token').fill(token);
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Execution graph' })).toBeVisible();
+  await page.getByRole('button', { name: 'New draft' }).click();
+  await page.locator('.palette .node-item').filter({ hasText: /^mask/ }).first().click();
+  const node = page.locator('#node-attributes');
+  const attrs = JSON.parse(await node.inputValue());
+  attrs.unsaved_activation_marker = 'must-not-discard';
+  await node.fill(JSON.stringify(attrs));
+  await page.getByRole('button', { name: 'Apply', exact: true }).click();
+  await page.locator('.sidebar nav').getByRole('button', { name: 'HCL', exact: true }).click();
+  await page.getByRole('button', { name: 'Activate', exact: true }).click();
+  await expect(page.locator('.toast.error')).toContainText('Unsaved graph edits');
+  expect(writes).toEqual([]);
+  expect(dialogs).toEqual([]);
+  await page.locator('.sidebar nav').getByRole('button', { name: 'Pipelines', exact: true }).click();
+  await expect(page.locator('#node-attributes')).toHaveValue(/must-not-discard/);
+});
+
+test('diff never creates a draft over unsaved HCL, and cleared HCL is not replaced by old source', async ({ page }) => {
+  const draftRequests: string[] = [];
+  page.on('request', r => {
+    if (/\/api\/drafts$/.test(new URL(r.url()).pathname) && r.method() === 'POST') {
+      draftRequests.push(r.url());
+    }
+  });
+
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveAttribute('data-regate-hydrated', 'true');
+  await page.getByLabel('Admin bearer token').fill(token);
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Execution graph' })).toBeVisible();
+  await page.locator('.sidebar nav').getByRole('button', { name: 'HCL', exact: true }).click();
+  await page.locator('#hcl-source').fill('# local unsaved changes\n');
+  await page.getByRole('button', { name: 'Diff', exact: true }).click();
+  await expect(page.locator('.toast.error')).toContainText('Unsaved HCL edits');
+  expect(draftRequests).toHaveLength(0);
+  await expect(page.locator('#hcl-source')).toHaveValue('# local unsaved changes\n');
+
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'New draft' }).click();
+  await expect(page.locator('#hcl-source')).not.toHaveValue('');
+  await page.locator('#hcl-source').fill('');
+  const update = page.waitForRequest(r => r.url().endsWith('/api/draft-update') && r.method() === 'POST');
+  const result = page.waitForResponse(r => r.url().endsWith('/api/draft-update') && r.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Save draft', exact: true }).click();
+  expect((await update).postDataJSON().source).toBe('');
+  await result;
+  await expect(page.locator('#hcl-source')).toHaveValue('');
+});
+
+test('clearing a loaded active HCL preview cannot be discarded by diff or execution', async ({ page }) => {
+  const mutatingDraftRequests: string[] = [];
+  const executionRequests: string[] = [];
+  page.on('request', r => {
+    if (r.method() === 'POST' && new URL(r.url()).pathname === '/api/drafts') {
+      mutatingDraftRequests.push(r.url());
+    }
+    if (r.method() === 'POST' && /\/api\/(test|run)$/.test(new URL(r.url()).pathname)) {
+      executionRequests.push(r.url());
+    }
+  });
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveAttribute('data-regate-hydrated', 'true');
+  await page.getByLabel('Admin bearer token').fill(token);
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Execution graph' })).toBeVisible();
+  await page.locator('.sidebar nav').getByRole('button', { name: 'HCL', exact: true }).click();
+  await page.getByRole('button', { name: 'Load active', exact: true }).click();
+  await expect(page.locator('#hcl-source')).not.toHaveValue('');
+  await page.locator('#hcl-source').fill('');
+  await page.getByRole('button', { name: 'Diff', exact: true }).click();
+  await expect(page.locator('.toast.error')).toContainText('Unsaved HCL edits');
+  expect(mutatingDraftRequests).toHaveLength(0);
+  await expect(page.locator('#hcl-source')).toHaveValue('');
+
+  await page.locator('.sidebar nav').getByRole('button', { name: 'Pipelines', exact: true }).click();
+  await page.getByRole('button', { name: 'Dry-run' }).click();
+  await expect(page.locator('.toast.error')).toContainText('Unsaved HCL edits');
+  expect(executionRequests).toEqual([]);
+
+  await page.locator('.sidebar nav').getByRole('button', { name: 'HCL', exact: true }).click();
+  page.once('dialog', dialog => dialog.dismiss());
+  await page.getByRole('button', { name: 'New draft' }).click();
+  await expect(page.locator('#hcl-source')).toHaveValue('');
+  expect(mutatingDraftRequests).toHaveLength(0);
+});
