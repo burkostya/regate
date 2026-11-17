@@ -1073,3 +1073,18 @@
 - Go race/runtime tests cover three compositional levels of maps,
   output shape, cancellation, and a fail-closed guard against bypassing
   the nested-worker boundary. Full #7/#10 acceptance remains open.
+
+#### Durable SQLite diagnostics redaction boundary (#5/#9)
+
+- Trace `message` and free-form effect `reason`/resolution `reason`
+  are now bounded and passed through the shared diagnostic redactor
+  **at the SQLite write boundary**, even if a new caller fails to mask
+  an upstream error before recording it.
+- Effect identity, intent/resource/evidence digests, immutable verdict,
+  timestamps and audit transitions are not rewritten. New tests inspect
+  the raw SQLite event/trace JSON and verify obvious bearer credentials,
+  secret assignments and email addresses are not persisted.
+- The redactor is a **heuristic defense in depth**, not a full taint
+  proof. Existing historical journals are not destructively rewritten,
+  arbitrary PII forms may still require explicit masking, and backup/
+  retention and complete production privacy acceptance remain open.
