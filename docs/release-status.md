@@ -829,3 +829,24 @@
 - Keep #7/#9/#10 open: small finite models are not Go code proofs.
   Model-based runtime trace checking, real crash/provider failure
   scenarios, formal join semantics and complete release acceptance remain.
+
+#### Bounded pipeline-backed map with effect identity (#7)
+
+- `map` supports an optional `pipeline` mode instead of pure CEL
+  `mapping`. Each item is an object with a declared input schema and a
+  single typed child output, assembled into a declared array result.
+- `allow_effects = true` explicitly admits side-effecting children.
+  The compiler checks transitive policy dominance, pure/effect boundaries,
+  child recursion/call depth, OAuth delegation and Restricted-data trust.
+  Mapped children cannot transitively suspend or emit competing terminals.
+- Execution preflights **all** item schemas before dispatch; then runs a
+  bounded, sequential loop with a unique derived per-item subrun/effect
+  identity. Output order follows input order, no partial result is
+  published on failure, and confirmed/unknown writes never replay
+  automatically. Empty arrays are valid.
+- CI regression covers two independent remote writes and durable journal
+  entries, replay rejection, lost responses, malformed later-item
+  preflight, pure map compatibility, ordering and trust/delegation.
+- This is not a parallel map scheduler, per-item suspend/recovery, a
+  cross-provider batch transaction, or a verified remote idempotency
+  guarantee. Complete #7/#10 acceptance remains open.
