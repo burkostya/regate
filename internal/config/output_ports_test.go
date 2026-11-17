@@ -72,6 +72,19 @@ func TestDeclaredStructuredMCPPortCompiles(t *testing.T) {
 	}
 }
 
+// Keep the transformed node syntactically valid so the test exercises the
+// edge/source contract rather than failing earlier on unknown node attrs.
+func structuredWrongKindSource(source string) string {
+	source = strings.Replace(source, `    kind = "mcp.call"`, `    kind = "transform"`, 1)
+	source = strings.Replace(source, `    upstream = "stub"
+    tool = "get"
+    effect = "read"
+    arguments = {id = "input.id"}`, `    value = "literal:plain"`, 1)
+	source = strings.Replace(source, `    mock = {message = "plain"}`, "", 1)
+	source = strings.Replace(source, `    mock_structured = {code = "C123"}`, "", 1)
+	return source
+}
+
 func TestStructuredPortInvalidSourcesAreRejected(t *testing.T) {
 	base := structuredDataPortSource()
 	portDeclaration := `    output_ports = {
@@ -83,7 +96,7 @@ func TestStructuredPortInvalidSourcesAreRejected(t *testing.T) {
     }`
 	cases := []struct{name, src, want string}{
 		{"undeclared source", strings.Replace(base, portDeclaration, "", 1), "requires a declared MCP structured output port"},
-		{"wrong node kind", strings.Replace(base, `kind = "mcp.call"`, `kind = "transform"`, 1), "requires a declared MCP structured output port"},
+		{"wrong node kind", structuredWrongKindSource(base), "requires a declared MCP structured output port"},
 		{"unsupported source port", strings.Replace(base, `from_port = "structured"`, `from_port = "metadata"`, 1), "invalid data edge"},
 		{"known incompatible schemas", strings.Replace(base, `customer = {
         type = "object"`, `customer = {
