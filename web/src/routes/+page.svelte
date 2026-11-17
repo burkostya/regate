@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import FlowCanvas from '$lib/FlowCanvas.svelte';
-  import { api, setToken, type Catalog, type Pipeline, type Draft, type EdgeDef } from '$lib/api';
+  import { api, setToken, type Catalog, type Pipeline, type Draft, type EdgeDef, type Trace } from '$lib/api';
   import { pipelineToHCL, createNode } from '$lib/hcl';
   import { assertGraphSnapshot, assertSavedHCL, type GraphSourceSnapshot } from '$lib/draftGuard';
   import { editGraphEdge, removeGraphEdge } from '$lib/graphEditor';
@@ -29,7 +29,10 @@
   let error = $state('');
   let busy = $state(false);
   let revisions = $state<any[]>([]);
-  let traces = $state<any[]>([]);
+  let traces = $state<Trace[]>([]);
+  let traceRun = $state('');
+  let traceStatus = $state('');
+  let traceLimit = $state(100);
   let effects = $state<any[]>([]);
   let insight = $state('');
   let upstreamName = $state('');
@@ -51,9 +54,21 @@
       message = `Connected to Regate ${status?.revision?.slice(0, 8) ?? ''}`;
     });
   }
+  function tracesEndpoint() {
+    const query = new URLSearchParams();
+    if (traceRun.trim()) query.set('run_id', traceRun.trim());
+    if (traceStatus) query.set('status', traceStatus);
+    query.set('limit', String(traceLimit));
+    return 'traces?' + query.toString();
+  }
+  async function loadTraces() {
+    // Do not use refresh(): it replaces the active graph projection and
+    // intentionally rejects dirty graph edits. Trace review is read-only.
+    traces = await api<Trace[]>(tracesEndpoint());
+  }
   async function refresh(force = false) {
     if (dirty && !force) throw new Error('Unsaved graph edits. Save the graph before refreshing.');
-    [catalog, status, revisions, traces, effects] = await Promise.all([api('catalog'),api('status'),api('revisions'),api('traces'),api('effects')]);
+    [catalog, status, revisions, traces, effects] = await Promise.all([api('catalog'),api('status'),api('revisions'),api<Trace[]>(tracesEndpoint()),api('effects')]);
     if (catalog && (!selected || !catalog.pipelines[selected])) selected = Object.keys(catalog.pipelines)[0] ?? '';
     await selectPipeline(selected, true);
   }
@@ -398,8 +413,51 @@
           <div class="page-title"><div><p class="eyebrow">HISTORY</p><h1>Immutable revisions</h1></div></div>
           <section class="pane">{#each [...revisions].reverse() as rev}<div class="revision"><div><strong><code>{rev.id}</code></strong><p>{new Date(rev.activated).toLocaleString()} {rev.parent ? `· from ${rev.parent.slice(0,8)}` : ''}</p></div><div class="actions">{#if rev.id===status?.revision}<span class="live">ACTIVE</span>{:else}<button class="secondary" onclick={() => task(() => rollback(rev.id))}>Restore</button>{/if}</div></div>{/each}</section>
         {:else if tab==='Traces'}
-          <div class="page-title"><div><p class="eyebrow">OBSERVABILITY</p><h1>Execution traces</h1></div><button class="secondary" onclick={() => task(refresh)}>Refresh</button></div>
-          <section class="pane"><table><thead><tr><th>Time</th><th>Run</th><th>Node</th><th>State</th><th>Duration</th></tr></thead><tbody>{#each traces.slice(0,100) as trace}<tr><td>{new Date(trace.at).toLocaleTimeString()}</td><td><code>{trace.run_id.slice(0,8)}</code></td><td>{trace.node || trace.tool || '—'}</td><td>{trace.status}</td><td>{trace.duration_ms??'—'} ms</td></tr>{/each}</tbody></table></section>
+          <div class="page-title"><div><p class="eyebrow">OBSERVABILITY</p><h1>Execution traces</h1></div></div>
+          <section class="pane">
+            <form class="trace-filters" onsubmit={(event) => {event.preventDefault(); void task(loadTraces);}}>
+              <label for="trace-run">Run ID
+                <input id="trace-run" placeholder="Exact run ID" bind:value={traceRun}/>
+              </label>
+              <label for="trace-status">Status
+                <select id="trace-status" bind:value={traceStatus}>
+                  <option value="">All statuses</option>
+                  <option value="success">Success</option>
+                  <option value="failure">Failure</option>
+                  <option value="denied">Denied</option>
+                  <option value="subrun">Subrun</option>
+                  <option value="suspended">Suspended</option>
+                </select>
+              </label>
+              <label for="trace-limit">Max rows
+                <select id="trace-limit" bind:value={traceLimit}>
+                  <option value={25}>25</option>
+                  <option value={100}>100</option>
+                  <option value={500}>500</option>
+                  <option value={2000}>2000</option>
+                </select>
+              </label>
+              <button type="submit" class="secondary">Filter traces</button>
+            </form>
+            <p>Showing {traces.length} newest matching events. The SQLite trace projection retains at most 2000 events.</p>
+            <div class="trace-table">
+              <table><thead><tr><th>Time</th><th>Run</th><th>Node</th><th>State</th><th>Duration</th><th>Diagnostic</th></tr></thead>
+              <tbody>
+                {#each traces as trace}
+                  <tr>
+                    <td>{new Date(trace.at).toLocaleString()}</td>
+                    <td><code title={trace.run_id}>{trace.run_id.slice(0,12)}</code></td>
+                    <td>{trace.node || trace.tool || '—'}</td>
+                    <td>{trace.status}</td>
+                    <td>{trace.duration_ms??'—'} ms</td>
+                    <td>{#if trace.message}<details><summary>Inspect</summary><pre class="trace-diagnostic">{trace.message}</pre></details>{:else}—{/if}</td>
+                  </tr>
+                {:else}
+                  <tr><td colspan="6">No matching trace events.</td></tr>
+                {/each}
+              </tbody></table>
+            </div>
+          </section>
         {:else if tab==='Effects'}
           <div class="page-title"><div><p class="eyebrow">EXTERNAL SIDE EFFECTS</p><h1>Effect journal</h1></div><button class="secondary" onclick={() => task(refresh)}>Refresh</button></div>
           <section class="pane"><p>Uncertain external effects need read-back reconciliation. Do not blindly retry writes.</p><table><thead><tr><th>Time</th><th>Run</th><th>Operation</th><th>Status</th><th>Reason</th></tr></thead><tbody>{#each effects.slice(0,100) as effect}<tr><td>{new Date(effect.at).toLocaleTimeString()}</td><td><code>{effect.run_id?.slice(0,8)??'—'}</code></td><td>{effect.operation}</td><td><strong>{effect.status}</strong></td><td>{effect.reason ?? ''}</td></tr>{/each}</tbody></table></section>
@@ -414,6 +472,12 @@
   :global(*){box-sizing:border-box} :global(html){font-family:Inter,ui-sans-serif,system-ui,Arial;color:#e9eff7;background:#111b29} :global(body){margin:0} :global(button), :global(input), :global(textarea), :global(select){font:inherit} :global(button){cursor:pointer} :global(button:disabled){opacity:.5;cursor:not-allowed}
   .app{min-height:100vh;display:flex}.sidebar{width:224px;flex-shrink:0;border-right:1px solid #26344a;background:#142031;display:flex;flex-direction:column;min-height:100vh;padding:22px 14px}.branding{display:flex;align-items:center;gap:12px;padding:0 8px 31px}.brand-icon,.login-icon{height:38px;width:38px;border-radius:11px;background:#78b5df;color:#102032;display:grid;place-items:center;font-weight:900;font-size:24px}.branding strong{display:block;font-size:17px;letter-spacing:.13em}.branding small{color:#8191a6;font-size:9px;letter-spacing:.12em}.navtitle,.eyebrow{font-size:10px;font-weight:800;letter-spacing:.16em;color:#8194b0}.navtitle{margin:0 14px 10px}.sidebar nav{display:grid;gap:4px}.sidebar nav button{text-align:left;border:0;background:transparent;color:#a3b2c8;padding:12px 15px;border-radius:8px;font-size:13px}.sidebar nav button:hover,.sidebar nav button.active{background:#253a51;color:#fff}.sidebar nav button.active{border-left:3px solid #79b7e4}.spacer{flex:1}.small-panel{display:flex;align-items:center;gap:7px;font-size:11px;padding:14px 8px;color:#b5c7d7}.small-panel code{font-size:10px;color:#8296ad}.statusdot{width:7px;height:7px;border-radius:50%;background:#56c89a}.footer{font-size:9px;letter-spacing:.13em;color:#65809b;padding:14px 8px}
   main{min-width:0;flex:1}.topbar{height:69px;padding:0 27px;border-bottom:1px solid #26344a;display:flex;align-items:center;justify-content:space-between;background:#162334}.breadcrumbs{font-size:12px;color:#93a5bd;display:flex;align-items:center;gap:12px}.breadcrumbs span{color:#536b82}.breadcrumbs b{color:#e9eff7}.actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}button.primary,button.secondary,button.danger{padding:9px 13px;border-radius:7px;font-size:12px;font-weight:650}button.primary{background:#76b6e2;color:#142034;border:1px solid #76b6e2}button.secondary{border:1px solid #40526c;background:#243247;color:#c7d5e7}button.danger{background:#483044;color:#fdb7b7;border:1px solid #71475b}.draft-badge,.live{font-size:11px;color:#acd5ff;background:#243d57;border-radius:20px;padding:7px 9px}.workspace{padding:28px;display:grid;gap:20px;max-width:1700px;margin:auto}.page-title{display:flex;justify-content:space-between;align-items:center;gap:16px}.page-title h1{margin:6px 0;font-size:23px;font-weight:670}.eyebrow{margin:0}.pane{border:1px solid #314158;border-radius:11px;background:#192639;padding:20px;min-width:0}.pane h2,.pane h3{margin:0 0 16px;font-size:15px}.pane p,.inspector p,.palette p{color:#91a4bb;font-size:12px;line-height:1.5}.pane code,code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:#9bcefa;font-size:12px}.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:15px}.metric{background:#1b2a3e;border:1px solid #34465f;border-radius:10px;padding:20px}.metric span{display:block;color:#9aacc2;font-size:12px}.metric b{display:block;font-size:29px;margin-top:9px}.split-pane{display:grid;grid-template-columns:1fr 1fr;gap:18px}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:17px}.tool{margin:12px 0;border-top:1px solid #33445c;padding-top:12px;display:grid;gap:7px;font-size:12px}.tool span{color:#9baec4}.tool p{margin:0}.list-row{display:grid;text-align:left;gap:8px;width:100%;border:1px solid #34445d;background:#202e43;color:#e3eaf4;border-radius:8px;padding:12px;margin:8px 0}.list-row.selected{border-color:#83bce8}.list-row span{font-size:11px;color:#9aacc2;overflow-wrap:anywhere}.editor-grid{display:grid;grid-template-columns:210px minmax(350px,1fr) 245px;gap:12px;height:520px}.palette,.inspector{border:1px solid #314158;border-radius:10px;background:#192639;padding:15px;overflow:auto}.palette h3,.inspector h3{font-size:13px;margin:0 0 12px}.palette p{margin:0 0 11px}.palette-items{display:grid;grid-template-columns:1fr;gap:5px}.palette button{border:1px solid #34465c;background:#233349;border-radius:6px;color:#d7e2ef;text-align:left;padding:7px 8px;font-size:11px;display:flex;gap:8px;align-items:center}.palette button:hover,.palette button.selected{border-color:#89bfe7}.plus{font-size:14px;color:#89bfe7}.palette-divider,.divider{border-top:1px solid #314158;margin:16px 0}.palette .node-item{display:grid;gap:3px;width:100%;margin-bottom:4px}.node-item small{color:#8da9c3}.canvas{min-width:0;min-height:0}.inspector .field{display:grid;gap:6px;margin:12px 0}.field label,.pane>label{font-size:11px;color:#a7bad3}.field textarea,.pane textarea,.login-panel input{width:100%;border:1px solid #3e5068;background:#101b2b;color:#e3eaf3;border-radius:7px;padding:11px;font-size:12px}.field textarea,.pane textarea{font-family:ui-monospace,Consolas,monospace;line-height:1.55;resize:vertical}.inspector-actions{display:flex;gap:8px}.toolbar{display:flex;justify-content:space-between;align-items:center;gap:14px}.unsaved{color:#f6cd89;font-size:11px}.bottom{margin-top:0}.pane .output{font-size:11px;overflow:auto;max-height:250px;white-space:pre-wrap;color:#a8cdec}.hcl-editor{min-height:520px;resize:vertical;line-height:1.6!important;margin-top:10px}.revision{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #33445c;padding:14px 2px}.revision p{margin:5px 0 0}table{border-collapse:collapse;width:100%;text-align:left;font-size:12px}th,td{padding:11px;border-bottom:1px solid #34465d}th{color:#91a4bd}.toast{position:fixed;right:20px;bottom:20px;background:#26415a;border:1px solid #466988;color:#d6eaff;border-radius:9px;padding:12px 15px;font-size:12px;display:flex;gap:12px;max-width:460px;z-index:200}.toast.error{background:#452a36;border-color:#8b4356}.toast button{background:none;border:0;color:#fff;font-size:18px}.login-panel{max-width:430px;margin:100px auto;padding:34px;background:#1b2a3e;border:1px solid #33455e;border-radius:14px}.login-panel h1{margin:18px 0 7px}.login-panel p{color:#9aacc2;font-size:13px;line-height:1.6}.login-panel form{display:grid;gap:12px;margin-top:22px}.login-panel label{font-size:12px;color:#afc4d9}.login-panel input{height:42px}.login-panel button{height:40px}
+  .trace-filters{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:15px}
+  .trace-filters label{display:grid;gap:6px;font-size:11px;color:#a7bad3}
+  .trace-filters input,.trace-filters select{background:#101b2b;color:#e3eaf3;border:1px solid #3e5068;border-radius:7px;padding:8px;max-width:280px}
+  .trace-table{overflow:auto}
+  .trace-diagnostic{white-space:pre-wrap;overflow-wrap:anywhere;max-width:390px;max-height:180px;overflow:auto;margin:8px 0 0;color:#bbcedf}
+  .trace-table summary{cursor:pointer;color:#9bcefa}
   @media(max-width:1150px){.editor-grid{grid-template-columns:150px minmax(300px,1fr);height:620px}.inspector{grid-column:1/-1;min-height:190px}.toolbar{margin-top:200px}.sidebar{width:180px}.metrics{grid-template-columns:repeat(2,1fr)}}
   @media(max-width:750px){.app{display:block}.sidebar{width:100%;min-height:auto;padding:12px}.branding{padding:0}.navtitle,.footer,.small-panel,.spacer{display:none}.sidebar nav{display:flex;overflow:auto}.sidebar nav button{white-space:nowrap}.topbar{padding:10px;height:auto;gap:8px;flex-wrap:wrap}.workspace{padding:15px}.editor-grid{display:block;height:auto}.palette,.canvas,.inspector{min-height:200px;margin-bottom:12px}.canvas{height:430px}.toolbar{margin:0;flex-wrap:wrap}.metrics,.split-pane{grid-template-columns:1fr}}
 </style>
