@@ -85,15 +85,19 @@ func TestJoinThresholdRequiresDistinctFiredBranches(t *testing.T) {
 				a,b:=mask&1!=0,mask&2!=0
 				out,err:=New(nil).Run(context.Background(),"r1",cfg,
 					"voting","vote",map[string]any{"left":a,"right":b},true)
-				if err!=nil{t.Fatalf("mask %d: %v",mask,err)}
 				count:=0
 				if a{count++}
 				if b{count++}
 				want:=count>=tc.threshold
-				got:=out.Value=="approved"
-				if got!=want{
-					t.Fatalf("mode=%s quorum=%d fired=%d got=%#v wantActivated=%t",
-						tc.mode,tc.quorum,count,out.Value,want)
+				if want {
+					if err!=nil || out.Status!="success" || out.Value!="approved" {
+						t.Fatalf("mode=%s quorum=%d fired=%d: valid join failed: %#v %v",
+							tc.mode,tc.quorum,count,out,err)
+						}
+				} else if err==nil || !strings.Contains(err.Error(),"produced no output") ||
+					out.Status!="failure" || out.Value!=nil || out.OutputProduced {
+					t.Fatalf("mode=%s quorum=%d fired=%d: inactive join published: %#v %v",
+						tc.mode,tc.quorum,count,out,err)
 				}
 			}
 		})
