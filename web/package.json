@@ -7,7 +7,8 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "test:edges": "node --experimental-strip-types --test tests/graph-edges.test.mjs tests/draft-guards.test.mjs tests/graph-editor.test.mjs"
+    "test:edges": "node --experimental-strip-types --test tests/graph-edges.test.mjs tests/draft-guards.test.mjs tests/graph-editor.test.mjs",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@xyflow/svelte": "^1.0.0",
@@ -16,6 +17,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@playwright/test": "^1.55.0",
     "@sveltejs/adapter-auto": "^6.0.0",
     "@sveltejs/vite-plugin-svelte": "^6.0.0",
     "svelte-check": "^4.0.0",
