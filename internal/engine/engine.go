@@ -427,7 +427,18 @@ func (r *Runtime) execute(ctx context.Context, revision string, cfg *config.Conf
 				// Bind only authenticated, completed producer values. Validation
 				// precedes the consumer's external effect or interceptor.
 				ports := map[string]any{}
+				present := map[string]bool{}
 				for port, binding := range dataInputs[name] {
+					if cfg.Plans[p.Name].Nodes[name].OptionalPorts[port] &&
+						states[binding.producer] == "skipped" {
+						ports[port] = nil
+						present[port] = false
+						continue
+					}
+					if states[binding.producer] != "completed" {
+						results[i] = nodeResult{name: name, error: fmt.Errorf("data port %s producer has not completed", port)}
+						return
+					}
 					state, ok := snap[binding.producer].(map[string]any)
 					if !ok {
 						results[i] = nodeResult{name: name, error: fmt.Errorf("data port %s unavailable", port)}
@@ -457,8 +468,9 @@ func (r *Runtime) execute(ctx context.Context, revision string, cfg *config.Conf
 						return
 					}
 					ports[port] = value
+					present[port] = true
 				}
-				vars := map[string]any{"input": input, "nodes": snap, "ports": ports}
+				vars := map[string]any{"input": input, "nodes": snap, "ports": ports, "port_present": present}
 				results[i] = r.evalNode(ctx, cfg, p.Nodes[name], cfg.Plans[p.Name].Nodes[name], vars, dry, runID, surface, toolName, revision)
 			}(index, name)
 		}
@@ -609,7 +621,7 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 				break
 			}
 			local := map[string]any{
-				"input": item, "nodes": vars["nodes"], "ports": vars["ports"],
+				"input": item, "nodes": vars["nodes"], "ports": vars["ports"], "port_present": vars["port_present"],
 			}
 			mapped, e := plan.Expressions["mapping"].Eval(ctx, local)
 			if e != nil {

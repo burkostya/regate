@@ -561,3 +561,50 @@ alongside the existing `mock` to exercise this boundary without an upstream.
 Neither declared MCP annotations nor remote claims are trusted as a schema
 attestation. When an after-call interceptor rewrites the MCP result, raw
 structured content is invalidated rather than silently reused.
+
+
+### Optional data ports and explicit presence (PR #50)
+
+An `any`/`quorum` join may activate with a skipped data source. Such
+dependencies remain **forbidden by default**. A consumer can explicitly
+opt in to a nullable, schema-checked input:
+
+```hcl
+node "merge" {
+  kind = "join"
+  mode = "any"
+  input_ports = {
+    left = {
+      optional = true
+      schema = {type = ["string", "null"]}
+    }
+  }
+  value = "port_present.left ? ports.left : 'fallback'"
+}
+edge {
+  kind = "data"
+  from = "left"
+  to = "merge"
+  to_port = "left"
+}
+```
+
+This wrapper is distinct from the existing direct JSON Schema form. It must
+contain **exactly** `optional = true` and a `schema` object that admits
+`null`; malformed wrappers and nonnullable optional contracts are rejected
+at compilation. Direct JSON Schema declarations remain required ports.
+
+The source must still be a control ancestor of the consumer, even for an
+optional port: the scheduler guarantees the source has either *completed*
+or *skipped* before the consumer activates. Only a **skipped producer** binds
+`ports.left = null` with `port_present.left = false`. If it completes,
+`port_present.left = true` even when the value is itself JSON null. A
+completed MCP producer with missing `structuredContent`, incomplete node,
+or a pending producer is **never** converted into an absent optional value.
+An optional port does not create control activation, bypass an authorization
+gate, or relax the node's output or effect contracts.
+
+`port_present` is available within CEL mapping and pure map iteration,
+with static port-name checking identical to `ports`. Direct unsafe
+`nodes.maybe.value` expressions remain rejected for skipped branches; use
+an explicit optional binding when data may be absent.
