@@ -480,3 +480,20 @@
   regression guard the barrier and preserve fail-closed non-replay.
   Full typed ports, nested pipelines and verified policy composition
   remain open under #7.
+
+
+#### Fail-closed mandatory policy dominance (PR #44)
+
+- `policy.check` nodes can opt into `mandatory=true`. Such nodes must
+  provide a decision input and reference a non-builtin Decision hook;
+  a missing or no-op authorizer is rejected before activation.
+- The compiler checks every graph path to outbound HTTP/MCP/hook
+  calls, output nodes and suspension points: all must pass through
+  every mandatory policy gate, ignoring guards conservatively.
+  Bypass edges, parallel branch joins and unguarded output routes
+  are rejected even when execution would otherwise be valid.
+- Config/property-like graph tests exercise accepted dominance,
+  bypass paths, missing decisions, unsafe hooks and outputs.
+  Identity and direct passthrough MCP surface permissions remain
+  separate work under #5/#7; marking a policy mandatory does not
+  itself prove upstream trust or external effect safety.

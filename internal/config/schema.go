@@ -38,7 +38,7 @@ var nodeAttributes = map[string]map[string]string{
 	"mcp.call":     {"kind": "string", "upstream": "string", "tool": "string", "effect": "string", "arguments": "object-or-expression", "mock": "any"},
 	"hook.call":    {"kind": "string", "hook": "string", "value": "expression"},
 	"http.call":    {"kind": "string", "url": "string", "auth_env": "string", "timeout_ms": "positive-int", "value": "expression", "trust_level": "string"},
-	"policy.check": {"kind": "string", "policy": "string", "value": "expression"},
+	"policy.check": {"kind": "string", "policy": "string", "value": "expression", "mandatory": "bool"},
 	"suspend":      {"kind": "string"},
 	"mask.pii":     {"kind": "string", "value": "expression"},
 }
