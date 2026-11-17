@@ -30,11 +30,19 @@ func ID() string {
     return hex.EncodeToString(b)
 }
 func Hash(s string) string {h:=sha256.Sum256([]byte(s));return hex.EncodeToString(h[:])[:20]}
+// SourceDigest is the full SHA-256 of exactly the stored editable HCL bytes,
+// not the shorter public revision identifier.
+func SourceDigest(source string) string {
+    sum := sha256.Sum256([]byte(source))
+    return hex.EncodeToString(sum[:])
+}
+var ErrDraftSourceConflict = errors.New("draft source conflict: stale editor snapshot")
 
 type Draft struct {
     ID string `json:"id"`
     Base string `json:"base"`
     Source string `json:"source"`
+    SourceDigest string `json:"source_digest"`
     Created time.Time `json:"created"`
 }
 type Revision struct {
@@ -347,7 +355,7 @@ func (s *Store) DraftCreate()(Draft,error) {
     var base,source string
     err=tx.QueryRow("SELECT id,source FROM revisions ORDER BY seq DESC LIMIT 1").Scan(&base,&source)
     if err!=nil{return Draft{},err}
-    draft:=Draft{ID:ID(),Base:base,Source:source,Created:time.Now().UTC()}
+    draft:=Draft{ID:ID(),Base:base,Source:source,SourceDigest:SourceDigest(source),Created:time.Now().UTC()}
     if _,err=tx.Exec("INSERT INTO drafts(id,base,source,created) VALUES(?,?,?,?)",
         draft.ID,draft.Base,draft.Source,draft.Created.Format(time.RFC3339Nano));err!=nil{return Draft{},err}
     return draft,tx.Commit()
@@ -360,7 +368,9 @@ func (s *Store) DraftGet(id string)(Draft,error) {
         Scan(&d.ID,&d.Base,&d.Source,&date)
     if err!=nil{return Draft{},err}
     d.Created,err=time.Parse(time.RFC3339Nano,date)
-    return d,err
+    if err != nil { return Draft{},err }
+    d.SourceDigest = SourceDigest(d.Source)
+    return d,nil
 }
 func (s *Store) DraftUpdate(id,source string)(Draft,error) {
     if len(id)!=24{return Draft{},fmt.Errorf("invalid draft id")}
@@ -369,6 +379,21 @@ func (s *Store) DraftUpdate(id,source string)(Draft,error) {
     rows,err:=result.RowsAffected()
     if err!=nil{return Draft{},err}
     if rows==0{return Draft{},sql.ErrNoRows}
+    return s.DraftGet(id)
+}
+// DraftUpdateIfSource atomically changes a draft only if its persisted
+// source is exactly the snapshot the editor read. This prevents concurrent
+// writers, including independent Regate processes, from losing an edit.
+func (s *Store) DraftUpdateIfSource(id, expectedSource, source string)(Draft,error) {
+    if len(id)!=24 { return Draft{},fmt.Errorf("invalid draft id") }
+    result,err:=s.db.Exec("UPDATE drafts SET source=? WHERE id=? AND source=?",source,id,expectedSource)
+    if err!=nil { return Draft{},err }
+    rows,err:=result.RowsAffected()
+    if err!=nil { return Draft{},err }
+    if rows==0 {
+        if _,err:=s.DraftGet(id);err!=nil { return Draft{},err }
+        return Draft{},ErrDraftSourceConflict
+    }
     return s.DraftGet(id)
 }
 func (s *Store) Activate(id string)(Revision,error) {
