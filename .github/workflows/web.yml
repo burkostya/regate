@@ -17,3 +17,72 @@ jobs:
       - run: npm run check
       - run: npm run test:edges
       - run: npm run build
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install browser test dependencies
+        run: npm install --no-audit --no-fund
+        working-directory: web
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: web
+      - name: Launch demo MCP, Regate and SvelteKit
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/regate-browser"
+          go run ./cmd/regate-demo > "$RUNNER_TEMP/regate-demo.log" 2>&1 &
+          ready=0
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:9091/mcp -H 'Content-Type: application/json' \
+              --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" -ne 1 ]; then
+            cat "$RUNNER_TEMP/regate-demo.log"
+            exit 1
+          fi
+          REGATE_ADMIN_TOKEN=regate-e2e-test-token \
+            go run ./cmd/regate -config ./examples/regate.hcl -state "$RUNNER_TEMP/regate-browser" \
+            > "$RUNNER_TEMP/regate-server.log" 2>&1 &
+          (cd web && npm run dev > "$RUNNER_TEMP/regate-vite.log" 2>&1) &
+          ready=0
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:8080/api/status \
+              -H 'Authorization: Bearer regate-e2e-test-token' >/dev/null 2>&1 &&
+              curl -fsS http://127.0.0.1:5173/ >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" -ne 1 ]; then
+            cat "$RUNNER_TEMP/regate-server.log" "$RUNNER_TEMP/regate-vite.log"
+            exit 1
+          fi
+      - name: Exercise Chromium console
+        run: npm run test:e2e
+        working-directory: web
+        env:
+          REGATE_E2E_ADMIN_TOKEN: regate-e2e-test-token
+      - name: Preserve browser diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chromium-regate-debug
+          path: |
+            web/test-results/
+            ${{ runner.temp }}/regate-demo.log
+            ${{ runner.temp }}/regate-server.log
+            ${{ runner.temp }}/regate-vite.log
+          if-no-files-found: ignore
