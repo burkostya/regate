@@ -96,3 +96,32 @@ func TestOfflineKeyAuditCLISuppressesSecrets(t *testing.T) {
 		t.Fatal("original HCL source leaked in offline audit")
 	}
 }
+
+func TestOfflineRestoreAcknowledgmentCLI(t *testing.T){
+	s,err:=storage.New(t.TempDir(),"regate {}")
+	if err!=nil{t.Fatal(err)}
+	defer s.Close()
+	archive:=filepath.Join(t.TempDir(),"archive.sqlite")
+	m,err:=s.BackupVerified(archive)
+	if err!=nil{t.Fatal(err)}
+	dir:=filepath.Join(t.TempDir(),"restored")
+	if err:=os.Mkdir(dir,0700);err!=nil{t.Fatal(err)}
+	if _,err:=storage.RestoreVerifiedBackup(archive,dir);err!=nil{t.Fatal(err)}
+	t.Setenv("REGATE_ADMIN_TOKEN","")
+	var output bytes.Buffer
+	if err:=acknowledgeRestoreToWriter(dir,m.SHA256,"operator",
+		"The prior worker and all external resource writes are fenced.",
+		&output);err!=nil{t.Fatal(err)}
+	var receipt storage.RestoreAcknowledgment
+	if err:=json.Unmarshal(output.Bytes(),&receipt);err!=nil{t.Fatal(err)}
+	if receipt.SnapshotSHA256!=m.SHA256 || receipt.ReleasedSHA256=="" ||
+		receipt.InvalidatedTasks!=0{
+		t.Fatalf("incorrect offline receipt: %#v",receipt)
+	}
+	if bytes.Contains(output.Bytes(),[]byte("all external resource writes are fenced")) {
+		t.Fatal("raw operator attestation exposed in receipt")
+	}
+	ready,err:=storage.New(dir,"regate {}")
+	if err!=nil{t.Fatal(err)}
+	defer ready.Close()
+}

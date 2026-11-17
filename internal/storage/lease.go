@@ -36,6 +36,7 @@ func (s *Store) liveExecutionLease()(bool,error) {
 // or expires. The lease is internal to Regate; no upstream is trusted to
 // enforce it unless an effect adapter explicitly supports fencing.
 func (s *Store) AcquireExecutionLease()error {
+    if err:=checkRestoreQuarantine(s.Dir);err!=nil{return err}
     s.mu.RLock()
     already:=s.leaseOwner!=""
     s.mu.RUnlock()
@@ -139,6 +140,7 @@ func (s *Store) releaseExecutionLease() {
 // boundary. Stores used only for offline import/admin and unit tests may not
 // own a lease, but cannot dispatch while another live worker holds one.
 func (s *Store) CheckExecutionLease(ctx context.Context)error {
+    if err:=checkRestoreQuarantine(s.Dir);err!=nil{return err}
     s.mu.RLock()
     owner,epoch,lost:=s.leaseOwner,s.leaseEpoch,s.leaseLost
     s.mu.RUnlock()
@@ -163,6 +165,7 @@ func (s *Store) CheckExecutionLease(ctx context.Context)error {
 // opened for offline analysis cannot dispatch effects merely because no other
 // worker happens to have acquired the lease yet.
 func (s *Store) RequireExecutionLeader(ctx context.Context) error {
+    if err:=checkRestoreQuarantine(s.Dir);err!=nil{return err}
     s.mu.RLock()
     owner,lost:=s.leaseOwner,s.leaseLost
     s.mu.RUnlock()
@@ -175,6 +178,7 @@ func (s *Store) RequireExecutionLeader(ctx context.Context) error {
 // transactionally. This prevents a dethroned leader from admitting new writes
 // even if another Regate instance is concurrently promoting a new lease.
 func (s *Store) checkExecutionLeaseTx(tx *sql.Tx)error {
+    if err:=checkRestoreQuarantine(s.Dir);err!=nil{return err}
     s.mu.RLock()
     owner,epoch,lost:=s.leaseOwner,s.leaseEpoch,s.leaseLost
     s.mu.RUnlock()

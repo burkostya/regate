@@ -446,3 +446,22 @@
   and admin/public authorization boundaries. No OAuth remote refresh
   occurs during rotation. Historical backups/WAL, KMS, vendor revocation
   and recovery from ambiguous writes remain open gates for #5/#6/#9.
+
+
+#### Fail-closed restored-state execution quarantine (PR #42)
+
+- Offline restore now publishes a durable quarantine sentinel *before*
+  `regate.sqlite`. Store opening, leader promotion and effect guards reject
+  restored state until a separate offline operator acknowledgment.
+- `-acknowledge-restore -state DIR -snapshot-sha256 SHA -operator ID
+  -fence-evidence TEXT` requires matching standalone integrity/key audit
+  and an expired copied lease, then transactionally fails all nonterminal
+  historical tasks, discards old queued inputs/checkpoints and revokes
+  restored live/refreshing credentials before removing quarantine.
+- Independent event/effect evidence is retained. The raw operator
+  statement, queued secrets and credential contents do not appear in the
+  durable receipt. A failed acknowledgment remains quarantined and must
+  be retried from an immutable clean snapshot.
+- This prevents **implicit historical replay**; it does NOT prove
+  physical source-worker fencing, external idempotency, an IdP's state,
+  unknown-write reconciliation or production disaster-recovery readiness.

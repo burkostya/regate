@@ -88,6 +88,9 @@ type Store struct {
 const databaseName = "regate.sqlite"
 
 func New(dir,initial string) (*Store,error) {
+    // Do not even open a quarantined restore: initialization can otherwise
+    // migrate state or reconcile interrupted work before operator review.
+    if err:=checkRestoreQuarantine(dir);err!=nil{return nil,err}
     if err:=os.MkdirAll(dir,0700);err!=nil{return nil,err}
     path:=filepath.Join(dir,databaseName)
     uri:=(&url.URL{Scheme:"file",Path:path}).String()+
