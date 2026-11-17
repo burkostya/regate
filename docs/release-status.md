@@ -580,3 +580,16 @@
   missing MCP structured results, and pending sources still fail closed.
 - No implicit optionality, policy bypass, or change to join activation
   thresholds. Multi-output effectful composition remains open.
+
+
+#### Explicit effectful pipeline.call (PR #51)
+
+- `pipeline.call.allow_effects=true` enables named effectful callees with
+  deterministic derived subrun IDs and scoped durable MCP/HTTP/hook effect
+  identities, without changing ordinary pure-call behavior.
+- Parent mandatory Decision gates treat effectful calls as observable sinks;
+  pure callers cannot conceal nested effects and no nested `suspend` is
+  admitted. Unknown, already-dispatched writes cannot be retried in the same
+  logical child subrun; subrun traces link to the parent.
+- This is a fail-closed, opt-in execution boundary, **not** nested
+  checkpoint/resume, a provider idempotence guarantee, or full #7 release.

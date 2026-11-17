@@ -36,7 +36,7 @@ var nodeAttributes = map[string]map[string]string{
 	"parallel":     {"kind": "string", "value": "expression", "mapping": "expression"},
 	"join":         {"kind": "string", "mode": "string", "quorum": "positive-int", "value": "expression", "mapping": "expression"},
 	"map":          {"kind": "string", "items": "expression", "mapping": "expression", "max_items": "positive-int"},
-	"pipeline.call": {"kind": "string", "pipeline": "string", "arguments": "object-or-expression"},
+	"pipeline.call": {"kind": "string", "pipeline": "string", "arguments": "object-or-expression", "allow_effects": "bool"},
 	"mcp.call":     {"kind": "string", "upstream": "string", "tool": "string", "effect": "string", "arguments": "object-or-expression", "mock": "any", "mock_structured": "any"},
 	"hook.call":    {"kind": "string", "hook": "string", "value": "expression"},
 	"http.call":    {"kind": "string", "url": "string", "auth_env": "string", "timeout_ms": "positive-int", "value": "expression", "trust_level": "string"},
