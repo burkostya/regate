@@ -862,7 +862,8 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 			if parallelism < 1 || parallelism > 16 || parallelism > maxItems {
 				ret.error = fmt.Errorf("invalid pure map parallelism")
 			} else {
-				ret.value, ret.error = evaluatePureMap(ctx, plan, items, vars, parallelism)
+				ret.value, ret.error = evaluatePureMap(ctx, plan, items, vars,
+                    effectivePureMapParallelism(ctx, parallelism))
 			}
 			break
 		}
@@ -901,7 +902,10 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 				ret.error = fmt.Errorf("invalid effect-free pipeline map parallelism")
 				break
 			}
-			if parallelism > 1 {
+			// Within an outer pure-map worker, keep the declared HCL
+            // contract but execute this nested batch sequentially. Nested
+            // pools would multiply the live child goroutine count.
+            if effectivePureMapParallelism(ctx, parallelism) > 1 {
 				ret.value, ret.error = r.evaluatePurePipelineMap(ctx, cfg, child, plan,
 					items, parallelism, runID, surface, toolName, revision, dry)
 				break
