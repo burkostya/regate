@@ -116,7 +116,7 @@ func TestPurePipelineCallRejectedUnsafeConfigurations(t *testing.T) {
 	cases := []struct {name, src, want string}{
 		{"unknown pipeline", strings.Replace(base, `pipeline = "inner"`, `pipeline = "not_found"`, 1), "unknown called pipeline"},
 		{"cycle", selfRecursiveCall(base), "cyclic pipeline.call"},
-		{"suspending callee", strings.Replace(base, childTransform, blockedSuspend, 1), "cannot execute inside a pure pipeline.call"},
+		{"suspending callee", strings.Replace(base, childTransform, blockedSuspend, 1), "suspend requires durable nested checkpoint support"},
 		{"multiple outputs", strings.Replace(base, childOutput, childOutput + `
   node "second" {
     kind = "output"
