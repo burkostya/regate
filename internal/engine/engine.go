@@ -810,6 +810,14 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 		childName := n.Str("pipeline")
 		child, hasChild := cfg.Pipelines[childName]
 		var items []any
+		multiOutput := false
+		if hasChild {
+			terminals := 0
+			for _, node := range child.Nodes {
+				if node.Kind == "output" { terminals++ }
+			}
+			multiOutput = terminals > 1
+		}
 		start := 0
 		result := []any{}
 		if childCheckpoint != nil {
@@ -911,7 +919,19 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 					ret.error = fmt.Errorf("map item %d: child pipeline produced no output", i)
 					break
 				}
-				result = append(result, nested.Value)
+				var itemOutput any = nested.Value
+				if multiOutput {
+					// The per-item object contains each completed named terminal.
+					// Optional terminals may be absent, never silently null.
+					fields := make(map[string]any, len(nested.NamedOutputs))
+					for name, value := range nested.NamedOutputs { fields[name] = value }
+					itemOutput = fields
+				}
+				if plan.MapItemSchema == nil || plan.MapItemSchema.Validate(itemOutput) != nil {
+					ret.error = fmt.Errorf("map item %d failed typed child output contract", i)
+					break
+				}
+				result = append(result, itemOutput)
 				continue
 			}
 			local := map[string]any{
@@ -1428,15 +1448,12 @@ func validateMappedFrame(cfg *config.Config, pipelineName, nodeName string,
 	}
 	inputSchema := plan.Nodes[nodeName].InputSchema
 	childInput := childPlan.Nodes[child.Entry].InputSchema
-	outputs := []string{}
-	for name, item := range child.Nodes {
-		if item.Kind == "output" {outputs = append(outputs, name)}
+	if plan.Nodes[nodeName].MapItemSchema == nil {
+		return fmt.Errorf("mapped continuation lacks a compiled item contract")
 	}
-	if len(outputs) != 1 || childPlan.Nodes[outputs[0]] == nil ||
-		childPlan.Nodes[outputs[0]].OutputSchema == nil {
-		return fmt.Errorf("mapped continuation requires one typed child output")
-	}
-	outputSchema := childPlan.Nodes[outputs[0]].OutputSchema
+	// Immutable completed prefixes must satisfy the *map item* contract,
+	// not just an individual child terminal. This also covers required
+	// and optional fields of multi-terminal mapped children.
 	for i, item := range frame.MapItems {
 		arguments, ok := item.(map[string]any)
 		if !ok || arguments == nil ||
@@ -1445,7 +1462,7 @@ func validateMappedFrame(cfg *config.Config, pipelineName, nodeName string,
 		}
 	}
 	for i, value := range frame.MapResults {
-		if outputSchema.Validate(value) != nil {
+		if plan.Nodes[nodeName].MapItemSchema.Validate(value) != nil {
 			return fmt.Errorf("invalid mapped checkpoint completed output %d", i)
 		}
 	}
