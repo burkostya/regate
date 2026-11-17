@@ -179,11 +179,13 @@ npx playwright install chromium
 REGATE_E2E_ADMIN_TOKEN="$REGATE_ADMIN_TOKEN" npm run test:e2e
 ```
 
-The E2E test creates and edits a disposable draft in the running
-gateway, never activates it. Use an isolated local state directory;
-do not run browser tests against production or shared administrator
-drafts. On CI the browser job provisions temporary SQLite state,
-automatically checks server readiness and retains failure traces.
+By default the E2E test creates and edits a disposable draft but
+**does not activate or roll back**. Activation/rollback checks are enabled
+only with `REGATE_E2E_ALLOW_ACTIVATION=true`. **Never enable that flag
+against production or shared administrator state.** GitHub Actions opts
+in only after provisioning an isolated temporary SQLite state directory,
+binding Regate to `127.0.0.1`, starting the demo MCP provider, and
+verifying process readiness. Failure screenshots and traces are retained.
 
 ### Recover an outdated console draft
 
