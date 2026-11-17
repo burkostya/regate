@@ -832,8 +832,15 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 		}
 		callContext := ctx
 		if retry, present := n.Attrs["retry"].(map[string]any); present {
-			callContext = withReadRetry(ctx, int(retry["max_attempts"].(int64)),
-				time.Duration(retry["delay_ms"].(int64))*time.Millisecond)
+			attempts, attemptsOK := retry["max_attempts"].(int64)
+			delay, delayOK := retry["delay_ms"].(int64)
+			safe, safeOK := retry["safe_read"].(bool)
+			if kind != "read" || !attemptsOK || !delayOK || !safeOK || !safe ||
+				attempts < 2 || attempts > 4 || delay < 1 || delay > 2000 || len(retry) != 3 {
+				ret.error = fmt.Errorf("invalid runtime MCP read retry contract")
+				break
+			}
+			callContext = withReadRetry(ctx, int(attempts), time.Duration(delay)*time.Millisecond)
 		}
 		ret.mcp, ret.error = r.mcpCall(callContext, cfg, u, n.Str("tool"), args, runID, n.Name, kind)
 		if ret.error == nil {
