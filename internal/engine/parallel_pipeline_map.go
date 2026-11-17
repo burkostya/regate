@@ -21,6 +21,9 @@ func (r *Runtime) evaluatePurePipelineMap(ctx context.Context, cfg *config.Confi
 	if parallelism < 2 || parallelism > 16 || plan.MapItemSchema == nil {
 		return nil, fmt.Errorf("invalid pure pipeline map contract")
 	}
+    if inPureMapWorker(ctx) {
+        return nil, fmt.Errorf("nested pure pipeline map fanout must be serialized")
+    }
 	inputContract := cfg.Plans[child.Name].Nodes[child.Entry].InputSchema
 	for i, item := range items {
 		args, ok := item.(map[string]any)
@@ -42,9 +45,9 @@ func (r *Runtime) evaluatePurePipelineMap(ctx context.Context, cfg *config.Confi
 		if n.Kind == "output" { outputTerminals++ }
 	}
 	multiOutput := outputTerminals > 1
-	evaluate := func(i int) (any, error) {
+	evaluate := func(workerCtx context.Context, i int) (any, error) {
 		subrunID := mappedIterationRunID(runID, plan.Name, child.Name, i)
-		childCtx, cancel := context.WithTimeout(ctx, time.Duration(child.TimeoutMS)*time.Millisecond)
+		childCtx, cancel := context.WithTimeout(workerCtx, time.Duration(child.TimeoutMS)*time.Millisecond)
 		defer cancel()
 		childCtx = withEffectScope(childCtx, subrunID)
 		if !dry && r.Store != nil {
@@ -88,12 +91,13 @@ func (r *Runtime) evaluatePurePipelineMap(ctx context.Context, cfg *config.Confi
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+            workerCtx := withPureMapWorker(ctx)
 			for i := range jobs {
-				if err := ctx.Err(); err != nil {
+				if err := workerCtx.Err(); err != nil {
 					failures[i] = err
 					continue
 				}
-				results[i], failures[i] = evaluate(i)
+				results[i], failures[i] = evaluate(workerCtx, i)
 			}
 		}()
 	}
