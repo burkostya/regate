@@ -1107,3 +1107,21 @@
   OpenTelemetry export, full log search, distributed trace backend or
   long-term audit retention. Complete #9/#10 production acceptance
   remains open.
+
+#### Strict bounded JSON framing for administrative REST (#9)
+
+- The authenticated REST JSON parser now reads and bounds the **entire**
+  request (2 MiB), rather than decoding a valid prefix and silently
+  ignoring arbitrary extra bytes. It requires exactly one JSON object.
+- Duplicate member names are rejected at any nested level, including
+  escape-equivalent keys, along with malformed/trailing frames and
+  nesting deeper than 128. This prevents ambiguous administrative
+  intents being interpreted differently across systems.
+- Negative Go integration tests demonstrate that rejected bodies
+  cannot modify an existing HCL draft. Boundary tests verify exact
+  2 MiB acceptance and one-byte overflow rejection, plus a Go fuzz
+  target for object/framing/duplicate-key invariants.
+- The change applies to administrative REST JSON operations. The
+  official MCP SDK transport has its own framing and conformance
+  gates; this does not claim to replace MCP protocol validation,
+  load testing or comprehensive production security acceptance.
