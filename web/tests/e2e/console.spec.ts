@@ -130,7 +130,7 @@ test('real console edits typed port graph, validates HCL and rejects stale draft
   // revision. A local Playwright run against a user-managed gateway never
   // activates or rolls back by default.
   if (process.env.REGATE_E2E_ALLOW_ACTIVATION !== 'true') return;
-  expect(before.listen).toMatch(/^127\\.0\\.0\\.1:/);
+  expect(before.listen).toMatch(/^127\.0\.0\.1:/);
 
   page.once('dialog', dialog => dialog.accept());
   const activateResponse = page.waitForResponse(response =>
