@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -73,6 +74,45 @@ func outcomeResult(out engine.Outcome, err error) map[string]any {
 	}
 	return map[string]any{"resultType": "complete", "content": []any{map[string]any{"type": "text", "text": fmt.Sprint(out.Value)}}, "structuredContent": out.Value, "isError": false}
 }
+
+// continuationRequest keeps the existing resume key and content contract.
+// For multiple independent suspensions the client supplies a path of node
+// names as a sibling of action/content in inputResponses.resume.
+func continuationRequest(paths [][]string, first bool) map[string]any {
+	message:="Additional continuation data"
+	if first { message="Provide the data required to resume the Regate pipeline" }
+	if len(paths)>1 { message="Select one of the pending suspension paths and provide its data" }
+	return map[string]any{"resume":map[string]any{
+		"method":"elicitation/create",
+		"params":map[string]any{"mode":"form","message":message,
+			"requestedSchema":map[string]any{"type":"object","additionalProperties":true}},
+		"paths":paths,
+	}}
+}
+
+func parseContinuationPath(response map[string]any)([]string,error) {
+	raw,found:=response["path"]
+	if !found {return nil,nil}
+	var segments []string
+	switch path:=raw.(type) {
+	case []string:
+		segments=path
+	case []any:
+		for _,part:=range path {
+			name,ok:=part.(string)
+			if !ok {return nil,fmt.Errorf("invalid suspension path segment")}
+			segments=append(segments,name)
+		}
+	default:
+		return nil,fmt.Errorf("suspension path must be an array of node names")
+	}
+	if len(segments)==0 {return nil,fmt.Errorf("empty suspension path")}
+	for _,part:=range segments {
+		if part=="" {return nil,fmt.Errorf("empty suspension path segment")}
+	}
+	return segments,nil
+}
+
 func (s *Service) CreateTask(ctx context.Context, surface, tool, owner string, args map[string]any) (map[string]any, error) {
     cfg,rev:=s.Current()
     return s.createTaskFor(ctx,cfg,rev.ID,surface,tool,owner,args)
@@ -156,7 +196,7 @@ func (s *Service) createTaskFor(ctx context.Context,cfg *config.Config,revision 
 		if out.Status == "suspended" {
 			current.Status = "input_required"
 			current.StatusMessage = "Agent or user input needed to resume pipeline"
-			current.InputRequests = map[string]any{"resume": map[string]any{"method": "elicitation/create", "params": map[string]any{"mode": "form", "message": "Provide the data required to resume the Regate pipeline", "requestedSchema": map[string]any{"type": "object", "additionalProperties": true}}}}
+			current.InputRequests = continuationRequest(out.SuspensionPaths,true)
 		} else {
 			current.Status = "completed"
 			current.StatusMessage = "Execution completed"
@@ -222,6 +262,22 @@ func (s *Service) TaskUpdateWithContext(ctx context.Context,id, owner string, in
 		return map[string]any{}, nil
 	}
 	value := response["content"]
+	path, err := parseContinuationPath(response)
+	if err!=nil {return nil,err}
+	// Resolve and authorize a target before claiming the task. An ambiguous,
+	// duplicate or malformed path must not turn an input_required task into a
+	// completed error task; it can be corrected without replaying any effect.
+	var checkpoint engine.Checkpoint
+	if err:=s.Store.GetSuspended(t.RunID,&checkpoint);err!=nil {return nil,err}
+	waiting:=engine.PendingSuspensionPaths(&checkpoint)
+	if len(path)==0 && len(waiting)!=1 {
+		return nil,fmt.Errorf("explicit suspension path required")
+	}
+	if len(path)>0 {
+		valid:=false
+		for _,candidate:=range waiting {if slices.Equal(path,candidate) {valid=true;break}}
+		if !valid {return nil,fmt.Errorf("unknown or already answered suspension path")}
+	}
 	source, e := s.Store.Source(t.Revision)
 	if e != nil {
 		return nil, e
@@ -279,7 +335,7 @@ func (s *Service) TaskUpdateWithContext(ctx context.Context,id, owner string, in
 		defer cancel()
 		defer running.Delete(id)
         defer s.signalQueue()
-		out, err := s.Engine.Resume(runctx, cfg, t.Revision, t.RunID, value)
+		out, err := s.Engine.ResumeAt(runctx, cfg, t.Revision, t.RunID, path, value)
 		s.tasksMu.Lock()
 		defer s.tasksMu.Unlock()
 		updated, e := s.Store.TaskGet(id)
@@ -292,7 +348,7 @@ func (s *Service) TaskUpdateWithContext(ctx context.Context,id, owner string, in
 			// The update protocol always accepts inputResponses["resume"].
 			// Publishing "resume_next" here previously stranded a task after
 			// a second suspension without a matching update handler.
-			updated.InputRequests = map[string]any{"resume": map[string]any{"method": "elicitation/create", "params": map[string]any{"mode": "form", "message": "Additional continuation data", "requestedSchema": map[string]any{"type": "object", "additionalProperties": true}}}}
+			updated.InputRequests = continuationRequest(out.SuspensionPaths,false)
 		} else {
 			updated.Status = "completed"
 			updated.Result = taskSafeResult(updated,out,err)
