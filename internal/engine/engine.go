@@ -179,13 +179,21 @@ func scrubPublishedResult(out *Outcome) {
 	out.Checkpoint = nil
 }
 
-// A published MCP tool has one response value, even if its control graph has
-// multiple conditional output nodes. More than one successful terminal must
-// not silently select whichever parallel node happened to be last.
+// A published MCP pipeline tool must produce exactly one response terminal,
+// even when its control graph has conditional outputs. Zero completed outputs
+// is a missing response, not an implicit successful JSON null. More than one
+// successful terminal must not select whichever parallel node finished last.
 // Called pipelines with explicit multi-terminal contracts aggregate separately.
 func requireUniqueSurfaceOutput(out *Outcome, pipelineName string) error {
-	if len(out.NamedOutputs) <= 1 {
+	if len(out.NamedOutputs) == 1 && out.OutputProduced {
 		return nil
+	}
+	if len(out.NamedOutputs) == 0 {
+		// A completed output with an actual null value *does* have a
+		// NamedOutputs key. No such key means no root result at all.
+		scrubPublishedResult(out)
+		out.Status = "failure"
+		return fmt.Errorf("surface pipeline %s produced no output", pipelineName)
 	}
 	names := make([]string, 0, len(out.NamedOutputs))
 	for name := range out.NamedOutputs {
