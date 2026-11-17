@@ -504,8 +504,9 @@
 - Explicit `edge.kind = "data"`, `to_port`, optional `from_port = "value"`,
   `node.input_ports` schemas and CEL `ports.<name>` introduce separately
   compiled data dependencies without changing legacy control-flow edges.
-- Each consumer port has one producer which structurally dominates its
-  consumer; data edges never add votes to joins or activate nodes.
+- Each consumer port has one producer whose completion is guaranteed
+  whenever the consumer activates; data edges never add votes to joins or
+  activate nodes. PR #46 generalizes this to threshold-aware guarantees.
   Known incompatible contracts fail activation; uncertain/dynamic values
   are checked before consumer-side effects, without logging their contents.
 - Invalid bindings, skipped-path bypasses, unknown ports, double producers,
@@ -513,3 +514,18 @@
   This is a bounded port milestone, **not** full typed DAG composition:
   nested pipelines, multi-output semantics, guarded data availability,
   formal proofs and real upstream contract evidence are still open.
+
+
+#### Threshold-aware completion of data predecessors (PR #46)
+
+- DAG compiler now computes guaranteed predecessor completion over control
+  activation thresholds (ordinary any, join all/any/quorum), rejecting CEL
+  `nodes.*` and declared port dependencies which may be missing on a viable
+  activated branch.
+- An all-join may safely bind data from both completed producers; a quorum
+  join retains only producers shared by every winning threshold subset.
+  Compile-time tests enumerate threshold/source combinations and runtime
+  exercises parallel data binding and conditional skip behavior.
+- Guard and remote resource semantics remain conservative; this is not
+  authorization dominance, multi-output typing, nested pipeline execution or
+  formal model-checker proof.

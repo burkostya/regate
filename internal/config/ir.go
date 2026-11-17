@@ -99,6 +99,7 @@ func (c *Config) Compile() error {
 		if len(plan.Order) != len(p.Nodes) {
 			return fmt.Errorf("pipeline %s: IR cannot topologically order graph", name)
 		}
+		guaranteed := guaranteedCompleted(p, plan.Order)
 		for _, id := range plan.Order {
 			n := p.Nodes[id]
 			resultType := PortAny
@@ -172,6 +173,9 @@ func (c *Config) Compile() error {
 					if dep == id || !isAncestor(dep, id, p.Edges) {
 						return fmt.Errorf("pipeline %s node %s: %s is not a control predecessor (data may be unavailable)", name, id, dep)
 					}
+					if !guaranteed[id][dep] {
+						return fmt.Errorf("pipeline %s node %s: expression predecessor %s is not guaranteed to complete before activation", name, id, dep)
+					}
 					compiled.Dependencies = append(compiled.Dependencies, dep)
 				}
 			}
@@ -210,6 +214,9 @@ func (c *Config) Compile() error {
 		}
 		for _, edge := range p.Edges {
 			if edge.Kind != "data" { continue }
+			if !guaranteed[edge.To][edge.From] {
+				return fmt.Errorf("pipeline %s node %s: data port %s source %s is not guaranteed to complete before activation", name, edge.To, edge.ToPort, edge.From)
+			}
 			producer := plan.Nodes[edge.From].OutputSchema
 			consumer := plan.Nodes[edge.To].InputPorts[edge.ToPort]
 			if err := CheckKnownCompatibility(producer, consumer); err != nil {
@@ -263,6 +270,61 @@ func extractPortRefs(value any) []string {
 		return nil
 	}
 }
+// guaranteedCompleted computes the nodes that must have COMPLETED whenever
+// the target node activates. A join with threshold k of n predecessors may
+// activate after any k distinct fired edges; a source is guaranteed only when
+// it appears in at least n-k+1 predecessor guarantee sets. This is the
+// intersection of the unions across all possible winning k-subsets.
+// Skipped, guarded and suspended branches cannot invent a completed source.
+// Runtime and compiler use the same join thresholds; invalid configurations
+// are rejected by Validate before this function is called.
+func guaranteedCompleted(p Pipeline, order []string) map[string]map[string]bool {
+	incoming := map[string][]string{}
+	for _, edge := range p.Edges {
+		if edge.Kind != "data" {
+			incoming[edge.To] = append(incoming[edge.To], edge.From)
+		}
+	}
+	guaranteed := map[string]map[string]bool{}
+	for _, nodeName := range order {
+		set := map[string]bool{nodeName: true}
+		if nodeName == p.Entry {
+			guaranteed[nodeName] = set
+			continue
+		}
+		parents := incoming[nodeName]
+		if len(parents) == 0 {
+			guaranteed[nodeName] = set
+			continue
+		}
+		threshold := 1 // Ordinary graph merges activate on any fired edge.
+		node := p.Nodes[nodeName]
+		if node.Kind == "join" {
+			switch node.Str("mode") {
+			case "", "all":
+				threshold = len(parents)
+			case "any":
+				threshold = 1
+			case "quorum":
+				threshold = node.Int("quorum", 0)
+			}
+		}
+		frequency := map[string]int{}
+		for _, parent := range parents {
+			for predecessor := range guaranteed[parent] {
+				frequency[predecessor]++
+			}
+		}
+		for predecessor, count := range frequency {
+			if count >= len(parents)-threshold+1 {
+				set[predecessor] = true
+			}
+		}
+		guaranteed[nodeName] = set
+	}
+	return guaranteed
+}
+
 func extractRefs(value any) []string {
 	switch v := value.(type) {
 	case string:

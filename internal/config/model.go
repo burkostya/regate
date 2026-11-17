@@ -600,9 +600,9 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("pipeline %s: unreachable node %s", name, n)
 			}
 		}
-		// Every declared data port has exactly one producer. Its producer must
-		// structurally dominate the consumer on CONTROL paths. A data-only
-		// edge must not activate a skipped or unauthorized branch.
+		// Every declared data port has exactly one producer. The compiler
+		// additionally verifies guaranteed producer completion under the
+		// runtime's all/any/quorum control thresholds.
 		for nodeName, node := range p.Nodes {
 			ports, _ := node.Attrs["input_ports"].(map[string]any)
 			for portName, rawSchema := range ports {
@@ -614,13 +614,6 @@ func (c *Config) Validate() error {
 				}
 				if dataSources[nodeName][portName] == "" {
 					return fmt.Errorf("pipeline %s node %s: unbound input port %s", name, nodeName, portName)
-				}
-			}
-		}
-		for to, sources := range dataSources {
-			for portName, from := range sources {
-				if reachableAvoidingNode(p.Entry, to, from, adj) {
-					return fmt.Errorf("pipeline %s node %s: data port %s source %s does not dominate consumer", name, to, portName, from)
 				}
 			}
 		}

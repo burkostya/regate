@@ -396,9 +396,13 @@ declared consumer input port; it does not fire a control branch or affect join
 quorum counts. Exactly one producer per named input port is required.
 Only `from_port = "value"` (also the default) is currently supported. A
 data edge cannot have a `when` guard or override a control edge. Data
-sources must dominate their consumer over every *control* path (ignoring
-guards conservatively). Bypassed, missing, duplicate and cyclic dependencies
-are rejected at activation; control-edge duplicates are rejected too.
+sources must be guaranteed to complete before a consumer activates. The
+compiler uses the same distinct-branch thresholds as the scheduler: with an
+`all` join both incoming producer values are guaranteed; with `any` or
+`quorum`, a producer is guaranteed only if every viable winning combination
+includes its execution. Guards are ignored conservatively. Bypassed, missing,
+duplicate and cyclic dependencies are rejected at activation; control-edge
+duplicates are rejected too.
 
 Known incompatible producer/output and consumer/port JSON types fail at
 compile time. Every bound value is schema-validated at runtime **before**
@@ -406,3 +410,27 @@ the consumer executes an effect or hook; errors do not publish that node's
 result. Dynamic remote output remains untrusted, and this is not a proof of
 arbitrary JSON Schema subsumption, cross-branch atomicity or remote effect
 correctness. Nested pipeline composition and multi-output ports remain open.
+
+
+### Threshold-aware data availability (PR #46)
+
+The compiler now checks ordinary `nodes.producer.value` CEL references as well
+as explicit `data` ports. Merely being an ancestor is insufficient if an
+alternative branch can activate the consumer without producing the value.
+The check requires that the producer **completed** whenever the consumer
+activates, including after resumed suspension. It distinguishes normal merges
+(1-of-N), `join(mode="all")` (N-of-N), `join(mode="any")` (1-of-N),
+and `join(mode="quorum", quorum=k)` (k-of-N).
+
+The analysis propagates guaranteed completion sets in topological order.
+For a join threshold k among n distinct predecessors, a predecessor's
+guarantees are retained if they occur in at least n−k+1 incoming paths. This
+is sound even when edge guards may be false, because the runtime never fires
+the join without k distinct activated predecessors and never speculates past
+unsettled branches.
+
+A protected consumer may take data ports from both branches of an `all`
+join; an `any` join cannot read an optional branch's value without an
+explicit optional-data contract (not implemented yet). No data edge counts
+as a branch vote. This proves local value availability, **not** remote
+side-effect atomicity, policy attestation, or a provider's schema correctness.

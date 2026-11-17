@@ -104,7 +104,7 @@ func TestDataPortsFailClosedAtActivation(t *testing.T) {
 		{"conflicting producers", strings.Replace(base, dataEdge, dataEdge+"\n"+dataEdge, 1), "duplicate data port"},
 		{"static incompatible schema", strings.Replace(base, `text = {type = "string"}`, `text = {type = "integer"}`, 1), "incompatible port types"},
 		{"missing CEL port", strings.Replace(base, `value = "ports.text"`, `value = "ports.unknown"`, 1), "unknown input port"},
-		{"producer bypass", bypass, "does not dominate consumer"},
+		{"producer bypass", bypass, "not guaranteed to complete"},
 		{"control misuses port", strings.Replace(base, controlEdge, `  edge {
     kind = "control"
     from = "produce"
