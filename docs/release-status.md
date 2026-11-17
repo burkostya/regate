@@ -1037,3 +1037,20 @@
 - Browser E2E covers denied reload (local text retained), accepted
   reload (remote HCL and digest adopted), and successful subsequent
   CAS-protected save while the active revision stays unchanged.
+
+#### Browser-verified activation, rollback and safe source preview (#8/#9)
+
+- The Chromium console acceptance test now covers **complete draft
+  activation and immutable-history rollback** against the real Go
+  compiler, MCP catalog preparation, SQLite and demo MCP fixture.
+  Activation is gated by `REGATE_E2E_ALLOW_ACTIVATION=true` and is
+  enabled in CI only for an isolated localhost server and temporary DB.
+- The test verifies the exact reviewed HCL is published at the new
+  revision and that rollback restores the original source as a **new**
+  revision rather than rewriting historical revision identity.
+- The HCL **Load active** action no longer silently discards unsaved
+  HCL/graph edits or pretends to update the persisted draft. It prompts
+  before replacing local text and leaves the saved draft intact.
+- This provides executable local E2E for one revision lifecycle, not
+  production provider attestation, full browser coverage or full v1
+  release acceptance.
