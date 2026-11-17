@@ -787,3 +787,15 @@
 - This uses the existing single-leader SQLite execution lease for
   cross-process exclusion; it is not a provider-level transaction or
   external exactly-once effect guarantee.
+
+#### Completed root terminal restoration after a durable resume (#7)
+
+- A root `output` may finish before an independent sibling suspends.
+  The final resumed `execute` now reconstructs the single terminal's
+  value, presence flag (including a deliberate JSON null), and any MCP
+  envelope from the durable node snapshot after *all* branches settle.
+- Published tool output schema and `before_response` interceptors still
+  run exactly once at final release; partial values are never sent from a
+  suspended call, and competing outputs still fail closed.
+- Regression covers a PII-bearing earlier output redacted only on Resume,
+  nullable output presence, fresh runtime recovery and checkpoint cleanup.
