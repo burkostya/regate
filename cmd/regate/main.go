@@ -22,12 +22,35 @@ func verifyBackupToWriter(path string,w io.Writer)error {
     return json.NewEncoder(w).Encode(manifest)
 }
 
+func restoreBackupToWriter(archive, stateDir string, w io.Writer) error {
+	manifest, err := storage.RestoreVerifiedBackup(archive, stateDir)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(w).Encode(manifest)
+}
+
 func main() {
 	file := flag.String("config", "examples/regate.hcl", "HCL configuration source")
 	state := flag.String("state", ".state", "persistent state directory")
 	listen := flag.String("listen", "", "override HTTP listen address")
     verifyBackup:=flag.String("verify-backup","","verify standalone SQLite backup and print non-secret JSON manifest")
+    restoreBackup:=flag.String("restore-backup","","restore a verified snapshot into a pre-existing empty private -state directory")
 	flag.Parse()
+    if *verifyBackup!="" && *restoreBackup!="" {
+        log.Fatal("-verify-backup and -restore-backup are mutually exclusive")
+    }
+    if *restoreBackup!="" {
+        stateExplicit:=false
+        flag.Visit(func(f *flag.Flag){if f.Name=="state" {stateExplicit=true}})
+        if !stateExplicit {
+            log.Fatal("-restore-backup requires an explicit -state destination")
+        }
+        if err:=restoreBackupToWriter(*restoreBackup,*state,os.Stdout);err!=nil {
+            log.Fatal(err)
+        }
+        return
+    }
     if *verifyBackup!="" {
         // Verification is intentionally read-only and works without a
         // running Regate service, admin bearer or live configuration.

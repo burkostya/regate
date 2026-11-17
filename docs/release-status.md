@@ -397,3 +397,20 @@
 - Structural backup validation is **not** resource proof, guarantee of
   external keyring availability, independent KMS/retention compliance or
   a completed disaster-recovery drill. #6 remains open.
+
+
+#### Verified offline no-overwrite restore (PR #39)
+
+- `regate -restore-backup PATH -state EMPTY_PRIVATE_DIR` validates a
+  standalone SQLite snapshot, copies it into private staging, fsyncs and
+  re-verifies the identical byte digest and application manifest before
+  publishing `regate.sqlite` through a no-overwrite hard link.
+- Restore requires an explicit existing empty mode-0700 state directory;
+  no live process, admin credentials, HCL parsing or automatic task
+  execution are involved. It rejects existing state, symlinks, insecure
+  permissions and corrupt/replaced archives. Tests cover offline use,
+  concurrency, no-overwrite and copied leader fencing.
+- This completes only the **controlled offline file restore** milestone.
+  Offsite key custody and test drills, source-worker fencing, KMS,
+  autonomous grant recovery, remote idempotency and vendor-verified
+  reconciliation remain release gates. #6 stays open.
