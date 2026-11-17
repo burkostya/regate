@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"sort"
@@ -22,6 +21,7 @@ import (
 	"github.com/burkostya/regate/internal/mcp"
 	"github.com/burkostya/regate/internal/netguard"
 	"github.com/burkostya/regate/internal/storage"
+    "github.com/burkostya/regate/internal/strictjson"
 )
 
 // effectScope binds external writes (including HTTP hooks) to a stable
@@ -1353,11 +1353,8 @@ func (r *Runtime) runHook(ctx context.Context, h config.Hook, cfg *config.Config
         if response.StatusCode!=200 {
             return nil,complete("unknown",fmt.Errorf("hook %s: HTTP %d",h.Name,response.StatusCode))
         }
-        raw,e:=io.ReadAll(io.LimitReader(response.Body,4<<20))
-        if e!=nil {return nil,complete("unknown",e)}
-        var result map[string]any
-        if e=json.Unmarshal(raw,&result);e!=nil {return nil,complete("unknown",e)}
-        if result==nil {return nil,complete("unknown",fmt.Errorf("hook returned null JSON object"))}
+        result,e:=strictjson.ReadObject(response.Body,4<<20)
+        if e!=nil {return nil,complete("unknown",fmt.Errorf("invalid HTTP hook JSON response: %w",e))}
         // This confirmation describes the HTTP response, not the policy
         // decision encoded in it. A known "deny" is not a lost effect.
         if e=complete("confirmed",nil);e!=nil {return nil,e}

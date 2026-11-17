@@ -176,3 +176,39 @@ func TestHTTPPostEffectOnlyStoresFingerprints(t *testing.T) {
         t.Fatal("effect journal persisted argument or raw URL")
     }
 }
+
+func TestHTTPDecisionRejectsAmbiguousOversizedAndMalformedResponsesWithoutReplay(t *testing.T) {
+    badResponses:=[]struct{name,body string}{
+        {"duplicate-decision",`{"decision":"deny","decision":"allow"}`},
+        {"escaped-duplicate",`{"decision":"deny","deci\u0073ion":"allow"}`},
+        {"nested-duplicate",`{"decision":"allow","data":{"verified":true,"verified":false}}`},
+        {"trailing-frame",`{"decision":"allow"}{"decision":"deny"}`},
+        {"oversized-valid-prefix",`{"decision":"allow"}`+strings.Repeat(" ",(4<<20)+1)},
+        {"invalid-utf8",`{"decision":"allow","data":"`+string([]byte{0xff})+`"}`},
+    }
+    for _,tc:=range badResponses {
+        t.Run(tc.name,func(t *testing.T) {
+            var calls atomic.Int64
+            upstream:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,_ *http.Request) {
+                calls.Add(1)
+                w.Header().Set("Content-Type","application/json")
+                _,_ = w.Write([]byte(tc.body))
+            }))
+            defer upstream.Close()
+            store:=effectTestStore(t)
+            hook:=config.Hook{Name:"gate",Transport:"http",URL:upstream.URL,Contract:"decision",TimeoutMS:4000}
+            ctx:=httpEffectContext("run-invalid-decision-"+tc.name,"policy:gate")
+            _,err:=New(store).runHook(ctx,hook,nil,map[string]any{"safe":true},false)
+            if err==nil {t.Fatal("ambiguous HTTP decision granted access")}
+            events:=store.Effects()
+            if len(events)!=1 || events[0].Status!="unknown" {
+                t.Fatalf("uncertain remote response must stay unknown: %#v",events)
+            }
+            _,err=New(store).runHook(ctx,hook,nil,map[string]any{"safe":true},false)
+            if !errors.Is(err,storage.ErrEffectAlreadyAttempted) {
+                t.Fatalf("ambiguous HTTP effect was replayable: %v",err)
+            }
+            if calls.Load()!=1 {t.Fatalf("HTTP hook replayed after bad response: %d",calls.Load())}
+        })
+    }
+}
