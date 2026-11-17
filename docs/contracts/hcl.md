@@ -296,3 +296,28 @@ cannot delete unrepresented unknown fields or nested blocks, and reject
 attempts to edit these fields semantically. Comments and whitespace are
 preserved by byte-range edits rather than HCL AST regeneration. A malformed
 HCL token stream cannot be persisted via the structured draft-patch method.
+
+
+### Deterministic fail-closed join activation (PR #43)
+
+A `join` node always waits for **all distinct incoming predecessor
+nodes** to settle before becoming eligible. Its `mode` controls the
+required number of active/fired inbound edges, not when the gateway may
+speculatively execute downstream tools:
+
+- `all` (default): every declared incoming predecessor must be completed
+  and its guarded edge fired.
+- `any`: at least one predecessor must have fired.
+- `quorum`: at least the configured `quorum` number of distinct
+  predecessors must have fired.
+
+If the threshold is not reached after full settlement, the join is
+`skipped`, and any downstream nodes requiring its control edge are
+skipped. A still-pending predecessor, suspension, or external-error
+path cannot be ignored to start an early downstream write. HCL
+validation rejects a quorum above the number of incoming branches,
+quorum settings on non-quorum joins, joins with no incoming branches,
+and duplicate predecessors even if their edges use different guards.
+These are control-flow guarantees only: arbitrary policy placement,
+upstream side effects and data compatibility still require separate
+validation and security review.

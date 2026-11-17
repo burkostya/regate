@@ -440,6 +440,7 @@ func (c *Config) Validate() error {
 		}
 		adj := map[string][]string{}
 		ind := map[string]int{}
+		joinSources := map[string]map[string]bool{}
 		for n := range p.Nodes {
 			ind[n] = 0
 		}
@@ -450,8 +451,37 @@ func (c *Config) Validate() error {
 			if _, ok := p.Nodes[e.To]; !ok {
 				return fmt.Errorf("pipeline %s: missing to node %s", name, e.To)
 			}
+			if p.Nodes[e.To].Kind == "join" {
+				if joinSources[e.To]==nil{joinSources[e.To]=map[string]bool{}}
+				if joinSources[e.To][e.From]{
+					return fmt.Errorf("pipeline %s join %s: duplicate predecessor %s",name,e.To,e.From)
+				}
+				joinSources[e.To][e.From]=true
+			}
 			adj[e.From] = append(adj[e.From], e.To)
 			ind[e.To]++
+		}
+		for nodeName,node:=range p.Nodes{
+			if node.Kind!="join"{continue}
+			incoming:=len(joinSources[nodeName])
+			if incoming==0{
+				return fmt.Errorf("pipeline %s join %s requires incoming edges",name,nodeName)
+			}
+			mode:=node.Str("mode")
+			if mode==""{mode="all"}
+			if mode!="all" && mode!="any" && mode!="quorum"{
+				return fmt.Errorf("pipeline %s join %s invalid mode %s",name,nodeName,mode)
+			}
+			if mode!="quorum"{
+				if _,specified:=node.Attrs["quorum"];specified{
+					return fmt.Errorf("pipeline %s join %s: quorum specified without quorum mode",name,nodeName)
+				}
+			}else{
+				threshold:=node.Int("quorum",0)
+				if threshold<1 || threshold>incoming{
+					return fmt.Errorf("pipeline %s join %s: quorum %d must be between 1 and %d distinct incoming branches",name,nodeName,threshold,incoming)
+				}
+			}
 		}
 		visiting := map[string]bool{}
 		visited := map[string]bool{}

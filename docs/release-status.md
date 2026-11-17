@@ -465,3 +465,18 @@
 - This prevents **implicit historical replay**; it does NOT prove
   physical source-worker fencing, external idempotency, an IdP's state,
   unknown-write reconciliation or production disaster-recovery readiness.
+
+
+#### Deterministic joins and safety barriers (PR #43)
+
+- Runtime joins `all`, `any` and `quorum` now evaluate the correct
+  activation threshold **after** every incoming predecessor settles.
+  This prevents any/quorum joins from racing still-pending policy,
+  suspension or external-effect branches.
+- Validation requires realizable quorums with one vote per unique
+  incoming predecessor. Duplicate-vote edges and inappropriate
+  quorum attributes are rejected before activation.
+- Table-driven branch-vote tests and a persistent suspend checkpoint
+  regression guard the barrier and preserve fail-closed non-replay.
+  Full typed ports, nested pipelines and verified policy composition
+  remain open under #7.

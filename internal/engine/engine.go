@@ -331,35 +331,41 @@ func (r *Runtime) execute(ctx context.Context, revision string, cfg *config.Conf
 			}
 			deps := incoming[name]
 			settled := true
-			active := false
-			for _, e := range deps {
-				if states[e.From] == "pending" {
+			firedCount := 0
+			for _, edge := range deps {
+				if states[edge.From] == "pending" {
 					settled = false
 					break
 				}
-				if fired[e.From+">"+e.To] {
-					active = true
+				if states[edge.From] == "completed" && fired[edge.From+">"+edge.To] {
+					firedCount++
 				}
 			}
+			// Every join is a full settlement barrier. Running an any/quorum
+			// join before other predecessors settle can cause a downstream
+			// write to race a later denial, suspension or unknown effect.
+			// All/any/quorum affect the activation threshold, NOT permission
+			// to speculate past still-pending incoming branches.
 			if !settled {
-				n := p.Nodes[name]
-				if n.Kind == "join" {
-					mode := n.Str("mode")
-					count := 0
-					for _, dep := range deps {
-						if fired[dep.From+">"+dep.To] && states[dep.From] == "completed" {
-							count++
-						}
-					}
-					if (mode == "any" && count >= 1) || (mode == "quorum" && count >= n.Int("quorum", 1)) {
-						settled = true
-					}
+				continue
+			}
+			threshold := 1 // Ordinary graph merges accept any active input.
+			if node := p.Nodes[name]; node.Kind == "join" {
+				switch node.Str("mode") {
+				case "", "all":
+					threshold = len(deps)
+				case "any":
+					threshold = 1
+				case "quorum":
+					threshold = node.Int("quorum", 0)
+				default:
+					return out, fmt.Errorf("pipeline %s join %s has unsupported mode",p.Name,name)
 				}
-				if !settled {
-					continue
+				if threshold < 1 || threshold > len(deps) {
+					return out, fmt.Errorf("pipeline %s join %s has invalid threshold",p.Name,name)
 				}
 			}
-			if !active {
+			if firedCount < threshold {
 				states[name] = "skipped"
 				skippedChanged = true
 				continue
