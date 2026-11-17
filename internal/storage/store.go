@@ -484,15 +484,37 @@ func (s *Store) WriteTrace(t Trace) {
     _,_=s.db.Exec(`DELETE FROM traces WHERE seq NOT IN
         (SELECT seq FROM traces ORDER BY seq DESC LIMIT 2000)`)
 }
+// TraceQuery returns an exact-match, newest-first view of the retained
+// diagnostic projection. Limit applies AFTER filtering so a later matching
+// run is not hidden by unrelated newer events. The physical table retains
+// only the latest 2000 records; this is not a durable long-term audit feed.
+type TraceQuery struct {
+    RunID string
+    Status string
+    Limit int
+}
+
+const maxRetainedTraces = 2000
+
 func (s *Store) Traces() []Trace {
-    rows,err:=s.db.Query("SELECT record FROM traces ORDER BY seq DESC LIMIT 2000")
+    return s.TracesFiltered(TraceQuery{Limit:maxRetainedTraces})
+}
+
+func (s *Store) TracesFiltered(query TraceQuery) []Trace {
+    limit:=query.Limit
+    if limit<=0 || limit>maxRetainedTraces {limit=maxRetainedTraces}
+    rows,err:=s.db.Query("SELECT record FROM traces ORDER BY seq DESC LIMIT ?",maxRetainedTraces)
     if err!=nil{return []Trace{}}
     defer rows.Close()
-    out:=[]Trace{}
-    for rows.Next(){
+    out:=make([]Trace,0,limit)
+    for rows.Next() {
         var raw string
         var t Trace
-        if rows.Scan(&raw)==nil && json.Unmarshal([]byte(raw),&t)==nil {out=append(out,t)}
+        if rows.Scan(&raw)!=nil || json.Unmarshal([]byte(raw),&t)!=nil {continue}
+        if query.RunID!="" && t.RunID!=query.RunID {continue}
+        if query.Status!="" && t.Status!=query.Status {continue}
+        out=append(out,t)
+        if len(out)>=limit {break}
     }
     return out
 }
