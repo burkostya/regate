@@ -19,7 +19,10 @@ func namedCallContractSource() string {
     value = {first = "input.first", second = "input.second"}
     output_schema = {type = "object", required = ["first", "second"], properties = {first = {type = "string"}, second = {type = "string"}}}
   }
-  edge {from = "start", to = "done"}
+  edge {
+    from = "start"
+    to = "done"
+  }
 }
 pipeline "parent" {
   entry = "call"
@@ -34,9 +37,24 @@ pipeline "parent" {
     value = "ports.left + ':' + ports.right"
     input_ports = {left = {type = "string"}, right = {type = "string"}}
   }
-  edge {from = "call", to = "done"}
-  edge {kind = "data", from = "call", from_port = "first", to = "done", to_port = "left"}
-  edge {kind = "data", from = "call", from_port = "second", to = "done", to_port = "right"}
+  edge {
+    from = "call"
+    to = "done"
+  }
+  edge {
+    kind = "data"
+    from = "call"
+    from_port = "first"
+    to = "done"
+    to_port = "left"
+  }
+  edge {
+    kind = "data"
+    from = "call"
+    from_port = "second"
+    to = "done"
+    to_port = "right"
+  }
 }
 surface "named" {
   path = "/mcp/named"
