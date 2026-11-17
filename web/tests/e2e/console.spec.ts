@@ -77,4 +77,33 @@ test('real console edits typed port graph, validates HCL and rejects stale draft
   expect((await afterDraft.json()).source).toBe(concurrentSource);
   const afterStatus = await request.get('/api/status', { headers: auth });
   expect((await afterStatus.json()).revision).toBe(before.revision);
+
+  // A stale browser is recoverable without reloading the whole application.
+  // Declining the discard prompt must preserve the operator's unsaved notes.
+  const localUnsaved = draft.source + '\n# local unsaved review\n';
+  await page.locator('#hcl-source').fill(localUnsaved);
+  page.once('dialog', dialog => dialog.dismiss());
+  await page.getByRole('button', { name: 'Reload draft' }).click();
+  await expect(page.locator('#hcl-source')).toHaveValue(localUnsaved);
+
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'Reload draft' }).click();
+  await expect(page.locator('#hcl-source')).toHaveValue(concurrentSource);
+
+  // The recovered editor has the new source digest: it can safely continue
+  // editing from the winner's snapshot without overwriting the other edit.
+  const resumedSource = concurrentSource + '\n# resumed browser edit\n';
+  await page.locator('#hcl-source').fill(resumedSource);
+  const retrySave = page.waitForResponse(response =>
+    response.url().endsWith('/api/draft-update') && response.request().method() === 'POST'
+  );
+  await page.getByRole('button', { name: 'Save draft', exact: true }).click();
+  const accepted = await retrySave;
+  expect(accepted.status(), await accepted.text()).toBe(200);
+  expect((await accepted.json()).source).toBe(resumedSource);
+
+  const finalDraft = await request.get(`/api/drafts/${draft.id}`, { headers: auth });
+  expect((await finalDraft.json()).source).toBe(resumedSource);
+  const finalStatus = await request.get('/api/status', { headers: auth });
+  expect((await finalStatus.json()).revision).toBe(before.revision);
 });
