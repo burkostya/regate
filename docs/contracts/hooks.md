@@ -65,3 +65,16 @@ best-effort `on_error` observer. This does **not** mean an external
 effect has been rolled back, and a partially completed *graph* that
 fails before reaching the final response boundary still follows its
 separate effect reconciliation policy.
+
+## Strict HTTP JSON response boundary (#9)
+
+HTTP hook responses must be exactly one JSON object of at most 4 MiB,
+including trailing whitespace. Nested or escaped-equivalent duplicate
+JSON members, invalid UTF-8 and excessive nesting are rejected before
+evaluating Decision API `allow` or publishing a transform result.
+An invalid, missing or oversized response after a POST is journaled as
+an **unknown** external effect: it cannot be blindly retried even if
+the remote service already committed a write. Only a valid response
+marks the HTTP POST effect confirmed. This is a transport-level
+framing guarantee, not verification of a remote Decision provider's
+trustworthiness.

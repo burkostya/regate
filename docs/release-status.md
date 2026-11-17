@@ -1155,3 +1155,17 @@
   UTF-8 and zero external or persistent effects on rejection.
 - This only hardens framing. It is not a complete MCP conformance, load,
   authentication or production security audit.
+
+#### Fail-closed HTTP hook response framing (#5/#9)
+
+- Share the strict duplicate-member, UTF-8, depth and complete-frame
+  JSON parser between the management REST/MCP ingress and outbound
+  HTTP hook response validation.
+- Enforce the full 4 MiB HTTP hook response size rather than silently
+  accepting a complete JSON prefix followed by unread data. A Decision
+  `allow` in such a prefix is never sufficient for authorization.
+- Invalid, ambiguous or oversized HTTP hook responses leave the
+  already-admitted POST journal attempt `unknown`, with no replay.
+  Exact-boundary and response/identity negative tests exercise this.
+- This does not establish remote provider attestation, trusted semantic
+  decisions, end-to-end PII declassification or production readiness.
