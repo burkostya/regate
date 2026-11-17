@@ -691,3 +691,49 @@ automatic retries: crash-interrupted *working* tasks, remotely ambiguous
 writes, OAuth refresh and operator-grant recovery still require their own
 authorization/reconciliation protocols. This is deliberately not a general
 multi-suspension scheduler or production-grade encrypted checkpoint vault.
+
+### Operator-attested bounded MCP read retry (PR #53)
+
+There is **no implicit retry** for any MCP tool call. A single pipeline
+`mcp.call` node can request a small, bounded retry window *only* when it
+declares `effect = "read"` and an explicit operator acknowledgement that
+calling the tool repeatedly is safe:
+
+```hcl
+node "read_customer" {
+  kind      = "mcp.call"
+  upstream  = "crm"
+  tool      = "get_customer"
+  effect    = "read"
+  arguments = "input"
+  retry = {
+    safe_read    = true
+    max_attempts = 3
+    delay_ms     = 50
+  }
+}
+```
+
+The `retry` object is closed: all three fields are mandatory, no unknown
+fields are permitted, `max_attempts` must be 2–4 **including the first
+attempt**, and `delay_ms` must be 1–2000. An `unknown`, `write`, or
+`external_transfer` effect cannot opt in. Operator-supplied `effect="read"`
+and `safe_read=true` constitute **an assertion of read-only repeat safety**;
+Regate does not derive or verify that property from a provider's tool name
+or an untrusted MCP metadata field.
+
+The retry loop is restricted to transient network/connection failures
+(EOF, connection reset, and Go network errors). It does not retry an MCP
+application-level error response, schema failure, denied policy, OAuth
+exchange failure, malformed output, HTTP hook or external write. Before each
+new dispatch it waits for the configured delay with cancellation support,
+then checks queued-task cancellation, delegated-grant revocation and the
+execution leader lease again. Every SDK request gets a fresh MCP session; SDK
+automatic retries remain disabled. The parent pipeline context bounds total
+duration. No backoff is interpreted as a license to replay an unknown write.
+
+This milestone is **not** generic workflow retry nodes, compensating writes,
+idempotent-write verification, attested provider semantics or an automatic
+recovery mechanism for interrupted tasks. Unsafe operator classification may
+still cause a real side effect to repeat, so production deployments require
+provider-specific verification and audit before enabling a read retry.
