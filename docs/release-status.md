@@ -850,3 +850,25 @@
 - This is not a parallel map scheduler, per-item suspend/recovery, a
   cross-provider batch transaction, or a verified remote idempotency
   guarantee. Complete #7/#10 acceptance remains open.
+
+#### Durable per-item mapped suspension checkpoints (#7)
+
+- `map { pipeline = "..."; allow_effects = true; allow_suspend = true }`
+  now carries one active iteration frame per suspended map node, with
+  the immutable original items, zero-based index, validated completed
+  result prefix and nested child's complete continuation checkpoint.
+- Pending paths expose a stable indexed segment, for example
+  `["each","1","pause"]`; `ResumeAt` validates the frozen prefix,
+  immutable revision/identity, child schema, and correct map index.
+  Rejected or forged answers cannot redirect execution or replay
+  previous iteration effects.
+- A resumed item may finish and immediately suspend on the next item.
+  The same root SQLite checkpoint is replaced atomically. Independent
+  parallel suspended siblings still obey the whole-wave barrier and
+  serialized per-run resume guard.
+- Regression exercises process/store restart, sequential two-item
+  write-then-suspend cycles, schema-invalid answers, checkpoint
+  tampering, committed/unknown effect no-replay and final cleanup.
+- This does not imply exactly-once provider writes, cross-resource
+  transactions, or automatic reconciliation of ambiguous effects.
+  #7/#10 acceptance remains open.

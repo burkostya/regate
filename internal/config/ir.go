@@ -324,6 +324,9 @@ func (c *Config) Compile() error {
 				}
 				outputName := namedOutputNodes(child)[0] // Validated at call graph boundary.
 				childOutput := plans[child.Name].Nodes[outputName].OutputSchema
+				if node.Attrs["allow_suspend"] == true && childOutput == nil {
+					return fmt.Errorf("pipeline %s node %s: suspendable map requires child output_schema for durable prefix validation", parentName, nodeName)
+				}
 				if err := CheckKnownCompatibility(childOutput, itemContract); err != nil {
 					return fmt.Errorf("pipeline %s node %s: map child output contract: %w", parentName, nodeName, err)
 				}
