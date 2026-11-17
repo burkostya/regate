@@ -1,5 +1,5 @@
 export type NodeDef = { name: string; kind: string; attrs: Record<string, unknown> };
-export type EdgeDef = { from: string; to: string; when?: string };
+export type EdgeDef = { from: string; to: string; when?: string; kind?: 'control' | 'data'; from_port?: string; to_port?: string };
 export type Pipeline = { name: string; entry: string; nodes: Record<string, NodeDef>; edges: EdgeDef[]; timeout_ms: number; concurrency: number };
 export type Catalog = {
   upstreams: Record<string, unknown>;
