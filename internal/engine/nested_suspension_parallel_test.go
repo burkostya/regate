@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 	"testing"
 
@@ -88,7 +89,7 @@ func TestNestedSuspensionSettlesParallelExternalWrite(t *testing.T) {
 	}
 }
 
-func TestMultipleSimultaneousSuspensionsFailClosed(t *testing.T) {
+func TestMultipleSimultaneousSuspensionsDurableAndSelected(t *testing.T) {
 	upstream,count:=testEffectUpstream(t,false)
 	defer upstream.Close()
 	parallel:=`pipeline "outer" {
@@ -145,12 +146,46 @@ func TestMultipleSimultaneousSuspensionsFailClosed(t *testing.T) {
 	s:=effectTestStore(t)
 	out,err:=New(s).Run(context.Background(),"rev",cfg,"nested","write",
 		map[string]any{"id":"C402"},false)
-	if err==nil || !strings.Contains(err.Error(),"simultaneous suspension") ||
-		out.Status=="suspended" || count.Load()!=2 {
-		t.Fatalf("ambiguous checkpoint accepted: %#v %v writes=%d",out,err,count.Load())
+	if err==nil || out.Status!="suspended" || count.Load()!=2 {
+		t.Fatalf("parallel suspensions not persisted: %#v %v writes=%d",out,err,count.Load())
 	}
 	var cp Checkpoint
-	if err:=s.GetSuspended(out.RunID,&cp);err==nil {
-		t.Fatal("ambiguous checkpoint was published")
+	if err:=s.GetSuspended(out.RunID,&cp);err!=nil {t.Fatal(err)}
+	if len(cp.Suspensions)!=2 || cp.SuspendNode!="" || cp.Child!=nil {
+		t.Fatalf("missing independent suspension records: %#v",cp)
+	}
+	paths:=PendingSuspensionPaths(&cp)
+	if len(paths)!=2 || !equalSuspensionPath(paths[0],[]string{"first","wait"}) ||
+		!equalSuspensionPath(paths[1],[]string{"second","wait"}) {
+		t.Fatalf("wrong stable leaf paths: %#v",paths)
+	}
+	if _,err:=New(s).Resume(context.Background(),cfg,"rev",out.RunID,"ambiguous");err==nil ||
+		!strings.Contains(err.Error(),"explicit suspension path") {
+		t.Fatalf("ambiguous legacy resume accepted: %v",err)
+	}
+	if _,err:=New(s).ResumeAt(context.Background(),cfg,"rev",out.RunID,[]string{"first","wait"},42);err==nil ||
+		!strings.Contains(err.Error(),"output schema") {
+		t.Fatalf("invalid continuation accepted: %v",err)
+	}
+	first,err:=New(s).ResumeAt(context.Background(),cfg,"rev",out.RunID,[]string{"first","wait"},"one")
+	if err==nil || first.Status!="suspended" || count.Load()!=2 {
+		t.Fatalf("first answer did not park safely: %#v %v writes=%d",first,err,count.Load())
+	}
+	if _,err:=New(s).ResumeAt(context.Background(),cfg,"rev",out.RunID,[]string{"first","wait"},"duplicate");err==nil ||
+		!strings.Contains(err.Error(),"already answered") {
+		t.Fatalf("duplicate continuation accepted: %v",err)
+	}
+	if err:=s.GetSuspended(out.RunID,&cp);err!=nil {t.Fatal(err)}
+	if cp.Suspensions["first"].States["wait"]!="completed" ||
+		cp.Suspensions["second"].States["wait"]!="pending" {
+		t.Fatalf("partial resume lost sibling checkpoint: %#v",cp)
+	}
+	// With only one outstanding leaf, the original Resume API stays compatible.
+	finished,err:=New(s).Resume(context.Background(),cfg,"rev",out.RunID,"two")
+	if err!=nil || finished.Status!="success" || count.Load()!=2 {
+		t.Fatalf("parallel resume failed or replayed writes: %#v %v writes=%d",finished,err,count.Load())
+	}
+	if err:=s.GetSuspended(out.RunID,&cp);err!=sql.ErrNoRows {
+		t.Fatalf("completed checkpoint was not removed: %v",err)
 	}
 }

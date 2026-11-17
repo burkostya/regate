@@ -683,14 +683,39 @@ blocks all confirmed/unknown duplicate writes within the logical run.
 
 A parallel execution wave is fully settled before a checkpoint is published.
 Successful sibling results and their effect identities are recorded even if
-a different sibling suspends. **Two simultaneous suspension nodes are rejected
-without publishing an ambiguous checkpoint**; do not schedule independent
-user-input branches as parallel suspensions. If a sibling fails or the
-checkpoint cannot be written, the run fails closed. Suspended states are not
-automatic retries: crash-interrupted *working* tasks, remotely ambiguous
-writes, OAuth refresh and operator-grant recovery still require their own
-authorization/reconciliation protocols. This is deliberately not a general
-multi-suspension scheduler or production-grade encrypted checkpoint vault.
+another sibling suspends. Multiple independently suspended nodes in the same
+wave are stored under the **same root SQLite checkpoint**; each nested call
+retains its own checkpoint subtree. A single suspended path keeps the older
+`suspend_node`/`child` wire format for backward compatibility.
+
+`tasks/get` exposes only the pending nested node-name `paths`, not their
+checkpoint inputs or values. With more than one pending path, callers must
+select a specific leaf in `tasks/update`:
+
+```json
+{
+  "inputResponses": {
+    "resume": {
+      "action": "accept",
+      "path": ["review_a", "wait"],
+      "content": "approved"
+    }
+  }
+}
+```
+
+Each leaf answer is independently checked against its immutable output
+schema and written durably. While **any** leaf is unanswered, downstream
+nodes and their side effects do not execute. An already answered path
+cannot be submitted again. Once only one leaf is pending, the previous
+pathless `resume` contract remains supported. Caller identity, original
+revision, delegation, leader lease and journal fencing remain enforced.
+
+If any sibling fails or the checkpoint cannot be stored, the run fails
+closed. This adds parallel *input collection*, not automatic retries,
+arbitrary independent per-branch progression, encrypted checkpoint data,
+or exactly-once remote effects. Crash-interrupted working tasks and
+ambiguous writes still need their own reconciliation protocol.
 
 ### Operator-attested bounded MCP read retry (PR #53)
 

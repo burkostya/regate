@@ -117,6 +117,7 @@ type Outcome struct {
 	OutputProduced bool `json:"-"` // True even for a deliberately null output.
 	NamedOutputs map[string]any `json:"-"` // Private, completed child terminal values; never client-facing.
 	Checkpoint *Checkpoint `json:"-"` // Private continuation state, never sent to MCP clients.
+	SuspensionPaths [][]string `json:"-"` // Public-safe node identities for task continuation selection.
 }
 type Checkpoint struct {
 	RunID       string            `json:"run_id"`
@@ -128,7 +129,8 @@ type Checkpoint struct {
 	Values      map[string]any    `json:"values"`
 	Fired       map[string]bool   `json:"fired"`
 	SuspendNode string            `json:"suspend_node"`
-	Child       *Checkpoint       `json:"child,omitempty"` // Only the active nested suspension chain.
+	Child       *Checkpoint       `json:"child,omitempty"` // Legacy single active suspension.
+	Suspensions map[string]*Checkpoint `json:"suspensions,omitempty"` // Multiple independently parked nodes, each with its own nested continuation.
 }
 
 func derivedSubrunID(parentRunID, nodeName, childName string) string {
@@ -574,9 +576,12 @@ func (r *Runtime) execute(ctx context.Context, revision string, cfg *config.Conf
 				}
 				vars := map[string]any{"input": input, "nodes": snap, "ports": ports, "port_present": present}
 				var childCheckpoint *Checkpoint
-				if checkpoint != nil && checkpoint.SuspendNode == name &&
-					p.Nodes[name].Kind == "pipeline.call" {
-					childCheckpoint = checkpoint.Child
+				if checkpoint != nil && p.Nodes[name].Kind == "pipeline.call" {
+					if checkpoint.Suspensions != nil {
+						childCheckpoint = checkpoint.Suspensions[name]
+					} else if checkpoint.SuspendNode == name {
+						childCheckpoint = checkpoint.Child
+					}
 				}
 				results[i] = r.evalNode(ctx, cfg, p.Nodes[name], cfg.Plans[p.Name].Nodes[name], vars, dry, runID, surface, toolName, revision, childCheckpoint)
 			}(index, name)
@@ -585,17 +590,14 @@ func (r *Runtime) execute(ctx context.Context, revision string, cfg *config.Conf
 		// Every ready node has already executed. Inspect all failures before
 		// accepting a suspension, then record every successful sibling in the
 		// checkpoint. Otherwise an effectful sibling could be dispatched again.
-		var suspended *nodeResult
+		suspensions := map[string]*Checkpoint{}
 		for i := range results {
 			res := &results[i]
 			if res.error != nil {
 				return out, fmt.Errorf("node %s: %w", res.name, res.error)
 			}
 			if res.suspend {
-				if suspended != nil {
-					return out, fmt.Errorf("pipeline %s: simultaneous suspension at %s and %s is not supported", p.Name, suspended.name, res.name)
-				}
-				suspended = res
+				suspensions[res.name] = res.checkpoint
 			}
 		}
 		// Deterministic commit order even though execution is parallel.
@@ -620,13 +622,18 @@ func (r *Runtime) execute(ctx context.Context, revision string, cfg *config.Conf
 				r.Store.WriteTrace(storage.Trace{RunID: runID, Revision: revision, Surface: surface, Tool: toolName, Node: res.name, Status: "success"})
 			}
 		}
-		if suspended != nil {
+		if len(suspensions) > 0 {
 			cp := &Checkpoint{RunID: runID, Revision: revision, Surface: surface,
-				Tool: toolName, Input: input, States: states, Values: values, Fired: fired,
-				SuspendNode: suspended.name, Child: suspended.checkpoint}
-			// Only root run IDs are SQLite keys. Child frames carry private
-			// checkpoint fragments to the root; the root publishes the full
-			// chain after all in-flight siblings have settled.
+				Tool: toolName, Input: input, States: states, Values: values, Fired: fired}
+			if len(suspensions) == 1 {
+				for name, child := range suspensions {
+					cp.SuspendNode, cp.Child = name, child
+				}
+			} else {
+				cp.Suspensions = suspensions
+			}
+			// Only the root run has a SQLite checkpoint. All parallel siblings
+			// have settled, and their completed effects remain in the snapshot.
 			if !dry && r.Store != nil && len(runID) == 24 {
 				if err := r.Store.PutSuspended(runID, cp); err != nil {
 					return out, fmt.Errorf("persist root pipeline checkpoint: %w", err)
@@ -634,8 +641,10 @@ func (r *Runtime) execute(ctx context.Context, revision string, cfg *config.Conf
 			}
 			out.Status = "suspended"
 			out.Checkpoint = cp
-			out.Value = map[string]any{"run_id": runID, "node": suspended.name}
-			return out, fmt.Errorf("execution suspended at %s", suspended.name)
+			out.SuspensionPaths = PendingSuspensionPaths(cp)
+			out.Value = map[string]any{"run_id": runID, "paths": out.SuspensionPaths}
+			if len(suspensions) == 1 { out.Value.(map[string]any)["node"] = cp.SuspendNode }
+			return out, fmt.Errorf("execution suspended at %d node(s)", len(suspensions))
 		}
 	}
 }
@@ -1227,50 +1236,148 @@ func decide(value any) (any, error) {
 	return nil, ErrDenied
 }
 // completeSuspendedCheckpoint advances exactly one suspended leaf. Every
-// outer checkpoint stays pending until its child produces a validated result.
-// The invocation chain is verified against the immutable compiled pipeline.
-func completeSuspendedCheckpoint(cfg *config.Config, pipelineName string,
-	cp *Checkpoint, runID, revision, surface, tool string, value any, depth int) error {
+// PendingSuspensionPaths exposes only node identifiers, never checkpoint
+// inputs or values. A path is an array, not a slash-separated string: HCL
+// quoted node names may contain path delimiters.
+func PendingSuspensionPaths(cp *Checkpoint) [][]string {
+	if cp == nil { return nil }
+	var paths [][]string
+	var walk func(*Checkpoint, []string)
+	walk = func(cur *Checkpoint, prefix []string) {
+		if cur == nil { return }
+		nodes := cur.Suspensions
+		if nodes == nil {
+			if cur.SuspendNode == "" { return }
+			nodes = map[string]*Checkpoint{cur.SuspendNode: cur.Child}
+		}
+		names := make([]string, 0, len(nodes))
+		for name := range nodes { names = append(names, name) }
+		sort.Strings(names)
+		for _, name := range names {
+			path := append(append([]string{}, prefix...), name)
+			if child := nodes[name]; child != nil {
+				walk(child, path)
+			} else if cur.States[name] == "pending" {
+				paths = append(paths, path)
+			}
+		}
+	}
+	walk(cp, nil)
+	return paths
+}
+
+func equalSuspensionPath(a, b []string) bool {
+	if len(a) != len(b) { return false }
+	for i := range a { if a[i] != b[i] { return false } }
+	return true
+}
+
+// validateSuspensionTree verifies the durable snapshot against the immutable
+// pipeline contract, including every parked branch (not only the selected one).
+// A completed leaf is allowed after another parallel leaf was answered, but
+// cannot be answered again. Neither untrusted input nor HCL nodes can invent a
+// new continuation target or bypass the allow_suspend boundary.
+func validateSuspensionTree(cfg *config.Config, pipelineName string, cp *Checkpoint,
+	runID, revision, surface, tool string, depth int) error {
 	if depth > config.MaxPurePipelineCallDepth || cp == nil ||
 		cp.RunID != runID || cp.Revision != revision ||
 		cp.Surface != surface || cp.Tool != tool ||
 		cp.Input == nil || cp.States == nil || cp.Values == nil || cp.Fired == nil {
-		return fmt.Errorf("invalid suspended checkpoint chain")
+		return fmt.Errorf("invalid suspended checkpoint identity")
 	}
 	pipeline, ok := cfg.Pipelines[pipelineName]
 	if !ok { return fmt.Errorf("checkpoint pipeline not found") }
-	node, ok := pipeline.Nodes[cp.SuspendNode]
-	if !ok || cp.States[cp.SuspendNode] != "pending" {
-		return fmt.Errorf("checkpoint suspend node is not pending")
+	if len(cp.Suspensions) > 0 && (cp.SuspendNode != "" || cp.Child != nil) {
+		return fmt.Errorf("ambiguous suspended checkpoint encoding")
 	}
+	nodes := cp.Suspensions
+	if nodes == nil {
+		if cp.SuspendNode == "" { return fmt.Errorf("empty suspended checkpoint") }
+		nodes = map[string]*Checkpoint{cp.SuspendNode: cp.Child}
+	}
+	if len(nodes) == 0 { return fmt.Errorf("empty suspended checkpoint") }
+	for name, child := range nodes {
+		node, exists := pipeline.Nodes[name]
+		if !exists { return fmt.Errorf("unknown suspended checkpoint node") }
+		switch node.Kind {
+		case "suspend":
+			if child != nil { return fmt.Errorf("suspend leaf cannot own child checkpoint") }
+			if cp.States[name] != "pending" && cp.States[name] != "completed" {
+				return fmt.Errorf("invalid suspend leaf state")
+			}
+			if cp.States[name] == "completed" {
+				state, ok := cp.Values[name].(map[string]any)
+				if !ok { return fmt.Errorf("completed suspend leaf has no value") }
+				if _, ok := state["value"]; !ok { return fmt.Errorf("completed suspend leaf has no value") }
+			}
+		case "pipeline.call":
+			if cp.States[name] != "pending" || child == nil ||
+				node.Attrs["allow_suspend"] != true || node.Attrs["allow_effects"] != true {
+				return fmt.Errorf("nested suspension not authorized")
+			}
+			childName := node.Str("pipeline")
+			if err := validateSuspensionTree(cfg, childName, child,
+				derivedSubrunID(runID, name, childName), revision, surface, tool, depth+1); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("checkpoint target is not a suspension boundary")
+		}
+	}
+	return nil
+}
+
+// completeSuspendedCheckpoint applies exactly one validated continuation. Its
+// caller must check that the selected leaf path is pending before invocation.
+func completeSuspendedCheckpoint(cfg *config.Config, pipelineName string,
+	cp *Checkpoint, runID, revision, surface, tool string, path []string, value any, depth int) error {
+	if depth > config.MaxPurePipelineCallDepth || len(path) == 0 || cp == nil {
+		return fmt.Errorf("invalid suspended checkpoint path")
+	}
+	pipeline, ok := cfg.Pipelines[pipelineName]
+	if !ok { return fmt.Errorf("checkpoint pipeline not found") }
+	name := path[0]
+	var child *Checkpoint
+	if cp.Suspensions != nil {
+		var exists bool
+		child, exists = cp.Suspensions[name]
+		if !exists { return fmt.Errorf("unknown suspension path") }
+	} else {
+		if cp.SuspendNode != name { return fmt.Errorf("unknown suspension path") }
+		child = cp.Child
+	}
+	node, ok := pipeline.Nodes[name]
+	if !ok { return fmt.Errorf("checkpoint suspend node not found") }
 	switch node.Kind {
 	case "pipeline.call":
-		if cp.Child == nil || node.Attrs["allow_suspend"] != true ||
-			node.Attrs["allow_effects"] != true {
-			return fmt.Errorf("nested suspension is not authorized")
+		if child == nil || node.Attrs["allow_suspend"] != true ||
+			node.Attrs["allow_effects"] != true || cp.States[name] != "pending" {
+			return fmt.Errorf("nested suspension not authorized")
 		}
 		childName := node.Str("pipeline")
-		return completeSuspendedCheckpoint(cfg, childName, cp.Child,
+		return completeSuspendedCheckpoint(cfg, childName, child,
 			derivedSubrunID(runID, node.Name, childName),
-			revision, surface, tool, value, depth+1)
+			revision, surface, tool, path[1:], value, depth+1)
 	case "suspend":
-		if cp.Child != nil { return fmt.Errorf("unexpected nested checkpoint on suspend leaf") }
+		if len(path) != 1 || child != nil || cp.States[name] != "pending" {
+			return fmt.Errorf("suspend leaf already answered or path invalid")
+		}
 		plan := cfg.Plans[pipelineName]
-		if plan == nil || plan.Nodes[cp.SuspendNode] == nil {
+		if plan == nil || plan.Nodes[name] == nil {
 			return fmt.Errorf("suspend output contract unavailable")
 		}
-		if err := plan.Nodes[cp.SuspendNode].OutputSchema.Validate(value); err != nil {
+		if err := plan.Nodes[name].OutputSchema.Validate(value); err != nil {
 			return fmt.Errorf("suspend continuation failed output schema: %w", err)
 		}
-		if port := plan.Nodes[cp.SuspendNode].OutputPorts["value"]; port != nil {
+		if port := plan.Nodes[name].OutputPorts["value"]; port != nil {
 			if err := port.Validate(value); err != nil {
 				return fmt.Errorf("suspend continuation failed value port schema: %w", err)
 			}
 		}
-		cp.States[cp.SuspendNode] = "completed"
-		cp.Values[cp.SuspendNode] = map[string]any{"value": value, "status": "success"}
+		cp.States[name] = "completed"
+		cp.Values[name] = map[string]any{"value": value, "status": "success"}
 		for _, edge := range pipeline.Edges {
-			if edge.Kind != "data" && edge.From == cp.SuspendNode &&
+			if edge.Kind != "data" && edge.From == name &&
 				(edge.When == "" || edge.When == "always" || edge.When == fmt.Sprint(value)) {
 				cp.Fired[edge.From+">"+edge.To] = true
 			}
@@ -1282,6 +1389,12 @@ func completeSuspendedCheckpoint(cfg *config.Config, pipelineName string,
 }
 
 func (r *Runtime) Resume(ctx context.Context, cfg *config.Config, revision string, runID string, value any) (Outcome, error) {
+	return r.ResumeAt(ctx, cfg, revision, runID, nil, value)
+}
+
+// ResumeAt selects one leaf suspension by its nested node-name path. A nil
+// path preserves the old API only when exactly one leaf is pending.
+func (r *Runtime) ResumeAt(ctx context.Context, cfg *config.Config, revision string, runID string, path []string, value any) (Outcome, error) {
 	out := Outcome{RunID: runID, Revision: revision, Status: "failure"}
 	if r.Store == nil { return out, fmt.Errorf("durable checkpoint store required") }
 	ctx = withEffectScope(ctx, runID)
@@ -1307,9 +1420,31 @@ func (r *Runtime) Resume(ctx context.Context, cfg *config.Config, revision strin
 	}
 	pipeline, ok := cfg.Pipelines[pipelineName]
 	if !ok { return out, fmt.Errorf("missing original pipeline") }
+	if err := validateSuspensionTree(cfg, pipelineName, &cp, runID,
+		revision, cp.Surface, cp.Tool, 1); err != nil { return out, err }
+	pending := PendingSuspensionPaths(&cp)
+	if len(path) == 0 {
+		if len(pending) != 1 { return out, fmt.Errorf("resume requires an explicit suspension path") }
+		path = pending[0]
+	}
+	found := false
+	for _, candidate := range pending {
+		if equalSuspensionPath(path, candidate) { found = true; break }
+	}
+	if !found { return out, fmt.Errorf("unknown or already answered suspension path") }
 	if err := completeSuspendedCheckpoint(cfg, pipelineName, &cp, runID,
-		revision, cp.Surface, cp.Tool, value, 1); err != nil {
+		revision, cp.Surface, cp.Tool, path, value, 1); err != nil {
 		return out, err
+	}
+	if remaining := PendingSuspensionPaths(&cp); len(remaining) > 0 {
+		// Parked independent branches do not run any downstream effects until
+		// every pending leaf has an accepted, schema-checked answer.
+		if err := r.Store.PutSuspended(runID, &cp); err != nil { return out, err }
+		out.Status = "suspended"
+		out.Checkpoint = &cp
+		out.SuspensionPaths = remaining
+		out.Value = map[string]any{"run_id": runID, "paths": remaining}
+		return out, fmt.Errorf("waiting for %d suspension(s)", len(remaining))
 	}
 	runctx, cancel := context.WithTimeout(ctx, time.Duration(pipeline.TimeoutMS)*time.Millisecond)
 	defer cancel()
