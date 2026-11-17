@@ -1057,3 +1057,21 @@ to prevent duplicate post-graph response hooks.
 
 This protection concerns public result isolation, not atomic
 rollback of effects already issued during a failed graph wave.
+
+### Visual editor and concurrent draft source protection
+
+The visual graph is a projection of a specific active HCL revision.
+It preserves typed `edge.kind`, `from_port`, `to_port` and `when`.
+Graph changes cannot be safely applied to a draft whose HCL source
+has changed since that graph was loaded; the UI rejects the save
+rather than resetting unrelated HCL edits. Opaque blocks continue
+to require source editing.
+
+Management draft responses carry `source_digest` (full SHA-256).
+Optional `expected_source_digest` parameters on draft/graph/attribute
+patches and activation enforce optimistic concurrency. The visual
+console sends the precondition with every write and activation.
+Structural patch operations use atomic SQLite source CAS even when
+an older MCP caller omits the digest. Activation also pins the
+compiled source against concurrent edits. A conflict requires
+refresh/review; there is no implicit three-way merge.
