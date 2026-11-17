@@ -41,9 +41,17 @@ func TestPureMapParallelismContract(t *testing.T) {
 func TestPureMapParallelismRejectsPipelineMode(t *testing.T) {
 	base := `pipeline "child" {
   entry = "start"
-  node "start" {kind = "input"}
-  node "end" {kind = "output" value = "nodes.start.value"}
-  edge {from = "start" to = "end"}
+  node "start" {
+    kind = "input"
+  }
+  node "end" {
+    kind = "output"
+    value = "nodes.start.value"
+  }
+  edge {
+    from = "start"
+    to = "end"
+  }
 }
 pipeline "main" {
   entry = "batch"
@@ -56,10 +64,21 @@ pipeline "main" {
     input_schema = {type = "object"}
     output_schema = {type = "array", items = {type = "object"}}
   }
-  node "end" {kind = "output" value = "nodes.batch.value"}
-  edge {from = "batch" to = "end"}
+  node "end" {
+    kind = "output"
+    value = "nodes.batch.value"
+  }
+  edge {
+    from = "batch"
+    to = "end"
+  }
 }
-surface "s" {path = "/s" tool "t" {pipeline = "main"}}
+surface "s" {
+  path = "/s"
+  tool "t" {
+    pipeline = "main"
+  }
+}
 `
 	if _, err := Decode(base); err == nil || !strings.Contains(err.Error(), "parallelism is supported only for pure CEL mapping") {
 		t.Fatalf("parallel pipeline map must be rejected: %v", err)
