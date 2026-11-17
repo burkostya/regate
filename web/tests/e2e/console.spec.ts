@@ -163,3 +163,38 @@ test('real console edits typed port graph, validates HCL and rejects stale draft
   expect(restored.revision).not.toBe(before.revision);
   expect(restored.revision).not.toBe(activatedConfiguration.revision);
 });
+
+test('trace filter works while pipeline graph has unsaved changes', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveAttribute('data-regate-hydrated', 'true');
+  await page.getByLabel('Admin bearer token').fill(token);
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Execution graph' })).toBeVisible();
+
+  // Keep an intentionally dirty graph to prove that read-only trace
+  // filtering never calls the destructive full refresh() path.
+  await page.locator('.palette .node-item').filter({ hasText: /^mask/ }).first().click();
+  const editor = page.locator('#node-attributes');
+  const original = JSON.parse(await editor.inputValue());
+  original.unsaved_trace_test_marker = 'do-not-discard';
+  await editor.fill(JSON.stringify(original, null, 2));
+  await page.getByRole('button', { name: 'Apply', exact: true }).click();
+
+  await page.locator('.sidebar nav').getByRole('button', { name: 'Traces', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Execution traces' })).toBeVisible();
+  await page.locator('#trace-run').fill('non-existent-run');
+  await page.locator('#trace-status').selectOption('failure');
+  await page.locator('#trace-limit').selectOption('25');
+  const filteredResponse = page.waitForResponse(response =>
+    response.url().includes('/api/traces?') && response.url().includes('status=failure')
+  );
+  await page.getByRole('button', { name: 'Filter traces' }).click();
+  const filtered = await filteredResponse;
+  expect(filtered.status(), await filtered.text()).toBe(200);
+  expect(await filtered.json()).toEqual([]);
+  await expect(page.getByText('No matching trace events.')).toBeVisible();
+  await expect(page.locator('.toast.error')).toHaveCount(0);
+
+  await page.locator('.sidebar nav').getByRole('button', { name: 'Pipelines', exact: true }).click();
+  await expect(page.locator('#node-attributes')).toHaveValue(/do-not-discard/);
+});

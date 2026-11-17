@@ -10,6 +10,7 @@ export type Catalog = {
   interceptors: unknown[];
 };
 export type Draft = { id: string; base: string; source: string; source_digest: string; created: string };
+export type Trace = { run_id: string; revision: string; surface: string; tool: string; node?: string; status: string; message?: string; at: string; duration_ms?: number };
 
 let authToken = '';
 export function setToken(value: string) { authToken = value; }

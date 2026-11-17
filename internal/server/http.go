@@ -133,7 +133,12 @@ func (s *Service) api(w http.ResponseWriter, r *http.Request) {
 			reply(w, 200, s.Store.History())
 			return
 		case "traces":
-			reply(w, 200, s.Store.Traces())
+            query,err:=parseTraceQuery(r.URL.Query())
+            if err!=nil {
+                errorJSON(w,400,err)
+                return
+            }
+			reply(w, 200, s.Store.TracesFiltered(query))
 			return
 		case "effects":
 			reply(w, 200, s.Store.Effects())

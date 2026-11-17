@@ -660,3 +660,20 @@ This is layered best-effort redaction, **not** data-flow taint
 attestation or retrospective migration of older forensic records.
 Other free-text metadata, external KMS/backup key custody and the
 complete sensitive-data privacy matrix remain separate release gates.
+
+### Trace inspection projection and query limits
+
+SQLite retains the newest **2000 trace records**, ordered by increasing
+write sequence. The admin REST endpoint `GET /api/traces` returns
+newest-first JSON and accepts optional exact `run_id` and `status`
+match selectors plus `limit` (1–2000, default 2000). Limits apply to
+the matching subset **after** scanning the bounded retained projection;
+unrelated recent records cannot crowd out a run being investigated.
+Unknown/duplicate selectors, oversized or malformed inputs and invalid
+limits are rejected. The management MCP `regate_pipeline_trace`
+uses the same exact run filter semantics.
+
+Console trace queries never reload or overwrite a pipeline editing
+session. The 2000-record projection and scrubbed diagnostics are not
+a substitute for durable distributed telemetry/audit storage; data
+older than the retention cap is intentionally unavailable.
