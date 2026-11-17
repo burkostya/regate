@@ -463,7 +463,14 @@ func (r *Runtime) execute(ctx context.Context, revision string, cfg *config.Conf
 						return
 					}
 					var value any
-					if binding.fromPort == "structured" || binding.fromPort == "content" {
+					if binding.fromPort != "value" && p.Nodes[binding.producer].Kind == "pipeline.call" {
+						object, isObject := state["value"].(map[string]any)
+						if isObject { value, ok = object[binding.fromPort] }
+						if !isObject || !ok {
+							results[i] = nodeResult{name: name, error: fmt.Errorf("data port %s missing named pipeline output %s", port, binding.fromPort)}
+							return
+						}
+					} else if binding.fromPort == "structured" || binding.fromPort == "content" {
 						field := "structuredContent"
 						if binding.fromPort == "content" { field = "content" }
 						raw, hasEnvelope := state["mcp"].(map[string]any)
@@ -894,6 +901,14 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 			var value any
 			if portName == "value" {
 				value = ret.value
+			} else if n.Kind == "pipeline.call" {
+				object, isObject := ret.value.(map[string]any)
+				var provided bool
+				if isObject { value, provided = object[portName] }
+				if !isObject || !provided {
+					ret.error = fmt.Errorf("node %s missing named pipeline output %s", n.Name, portName)
+					break
+				}
 			} else {
 				field := "structuredContent"
 				if portName == "content" { field = "content" }
