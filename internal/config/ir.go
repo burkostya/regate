@@ -285,9 +285,20 @@ func (c *Config) Compile() error {
 			if err := CheckKnownCompatibility(call.InputSchema, childInput); err != nil {
 				return fmt.Errorf("pipeline %s call %s input contract: %w", parentName, nodeName, err)
 			}
-			for _, output := range child.Nodes {
-				if output.Kind == "output" {
-					childOutput := plans[child.Name].Nodes[output.Name].OutputSchema
+			for _, outputName := range namedOutputNodes(child) {
+				childOutput := plans[child.Name].Nodes[outputName].OutputSchema
+				if outputNodes(child) > 1 {
+					// Each terminal is a required named field in the caller's
+					// aggregate object. No last-writer-wins outcome is allowed.
+					if childOutput == nil {
+						return fmt.Errorf("pipeline %s call %s: child terminal %s requires output_schema", parentName, nodeName, outputName)
+					}
+					if err := CheckKnownCompatibility(childOutput, call.OutputPorts[outputName]); err != nil {
+						return fmt.Errorf("pipeline %s call %s child terminal %s: %w", parentName, nodeName, outputName, err)
+					}
+					continue
+				}
+				{
 					if err := CheckKnownCompatibility(childOutput, call.OutputSchema); err != nil {
 						return fmt.Errorf("pipeline %s call %s output contract: %w", parentName, nodeName, err)
 					}
@@ -311,6 +322,24 @@ func (c *Config) Compile() error {
 							return fmt.Errorf("pipeline %s call %s named output %s: %w", parentName, nodeName, portName, err)
 						}
 					}
+				}
+			}
+			if outputNodes(child) > 1 {
+				fields := map[string]any{}
+				required := []any{}
+				for _, outputName := range namedOutputNodes(child) {
+					fields[outputName] = plans[child.Name].Nodes[outputName].OutputSchema.Raw
+					required = append(required, outputName)
+				}
+				aggregate := &SchemaContract{Raw: map[string]any{
+					"type": "object", "required": required,
+					"properties": fields, "additionalProperties": false,
+				}}
+				if err := CheckKnownCompatibility(aggregate, call.OutputSchema); err != nil {
+					return fmt.Errorf("pipeline %s call %s aggregate output contract: %w", parentName, nodeName, err)
+				}
+				if err := CheckKnownCompatibility(aggregate, call.OutputPorts["value"]); err != nil {
+					return fmt.Errorf("pipeline %s call %s aggregate value port contract: %w", parentName, nodeName, err)
 				}
 			}
 		}
