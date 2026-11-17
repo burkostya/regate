@@ -75,6 +75,8 @@ jobs:
         working-directory: web
         env:
           REGATE_E2E_ADMIN_TOKEN: regate-e2e-test-token
+          # Mutates and restores ONLY the isolated $RUNNER_TEMP SQLite state.
+          REGATE_E2E_ALLOW_ACTIVATION: 'true'
       - name: Preserve browser diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v4
