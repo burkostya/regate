@@ -9,6 +9,8 @@ test('real console edits typed port graph, validates HCL and rejects stale draft
   const before = await beforeResponse.json();
 
   await page.goto('/');
+  // A server-rendered form is not interactive until Svelte attaches handlers.
+  await expect(page.locator('html')).toHaveAttribute('data-regate-hydrated', 'true');
   await expect(page.getByRole('heading', { name: 'Connect to Regate' })).toBeVisible();
   await page.getByLabel('Admin bearer token').fill(token);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
