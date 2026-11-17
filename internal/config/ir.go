@@ -30,6 +30,7 @@ type NodeIR struct {
 	Dependencies []string
 	InputSchema  *SchemaContract
 	OutputSchema *SchemaContract
+	InputPorts   map[string]*SchemaContract // Named JSON Schema bindings supplied only by data edges.
 }
 type ToolContract struct {
 	Input  *SchemaContract
@@ -44,6 +45,8 @@ type PipelineIR struct {
 }
 
 var nodeRef = regexp.MustCompile(`\bnodes\.([a-zA-Z_][a-zA-Z0-9_]*)`)
+var portRef = regexp.MustCompile(`\bports\.([a-zA-Z_][a-zA-Z0-9_]*)`)
+var portIdentifier = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 func (c *Config) Compile() error {
 	plans := map[string]*PipelineIR{}
@@ -71,6 +74,7 @@ func (c *Config) Compile() error {
 			incoming[id] = 0
 		}
 		for _, e := range p.Edges {
+			if e.Kind == "data" { continue }
 			forward[e.From] = append(forward[e.From], e.To)
 			incoming[e.To]++
 		}
@@ -104,7 +108,16 @@ func (c *Config) Compile() error {
 			case "input":
 				resultType = PortObject
 			}
-			compiled := &NodeIR{Name: id, Kind: n.Kind, Span: n.Span, Output: resultType, Expressions: map[string]*expr.Value{}}
+			compiled := &NodeIR{Name: id, Kind: n.Kind, Span: n.Span, Output: resultType, Expressions: map[string]*expr.Value{}, InputPorts: map[string]*SchemaContract{}}
+			if portSchemas, ok := n.Attrs["input_ports"].(map[string]any); ok {
+				for portName, raw := range portSchemas {
+					declared, ok := raw.(map[string]any)
+					if !ok { return fmt.Errorf("pipeline %s node %s port %s: schema must be an object", name, id, portName) }
+					schema, err := compileSchema(declared)
+					if err != nil { return fmt.Errorf("pipeline %s node %s port %s: %w", name, id, portName, err) }
+					compiled.InputPorts[portName] = schema
+				}
+			}
 			if raw, ok := n.Attrs["input_schema"].(map[string]any); ok {
 				schema, err := compileSchema(raw)
 				if err != nil {
@@ -146,6 +159,11 @@ func (c *Config) Compile() error {
 					return fmt.Errorf("pipeline %s node %s %s at line %d: %w", name, id, attr, n.Span.Line, err)
 				}
 				compiled.Expressions[attr] = value
+				for _, portName := range extractPortRefs(raw) {
+					if _, ok := compiled.InputPorts[portName]; !ok {
+						return fmt.Errorf("pipeline %s node %s: unknown input port %s", name, id, portName)
+					}
+				}
 				refs := extractRefs(raw)
 				for _, dep := range refs {
 					if _, ok := p.Nodes[dep]; !ok {
@@ -155,6 +173,11 @@ func (c *Config) Compile() error {
 						return fmt.Errorf("pipeline %s node %s: %s is not a control predecessor (data may be unavailable)", name, id, dep)
 					}
 					compiled.Dependencies = append(compiled.Dependencies, dep)
+				}
+			}
+			for _, edge := range p.Edges {
+				if edge.Kind == "data" && edge.To == id {
+					compiled.Dependencies = append(compiled.Dependencies, edge.From)
 				}
 			}
 			sort.Strings(compiled.Dependencies)
@@ -185,6 +208,14 @@ func (c *Config) Compile() error {
 				}
 			}
 		}
+		for _, edge := range p.Edges {
+			if edge.Kind != "data" { continue }
+			producer := plan.Nodes[edge.From].OutputSchema
+			consumer := plan.Nodes[edge.To].InputPorts[edge.ToPort]
+			if err := CheckKnownCompatibility(producer, consumer); err != nil {
+				return fmt.Errorf("pipeline %s data port %s.%s -> %s.%s: %w", name, edge.From, "value", edge.To, edge.ToPort, err)
+			}
+		}
 		plans[name] = plan
 	}
 	// Compare each tool's published output contract with declared outputs.
@@ -208,6 +239,29 @@ func (c *Config) Compile() error {
 	c.Plans = plans
 	c.ToolContracts = toolContracts
 	return nil
+}
+// extractPortRefs examines statically named CEL port references. Dynamic
+// indexing stays bounded by the declared, runtime-validated port map.
+func extractPortRefs(value any) []string {
+	switch v := value.(type) {
+	case string:
+		if strings.HasPrefix(v, "literal:") { return nil }
+		refs := []string{}
+		for _, match := range portRef.FindAllStringSubmatch(stripCELStrings(v), -1) {
+			refs = append(refs, match[1])
+		}
+		return refs
+	case map[string]any:
+		refs := []string{}
+		for _, item := range v { refs = append(refs, extractPortRefs(item)...)}
+		return refs
+	case []any:
+		refs := []string{}
+		for _, item := range v { refs = append(refs, extractPortRefs(item)...)}
+		return refs
+	default:
+		return nil
+	}
 }
 func extractRefs(value any) []string {
 	switch v := value.(type) {
@@ -248,7 +302,7 @@ func isAncestor(from, to string, edges []Edge) bool {
 		}
 		visited[id] = true
 		for _, e := range edges {
-			if e.From == id && visit(e.To) {
+			if e.Kind != "data" && e.From == id && visit(e.To) {
 				return true
 			}
 		}

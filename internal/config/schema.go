@@ -24,7 +24,7 @@ var blockAttributes = map[string]map[string]string{
 	"resource":    {"uri": "string", "source": "string", "text": "string", "mime_type": "string", "required_scopes": "string-list"},
 	"prompt":      {"description": "string", "text": "string", "required_scopes": "string-list"},
 	"interceptor": {"stage": "string", "hook": "string", "surface": "string", "tool": "string", "order": "int"},
-	"edge":        {"from": "string", "to": "string", "when": "string"},
+	"edge":        {"from": "string", "to": "string", "when": "string", "kind": "string", "from_port": "string", "to_port": "string"},
 }
 var nodeAttributes = map[string]map[string]string{
 	"input":        {"kind": "string"},
@@ -93,6 +93,7 @@ func validateBlock(b *Block, parent string, top bool) error {
 		}
 		merged["input_schema"] = "object"
 		merged["output_schema"] = "object"
+		merged["input_ports"] = "object"
 		attrSpec = merged
 		if !present {
 			return fmt.Errorf("%s: unsupported kind %q", where, kind)

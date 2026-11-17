@@ -311,7 +311,13 @@ func (r *Runtime) execute(ctx context.Context, revision string, cfg *config.Conf
 	}
 	incoming := map[string][]config.Edge{}
 	outgoing := map[string][]config.Edge{}
+	dataInputs := map[string]map[string]string{}
 	for _, e := range p.Edges {
+		if e.Kind == "data" {
+			if dataInputs[e.To] == nil { dataInputs[e.To] = map[string]string{} }
+			dataInputs[e.To][e.ToPort] = e.From
+			continue
+		}
 		incoming[e.To] = append(incoming[e.To], e)
 		outgoing[e.From] = append(outgoing[e.From], e)
 	}
@@ -410,7 +416,27 @@ func (r *Runtime) execute(ctx context.Context, revision string, cfg *config.Conf
 					results[i] = nodeResult{name: name, error: ctx.Err()}
 					return
 				}
-				vars := map[string]any{"input": input, "nodes": snap}
+				// Bind only authenticated, completed producer values. Validation
+				// precedes the consumer's external effect or interceptor.
+				ports := map[string]any{}
+				for port, producer := range dataInputs[name] {
+					state, ok := snap[producer].(map[string]any)
+					if !ok {
+						results[i] = nodeResult{name: name, error: fmt.Errorf("data port %s unavailable", port)}
+						return
+					}
+					value, ok := state["value"]
+					if !ok {
+						results[i] = nodeResult{name: name, error: fmt.Errorf("data port %s has no producer value", port)}
+						return
+					}
+					if err := cfg.Plans[p.Name].Nodes[name].InputPorts[port].Validate(value); err != nil {
+						results[i] = nodeResult{name: name, error: fmt.Errorf("data port %s failed schema validation", port)}
+						return
+					}
+					ports[port] = value
+				}
+				vars := map[string]any{"input": input, "nodes": snap, "ports": ports}
 				results[i] = r.evalNode(ctx, cfg, p.Nodes[name], cfg.Plans[p.Name].Nodes[name], vars, dry, runID, surface, toolName)
 			}(index, name)
 		}
