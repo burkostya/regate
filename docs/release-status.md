@@ -1019,3 +1019,21 @@
   failures. This covers one realistic console workflow, not a full
   cross-browser suite, accessibility audit, OAuth/provider behavior
   or complete #8/#9/#10 release acceptance.
+
+#### Operator recovery from concurrent browser draft edits (#8)
+
+- The HCL console now exposes **Reload draft** for an already selected
+  draft. It fetches the authoritative source and SHA-256 digest from
+  SQLite, so a browser that received a stale-source conflict can resume
+  changes without rebuilding a draft or blindly overwriting the other
+  operator's edits.
+- Reload requires explicit confirmation if the browser has unpersisted
+  HCL or graph changes. On acceptance, local edits and graph state
+  are actually discarded; canceling leaves the user's editor untouched.
+- The UI distinguishes a draft from an older active revision and a
+  draft whose source differs from the current visual graph projection.
+  Recovery does not pretend to merge sources or to project unknown
+  draft HCL into a graph.
+- Browser E2E covers denied reload (local text retained), accepted
+  reload (remote HCL and digest adopted), and successful subsequent
+  CAS-protected save while the active revision stays unchanged.
