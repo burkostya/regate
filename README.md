@@ -196,3 +196,13 @@ writer's changes, then save your next edit. If you have unsaved local
 HCL or graph changes, you must explicitly confirm their discard; cancel
 to preserve them. Reload never performs an automatic three-way merge,
 and a draft with a stale base revision cannot be activated as-is.
+
+### Administrative JSON request safety
+
+Administrative REST endpoints accept a single JSON object, with a
+maximum request body size of 2 MiB. Trailing second JSON documents,
+non-whitespace junk, duplicate keys (including nested/escaped
+equivalents) and nesting deeper than 128 are rejected before executing
+an administrative operation. This parser is independent from the
+official SDK's MCP transport and intentionally does not alter the
+HCL source bytes carried in a valid `source` string.
