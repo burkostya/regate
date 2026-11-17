@@ -297,6 +297,38 @@ func (c *Config) Compile() error {
 	// order cannot affect contract checking.
 	for parentName, parent := range c.Pipelines {
 		for nodeName, node := range parent.Nodes {
+			if node.Kind == "map" && node.Str("pipeline") != "" {
+				child := c.Pipelines[node.Str("pipeline")]
+				mapped := plans[parentName].Nodes[nodeName]
+				// Pipeline-mode map accepts one object per element, never an
+				// unconstrained CEL scalar that could bypass a child contract.
+				if mapped.InputSchema == nil || len(mapped.InputSchema.Types()) != 1 ||
+					mapped.InputSchema.Types()[0] != "object" {
+					return fmt.Errorf("pipeline %s node %s: pipeline map requires object input_schema for each item", parentName, nodeName)
+				}
+				if mapped.OutputSchema == nil || len(mapped.OutputSchema.Types()) != 1 ||
+					mapped.OutputSchema.Types()[0] != "array" {
+					return fmt.Errorf("pipeline %s node %s: pipeline map requires array output_schema", parentName, nodeName)
+				}
+				itemRaw, ok := mapped.OutputSchema.Raw["items"].(map[string]any)
+				if !ok {
+					return fmt.Errorf("pipeline %s node %s: pipeline map output_schema needs items JSON Schema", parentName, nodeName)
+				}
+				itemContract, err := compileSchema(itemRaw)
+				if err != nil {
+					return fmt.Errorf("pipeline %s node %s: invalid map result item contract: %w", parentName, nodeName, err)
+				}
+				childInput := plans[child.Name].Nodes[child.Entry].InputSchema
+				if err := CheckKnownCompatibility(mapped.InputSchema, childInput); err != nil {
+					return fmt.Errorf("pipeline %s node %s: map child input contract: %w", parentName, nodeName, err)
+				}
+				outputName := namedOutputNodes(child)[0] // Validated at call graph boundary.
+				childOutput := plans[child.Name].Nodes[outputName].OutputSchema
+				if err := CheckKnownCompatibility(childOutput, itemContract); err != nil {
+					return fmt.Errorf("pipeline %s node %s: map child output contract: %w", parentName, nodeName, err)
+				}
+				continue
+			}
 			if node.Kind != "pipeline.call" { continue }
 			child := c.Pipelines[node.Str("pipeline")]
 			childInput := plans[child.Name].Nodes[child.Entry].InputSchema
