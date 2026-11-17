@@ -822,3 +822,30 @@ effectful request did nothing: writes already admitted to the durable
 effect journal remain recorded and cannot be blindly replayed or refunded.
 This is fail-closed pipeline execution, **not** remote transaction rollback,
 provider idempotence proof or effect compensation.
+
+
+### Named output ports of a nested pipeline call
+
+A `pipeline.call` may publish explicit named `output_ports` in addition
+to its legacy `value` port (the entire returned value). A child still has
+**one** `output` node; that node returns an object and declares a JSON Schema
+`output_schema` with `type = "object"`, direct `properties`, and `required`
+for every name exported by its caller. Each caller declares its own JSON
+Schema for each named `output_ports` entry, and each downstream consumer
+declares an `input_ports` entry. A `kind = "data"` edge binds them with
+`from_port` and `to_port`. An output such as
+`{first = "input.name", second = "input.code"}` can publish both fields as
+separate data edges, while `nodes.call.value` remains the whole object.
+
+Unknown names, missing required child properties, invalid schemas and provably
+incompatible producer/consumer types are rejected at compilation. Every
+child result and parent named port is independently validated at runtime
+before a downstream node can be activated. Missing fields, including when
+a child skips its sole output, fail closed; no partial named output is
+published. The same contract applies to pure and explicitly authorized
+effectful/suspendable `pipeline.call` frames; checkpoint and effect identities
+are unchanged. MCP `structured`/`content` envelope ports remain distinct
+from named subpipeline properties. A schema using indirect `$ref` or computed
+properties without an explicit, required direct property is not accepted as
+proof of a published name. This feature does not yet support multiple
+independent child `output` nodes or concurrent nested suspension points.

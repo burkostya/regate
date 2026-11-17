@@ -660,3 +660,19 @@
   hooks, correct proxy forwarding, no replay of an application-errored
   write, and typed flag validation. This does not provide rollback,
   compensation or full #7/#10 semantics.
+
+
+#### Named subpipeline output contracts (PR #56)
+
+- `pipeline.call.output_ports` exposes multiple individually typed, required
+  properties of the child pipeline's single returned object; default
+  `value` remains the complete child output.
+- HCL/IR compilation requires direct required properties in the child's
+  object `output_schema`, checks known producer/caller/consumer conflicts,
+  and rejects undeclared source port bindings.
+- Execution validates the child object, each caller output port and each
+  receiving input port before publishing downstream results; missing/malformed
+  values fail closed. Nested checkpoint and effect identities are retained.
+- This is **not** independent multi-terminal output, effectful map, general
+  multi-suspension, remote idempotency/attestation or production acceptance.
+  Issues #7/#10 remain open.
