@@ -947,3 +947,18 @@
   value is published. The full child-input array is validated first.
 - This is *not* parallel external writes, resource transactions,
   provider-level idempotency, or complete #7/#10 acceptance.
+
+#### Visual typed-edge round-trip in Svelte Flow (#8)
+
+- The graph editor now carries explicit `kind`, `from_port` and
+  `to_port` alongside endpoints and guards. Moving nodes and saving a
+  graph preserves these attributes instead of silently converting data
+  bindings into control edges.
+- Canvas-created connections are control dependencies only. Typed data
+  connections display their port names and remain unchanged; rerouting an
+  existing edge through the canvas is rejected until a port-aware editor
+  is implemented. HCL is authoritative for data-port binding edits.
+- Web CI runs a Node/TypeScript regression suite for data/control edges,
+  guards, duplicate endpoints, serialization and fail-closed reconnects.
+- Browser E2E, full GUI port editing, stale draft conflict handling
+  and complete #8/#10 release acceptance remain open.
