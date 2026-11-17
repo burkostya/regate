@@ -634,21 +634,60 @@ enforces atomic write admission and blocks replay after an unknown or already
 resolved effect. An audit trace links the outer call to the derived subrun.
 The parent receives only the completed child output.
 
-Mandatory Decision gates in the parent now treat an effectful
+Mandatory Decision gates in the parent treat an effectful
 `pipeline.call` as an observable side-effect boundary; a bypass path cannot
 invoke a child before the gate. Each child independently enforces its
-declared mandatory gates. A nested `suspend` is forbidden even with
-`allow_effects=true`; a failed child propagates an error and does not
-publish partial output, while its already journaled effects remain available
-for reconciliation (not silently rolled back).
+declared mandatory gates. Unless the additional #52 contract below is
+explicitly enabled, nested `suspend` is rejected. Already journaled
+effects of a failing child remain available for reconciliation (not silently
+rolled back).
 
 This opt-in does **not** make operator-declared `effect="read"` a verified
-idempotence proof, permit automatic retries, grant new OAuth capabilities,
-or provide nested checkpoint resume. Effect classification, trust policy,
-provider response semantics and recovery are still operator/provider
-contracts which require their own evidence.
+idempotence proof, permit automatic retries, or grant new OAuth capabilities.
+Effect classification, trust policy, provider response semantics and recovery
+still require their own evidence.
 
 Authenticated surface trust checks and queued-task OAuth delegation detection
 walk **all transitive called pipelines**, including shared subpipelines. Missing
 targets or recursive runtime mutations fail closed. A child writing Restricted
 data requires the same explicit trusted destination as a top-level write.
+
+### One bounded nested suspension chain (PR #52)
+
+An effectful `pipeline.call` may **explicitly** admit child suspension with
+`allow_suspend = true`. The same call must declare `allow_effects = true`.
+Every enclosing `pipeline.call` on the route to the suspension must opt in;
+a pure call never delegates suspension or effects. Call graphs stay acyclic and
+bounded to eight pipeline frames.
+
+```hcl
+node "review_customer" {
+  kind          = "pipeline.call"
+  pipeline      = "create_then_request_approval"
+  arguments     = "input"
+  allow_effects = true
+  allow_suspend = true
+}
+```
+
+The runtime carries one active nested checkpoint chain to the **root run**'s
+SQLite `suspended` record (subrun IDs are derived and are not separate root
+checkpoint keys). The checkpoint binds immutable revision, surface, tool,
+callee input arguments, completed steps, branch activations and the suspended
+leaf. On `tasks/update`, Regate validates the original authorization and
+revision, walks the exact call chain, validates the supplied leaf value with
+the leaf `output_schema` and declared `value` port, then resumes each
+parent in order. An effectful step completed before suspension is not
+redispatched: its node output is reused, and durable effect admission still
+blocks all confirmed/unknown duplicate writes within the logical run.
+
+A parallel execution wave is fully settled before a checkpoint is published.
+Successful sibling results and their effect identities are recorded even if
+a different sibling suspends. **Two simultaneous suspension nodes are rejected
+without publishing an ambiguous checkpoint**; do not schedule independent
+user-input branches as parallel suspensions. If a sibling fails or the
+checkpoint cannot be written, the run fails closed. Suspended states are not
+automatic retries: crash-interrupted *working* tasks, remotely ambiguous
+writes, OAuth refresh and operator-grant recovery still require their own
+authorization/reconciliation protocols. This is deliberately not a general
+multi-suspension scheduler or production-grade encrypted checkpoint vault.
