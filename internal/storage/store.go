@@ -22,6 +22,7 @@ import (
     "time"
 
     _ "github.com/ncruces/go-sqlite3/driver"
+    "github.com/burkostya/regate/internal/expr"
 )
 
 func ID() string {
@@ -471,6 +472,10 @@ func (s *Store) History() []Revision {
 }
 func (s *Store) WriteTrace(t Trace) {
     if t.At.IsZero(){t.At=time.Now().UTC()}
+    // Store only bounded, sanitized diagnostics, even when a new caller
+    // forgets the runtime's own error redaction. This boundary applies to
+    // durable SQLite records, not only to HTTP responses.
+    t.Message=expr.RedactDiagnostic(t.Message)
     raw,err:=json.Marshal(t)
     if err!=nil{return}
     _,_=s.db.Exec("INSERT INTO traces(at,record) VALUES(?,?)",
@@ -495,6 +500,16 @@ func (s *Store) Traces() []Trace {
 func writeEffectTx(tx *sql.Tx,event Effect) error {
     if event.ID=="" || event.Status=="" {return fmt.Errorf("effect id and status required")}
     if event.At.IsZero(){event.At=time.Now().UTC()}
+    // Free-form diagnostic and operator evidence text is not a credential
+    // vault. Preserve effect identity, resource/evidence digests and state,
+    // while ensuring new journal records cannot persist raw bearer tokens
+    // or obvious PII from an untrusted provider error.
+    event.Reason=expr.RedactDiagnostic(event.Reason)
+    if event.Resolution!=nil {
+        resolution:=*event.Resolution
+        resolution.Reason=expr.RedactDiagnostic(resolution.Reason)
+        event.Resolution=&resolution
+    }
     raw,err:=json.Marshal(event)
     if err!=nil{return err}
     result,err:=tx.Exec(`INSERT INTO effect_events(effect_id,status,at,record)
