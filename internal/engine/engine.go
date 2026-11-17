@@ -807,6 +807,32 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 		result := make([]any, 0, len(items))
 		childName := n.Str("pipeline")
 		child, hasChild := cfg.Pipelines[childName]
+		if childName != "" {
+			if !hasChild || cfg.Plans[childName] == nil {
+				ret.error = fmt.Errorf("map child pipeline missing")
+				break
+			}
+			// Preflight *every* item's own and callee schema before the first
+			// externally observable write. A malformed later item must not
+			// leave a partially applied batch which was avoidable at admission.
+			childInput := cfg.Plans[childName].Nodes[child.Entry].InputSchema
+			for i, item := range items {
+				arguments, ok := item.(map[string]any)
+				if !ok || arguments == nil {
+					ret.error = fmt.Errorf("map item %d: pipeline argument must be an object", i)
+					break
+				}
+				if err := plan.InputSchema.Validate(item); err != nil {
+					ret.error = fmt.Errorf("map item %d failed schema validation", i)
+					break
+				}
+				if err := childInput.Validate(item); err != nil {
+					ret.error = fmt.Errorf("map item %d failed child input schema validation", i)
+					break
+				}
+			}
+			if ret.error != nil { break }
+		}
 		for i, item := range items {
 			if e := ctx.Err(); e != nil {
 				ret.error = e
