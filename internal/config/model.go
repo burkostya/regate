@@ -575,12 +575,17 @@ func (c *Config) Validate() error {
 			}
 		}
 		sort.Strings(mandatory)
+		// Stable diagnostics are part of the compiler contract: several
+		// independent paths may bypass the same gate in one graph.
+		observable := make([]string, 0, len(p.Nodes))
 		for nodeName, node := range p.Nodes {
 			switch node.Kind {
 			case "mcp.call", "http.call", "hook.call", "output", "suspend":
-			default:
-				continue
+				observable = append(observable, nodeName)
 			}
+		}
+		sort.Strings(observable)
+		for _, nodeName := range observable {
 			for _, gate := range mandatory {
 				if reachableAvoidingNode(p.Entry, nodeName, gate, adj) {
 					return fmt.Errorf("pipeline %s mandatory policy %s does not dominate observable node %s", name, gate, nodeName)
