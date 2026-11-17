@@ -617,3 +617,18 @@
   continuation of working tasks, multi-process atomic task/checkpoint promotion,
   provider idempotence/attestation, encrypted checkpoint vault, bounded safe
   retries/compensation, formal model checks and full #7/#10 acceptance.
+
+#### Bounded operator-attested MCP reads (PR #53)
+
+- Optional closed HCL `mcp.call.retry` requires `effect="read"`,
+  `safe_read=true`, `max_attempts=2..4` and `delay_ms=1..2000`.
+  Missing or extraneous fields and effectful/unknown classifications fail
+  compiler validation.
+- Runtime retries only a transport-failed read, not MCP application failures,
+  hook/HTTP steps or write/unknown outcomes. It checks context, grants, queued
+  task state and leader fencing again before every retry, with bounded delay.
+- SDK-level retries remain disabled, and operator read safety is an explicit
+  assertion, **not verified upstream evidence**.
+- Remaining #7/#10 work: generalized control retry, provider-attested
+  idempotency/fencing, compensations and reconciliation, task crash replay,
+  formal state-model checks, plus the full release acceptance matrix.
