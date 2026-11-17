@@ -70,14 +70,34 @@ func TestPurePipelineMapParallelismAllowsOnlyPureChildren(t *testing.T) {
     value = "nodes.start.value"
     output_schema = {type = "object"}
   }`,
-		`  node "done" {
+		`  node "write" {
     kind = "mcp.call"
     upstream = "crm"
     tool = "create"
     effect = "write"
     arguments = "nodes.start.value"
+  }
+  node "done" {
+    kind = "output"
+    value = "nodes.start.value"
+    output_schema = {type = "object"}
   }`, 1)
-	effectful = `upstream "crm" {url = "http://localhost:1234"}` + "\n" + effectful
+	effectful = strings.Replace(effectful,
+		`  edge {
+    from = "start"
+    to = "done"
+  }`,
+		`  edge {
+    from = "start"
+    to = "write"
+  }
+  edge {
+    from = "write"
+    to = "done"
+  }`, 1)
+	effectful = `upstream "crm" {
+  url = "http://localhost:1234"
+}` + "\n" + effectful
 	if _, err := Decode(effectful); err == nil || !strings.Contains(err.Error(), "cannot execute inside a pure") {
 		t.Fatalf("transitive effect inside parallel pure child accepted: %v", err)
 	}
