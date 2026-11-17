@@ -29,3 +29,10 @@ jobs:
       - name: Three-branch competing continuation interleavings
         working-directory: docs/formal
         run: java -XX:+UseParallelGC -jar /tmp/tla2tools.jar -workers 1 -deadlock -config ParallelSuspensions3.cfg ParallelSuspensions.tla
+      - name: Bounded all, any and quorum join safety (2 and 3 branches)
+        working-directory: docs/formal
+        run: |
+          set -eu
+          for config in JoinBarrierAny2.cfg JoinBarrierAll2.cfg JoinBarrierAny3.cfg JoinBarrierQuorum3.cfg JoinBarrierAll3.cfg; do
+            java -XX:+UseParallelGC -jar /tmp/tla2tools.jar -workers 1 -deadlock -config "$config" JoinBarrier.tla
+          done

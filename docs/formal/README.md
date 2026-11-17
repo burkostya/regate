@@ -10,6 +10,11 @@ against two **finite** safety models (with two- and three-branch configurations)
   effectful branches, serialized targeted continuation, invalid replies,
   worker crash during a claimed answer, and publication only after every
   leaf is durably answered.
+- `JoinBarrier.tla` with `JoinBarrierAny2.cfg`, `JoinBarrierAll2.cfg`,
+  `JoinBarrierAny3.cfg`, `JoinBarrierQuorum3.cfg`, `JoinBarrierAll3.cfg`:
+  independent branch firing/skipping/suspending, threshold evaluation only
+  when **all** predecessors settle, distinct votes, and prevention of
+  premature or duplicate downstream effects (including uncertain outcomes).
 
 Run locally with a Java 11+ runtime and the pinned release's `tla2tools.jar`:
 
@@ -18,6 +23,9 @@ cd docs/formal
 java -XX:+UseParallelGC -jar /path/to/tla2tools.jar -workers 1 -deadlock -config EffectLifecycle.cfg EffectLifecycle.tla
 java -XX:+UseParallelGC -jar /path/to/tla2tools.jar -workers 1 -deadlock -config ParallelSuspensions.cfg ParallelSuspensions.tla
 java -XX:+UseParallelGC -jar /path/to/tla2tools.jar -workers 1 -deadlock -config ParallelSuspensions3.cfg ParallelSuspensions.tla
+for config in JoinBarrierAny2.cfg JoinBarrierAll2.cfg JoinBarrierAny3.cfg JoinBarrierQuorum3.cfg JoinBarrierAll3.cfg; do
+  java -XX:+UseParallelGC -jar /path/to/tla2tools.jar -workers 1 -deadlock -config "$config" JoinBarrier.tla
+done
 ```
 
 The `-deadlock` switch suppresses terminal-state warnings for intentionally
@@ -28,6 +36,6 @@ reachable state. Changing a model or its `.cfg` requires CI to pass.
 bounded abstractions, not correctness proofs of the Go implementation or
 of external MCP/HTTP provider behavior. Still required for full Regate v1:
 model-based integration/property tests linking runtime traces to the model;
-graph readiness/joins, cancellation, revision isolation, capability
+full model-to-Go runtime trace equivalence, cancellation, revision isolation, capability
 delegation/taint, realistic idempotency contracts, restart/reconciliation,
 load/failure/security testing, and independent provider conformance.

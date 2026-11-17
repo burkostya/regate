@@ -214,3 +214,86 @@ func TestJoinValidationRejectsDuplicatedVotesAndImpossibleQuorums(t *testing.T){
 		}
 	}
 }
+
+func TestThreeBranchJoinAllAnyQuorumAndConcurrency(t *testing.T) {
+	// The 2- and 3-branch TLC models cover threshold activation after
+	// every predecessor settles. Exercise the corresponding real Go
+	// scheduler with every possible branch-vote combination.
+	for _, tc := range []struct {
+		mode string
+		quorum int
+		threshold int
+	}{
+		{mode:"all", threshold:3},
+		{mode:"any", threshold:1},
+		{mode:"quorum", quorum:2, threshold:2},
+		{mode:"quorum", quorum:1, threshold:1},
+		{mode:"quorum", quorum:3, threshold:3},
+	} {
+		for _, concurrency := range []int{1, 3} {
+			t.Run(fmt.Sprintf("%s-%d-concurrency-%d",tc.mode,tc.quorum,concurrency),func(t *testing.T){
+				attrs := fmt.Sprintf("mode = %q",tc.mode)
+				if tc.mode=="quorum" {attrs+=fmt.Sprintf("\n    quorum = %d",tc.quorum)}
+				source := fmt.Sprintf(`pipeline "votes" {
+  entry = "start"
+  concurrency = %d
+  node "start" {
+    kind = "input"
+  }
+  node "a" {
+    kind = "condition"
+    test = "input.a"
+  }
+  node "b" {
+    kind = "condition"
+    test = "input.b"
+  }
+  node "c" {
+    kind = "condition"
+    test = "input.c"
+  }
+  node "merge" {
+    kind = "join"
+    %s
+    value = "literal:joined"
+  }
+  node "done" {
+    kind = "output"
+    value = "nodes.merge.value"
+  }
+  edge {from = "start" to = "a"}
+  edge {from = "start" to = "b"}
+  edge {from = "start" to = "c"}
+  edge {from = "a" to = "merge" when = "true"}
+  edge {from = "b" to = "merge" when = "true"}
+  edge {from = "c" to = "merge" when = "true"}
+  edge {from = "merge" to = "done"}
+}
+surface "voting" {
+  path = "/mcp/voting"
+  tool "vote" {
+    pipeline = "votes"
+    read_only = true
+  }
+}
+`,concurrency,attrs)
+				cfg,err := config.Decode(source)
+				if err!=nil {t.Fatal(err)}
+				for mask:=0;mask<8;mask++ {
+					bits := 0
+					for i:=0;i<3;i++ {bits+=(mask>>i)&1}
+					input:=map[string]any{"a":mask&1!=0,"b":mask&2!=0,"c":mask&4!=0}
+					out,err:=New(nil).Run(context.Background(),"rev",cfg,"voting","vote",input,true)
+					if bits>=tc.threshold {
+						if err!=nil || out.Status!="success" || out.Value!="joined" {
+							t.Fatalf("mask=%03b expected join: %#v %v",mask,out,err)
+						}
+					} else if err==nil || !strings.Contains(err.Error(),"produced no output") ||
+						out.Status!="failure" || out.Value!=nil || out.OutputProduced {
+						t.Fatalf("mask=%03b should skip join without output: %#v %v",mask,out,err)
+					}
+				}
+			})
+		}
+	}
+}

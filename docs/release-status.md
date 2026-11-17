@@ -947,3 +947,16 @@
   value is published. The full child-input array is validated first.
 - This is *not* parallel external writes, resource transactions,
   provider-level idempotency, or complete #7/#10 acceptance.
+
+#### TLC bounded join barrier safety and 3-branch runtime matrix (#7/#9)
+
+- TLC checks `JoinBarrier.tla` for all/any/quorum thresholds on two and
+  three independently settling control predecessors, including
+  suspended/resumed votes, skipped branches, distinct vote acceptance,
+  uncertain writes, and prevention of premature or duplicate effects.
+- A Go runtime matrix exercises every three-branch firing mask against
+  all/any/quorum modes with sequential and parallel node concurrency;
+  rejected thresholds must not publish implicit root outputs.
+- This finite model is **not** an equivalence proof of the Go engine or
+  real-provider guarantees. #7/#9/#10 remain open for larger graph,
+  adapter, load, fault-injection and end-to-end release verification.
