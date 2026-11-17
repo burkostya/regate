@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -131,11 +132,23 @@ type Checkpoint struct {
 	SuspendNode string            `json:"suspend_node"`
 	Child       *Checkpoint       `json:"child,omitempty"` // Legacy single active suspension.
 	Suspensions map[string]*Checkpoint `json:"suspensions,omitempty"` // Multiple independently parked nodes, each with its own nested continuation.
+	FrameKind string `json:"frame_kind,omitempty"` // Only "map" for a durable per-item wrapper, not a pipeline snapshot.
+	MapIndex int `json:"map_index,omitempty"`
+	MapItems []any `json:"map_items,omitempty"` // Original frozen input list, not recomputed on Resume.
+	MapResults []any `json:"map_results,omitempty"` // Completed immutable prefix, never replayed.
 }
 
 func derivedSubrunID(parentRunID, nodeName, childName string) string {
 	sum := sha256.Sum256([]byte(parentRunID + "\x00" + nodeName + "\x00" + childName))
 	return fmt.Sprintf("%s/sub-%x", parentRunID, sum[:8])
+}
+
+func mappedIterationRunID(parentRunID, nodeName, childName string, index int) string {
+	return derivedSubrunID(parentRunID, nodeName, fmt.Sprintf("map:%s:%d", childName, index))
+}
+
+func mappedFrameRunID(parentRunID, nodeName, childName string) string {
+	return derivedSubrunID(parentRunID, nodeName, "map-frame:"+childName)
 }
 type dataPortBinding struct {
 	producer string
@@ -589,7 +602,7 @@ func (r *Runtime) execute(ctx context.Context, revision string, cfg *config.Conf
 				}
 				vars := map[string]any{"input": input, "nodes": snap, "ports": ports, "port_present": present}
 				var childCheckpoint *Checkpoint
-				if checkpoint != nil && p.Nodes[name].Kind == "pipeline.call" {
+				if checkpoint != nil && (p.Nodes[name].Kind == "pipeline.call" || p.Nodes[name].Kind == "map") {
 					if checkpoint.Suspensions != nil {
 						childCheckpoint = checkpoint.Suspensions[name]
 					} else if checkpoint.SuspendNode == name {
@@ -1330,6 +1343,10 @@ func PendingSuspensionPaths(cp *Checkpoint) [][]string {
 	var walk func(*Checkpoint, []string)
 	walk = func(cur *Checkpoint, prefix []string) {
 		if cur == nil { return }
+		if cur.FrameKind == "map" {
+			walk(cur.Child, append(append([]string{}, prefix...), strconv.Itoa(cur.MapIndex)))
+			return
+		}
 		nodes := cur.Suspensions
 		if nodes == nil {
 			if cur.SuspendNode == "" { return }
