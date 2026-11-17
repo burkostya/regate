@@ -345,13 +345,33 @@ func (s *Service) TaskUpdateWithContext(ctx context.Context,id, owner string, in
 		updated.RunID = out.RunID
 		if out.Status == "suspended" {
 			updated.Status = "input_required"
-			// The update protocol always accepts inputResponses["resume"].
-			// Publishing "resume_next" here previously stranded a task after
-			// a second suspension without a matching update handler.
+			updated.StatusMessage = "Additional input needed to resume pipeline"
+			updated.Result = nil
+			updated.Error = nil
 			updated.InputRequests = continuationRequest(out.SuspensionPaths,false)
 		} else {
-			updated.Status = "completed"
-			updated.Result = taskSafeResult(updated,out,err)
+			// A rejected leaf value, grant/lease failure, or an incomplete
+			// graph failure can leave the *original* checkpoint intact. Do not
+			// permanently complete the task when the engine has deliberately
+			// retained an operator-correctable continuation. Never redispatch
+			// effects automatically: only a fresh authorized response may retry.
+			var pending engine.Checkpoint
+			pendingErr := fmt.Errorf("no preserved checkpoint")
+			if err != nil {
+				pendingErr = s.Store.GetSuspended(t.RunID, &pending)
+			}
+			if err != nil && pendingErr == nil && len(engine.PendingSuspensionPaths(&pending)) > 0 {
+				updated.Status = "input_required"
+				updated.StatusMessage = "Continuation rejected; checkpoint retained. Check external effects before retrying."
+				updated.InputRequests = continuationRequest(engine.PendingSuspensionPaths(&pending),false)
+				updated.Result = nil
+				updated.Error = nil
+			} else {
+				updated.Status = "completed"
+				updated.StatusMessage = "Execution completed"
+				updated.InputRequests = nil
+				updated.Result = taskSafeResult(updated,out,err)
+			}
 		}
 		_ = s.Store.TaskPut(updated)
 	}()
