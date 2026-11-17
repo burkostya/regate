@@ -6,6 +6,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,6 +24,8 @@ import (
 
 const Protocol = "2026-07-28"
 const LegacyProtocol = "2025-03-26"
+// MaxRequest bounds fully encoded outgoing MCP HTTP bodies, before network I/O.
+const MaxRequest = 4 << 20
 const MaxResponse = 8 << 20
 const maxToolPages = 100
 
@@ -79,6 +82,24 @@ type credentialTransport struct {
 
 func (t credentialTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	clone := req.Clone(req.Context())
+	// SDK-generated tool arguments and transformed pipeline outputs must not
+	// bypass the outbound budget merely because the inbound frame was bounded.
+	// Buffer at most one byte beyond the budget, before any connection attempt.
+	if clone.Body != nil && clone.Body != http.NoBody {
+		body, readErr := io.ReadAll(io.LimitReader(clone.Body, MaxRequest+1))
+		closeErr := clone.Body.Close()
+		if readErr != nil || closeErr != nil {
+			return nil, errors.New("cannot read upstream MCP request body")
+		}
+		if len(body) > MaxRequest {
+			return nil, fmt.Errorf("upstream MCP request exceeds %d bytes", MaxRequest)
+		}
+		clone.Body = io.NopCloser(bytes.NewReader(body))
+		clone.ContentLength = int64(len(body))
+		clone.TransferEncoding = nil
+		// A non-idempotent MCP call must not become transparently replayable.
+		clone.GetBody = nil
+	}
 	if t.staticToken!="" {
         clone.Header.Set("Authorization","Bearer "+t.staticToken)
     } else if t.tokenEnv != "" {
