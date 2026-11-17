@@ -510,15 +510,30 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("pipeline %s: missing to node %s", name, e.To)
 			}
 			if e.Kind == "data" {
-				if e.When != "" || (e.FromPort != "" && e.FromPort != "value" && e.FromPort != "structured" && e.FromPort != "content") ||
+				if e.When != "" || (e.FromPort != "" && !portIdentifier.MatchString(e.FromPort)) ||
 					!portIdentifier.MatchString(e.ToPort) || e.From == e.To {
 					return fmt.Errorf("pipeline %s: invalid data edge %s -> %s port %q", name, e.From, e.To, e.ToPort)
 				}
-				if e.FromPort == "structured" || e.FromPort == "content" {
+				if e.FromPort != "" && e.FromPort != "value" {
 					source := p.Nodes[e.From]
 					output, ok := source.Attrs["output_ports"].(map[string]any)
-					if source.Kind != "mcp.call" || !ok || output[e.FromPort] == nil {
-						return fmt.Errorf("pipeline %s: %s data edge requires a declared MCP %s output port on %s", name, e.FromPort, e.FromPort, e.From)
+					switch source.Kind {
+					case "mcp.call":
+						if e.FromPort != "structured" && e.FromPort != "content" {
+							return fmt.Errorf("pipeline %s: invalid data edge %s -> %s port %q", name, e.From, e.To, e.FromPort)
+						}
+						if !ok || output[e.FromPort] == nil {
+							return fmt.Errorf("pipeline %s: %s data edge requires a declared MCP %s output port on %s", name, e.FromPort, e.FromPort, e.From)
+						}
+					case "pipeline.call":
+						if !ok || output[e.FromPort] == nil {
+							return fmt.Errorf("pipeline %s: named data edge requires declared pipeline.call output port %s on %s", name, e.FromPort, e.From)
+						}
+					default:
+						if e.FromPort == "structured" || e.FromPort == "content" {
+							return fmt.Errorf("pipeline %s: %s data edge requires a declared MCP %s output port on %s", name, e.FromPort, e.FromPort, e.From)
+						}
+						return fmt.Errorf("pipeline %s: invalid data edge %s -> %s port %q", name, e.From, e.To, e.FromPort)
 					}
 				}
 				declared, ok := p.Nodes[e.To].Attrs["input_ports"].(map[string]any)

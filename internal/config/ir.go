@@ -32,7 +32,7 @@ type NodeIR struct {
 	OutputSchema *SchemaContract
 	InputPorts   map[string]*SchemaContract // Named JSON Schema bindings supplied only by data edges.
 	OptionalPorts map[string]bool // A skipped control ancestor may bind an explicit nullable port.
-	OutputPorts  map[string]*SchemaContract // Optional published value and explicit MCP structuredContent contracts.
+	OutputPorts  map[string]*SchemaContract // Value, MCP envelope, or named pipeline.call result contracts.
 }
 type ToolContract struct {
 	Input  *SchemaContract
@@ -139,7 +139,7 @@ func (c *Config) Compile() error {
 			if portSchemas, ok := n.Attrs["output_ports"].(map[string]any); ok {
 				for portName, raw := range portSchemas {
 					if !portIdentifier.MatchString(portName) ||
-						(portName != "value" && !(n.Kind == "mcp.call" && (portName == "structured" || portName == "content"))) {
+						(portName != "value" && n.Kind != "pipeline.call" && !(n.Kind == "mcp.call" && (portName == "structured" || portName == "content"))) {
 						return fmt.Errorf("pipeline %s node %s: unsupported output port %s", name, id, portName)
 					}
 					declared, ok := raw.(map[string]any)
@@ -287,8 +287,29 @@ func (c *Config) Compile() error {
 			}
 			for _, output := range child.Nodes {
 				if output.Kind == "output" {
-					if err := CheckKnownCompatibility(plans[child.Name].Nodes[output.Name].OutputSchema, call.OutputSchema); err != nil {
+					childOutput := plans[child.Name].Nodes[output.Name].OutputSchema
+					if err := CheckKnownCompatibility(childOutput, call.OutputSchema); err != nil {
 						return fmt.Errorf("pipeline %s call %s output contract: %w", parentName, nodeName, err)
+					}
+					// Named call ports select required properties of the single
+					// child output object. A direct property contract is required:
+					// refs/computed properties cannot prove their presence before
+					// a downstream effect and must be modeled explicitly.
+					for portName, consumer := range call.OutputPorts {
+						if portName == "value" { continue }
+						if childOutput == nil || len(childOutput.Types()) != 1 || childOutput.Types()[0] != "object" {
+							return fmt.Errorf("pipeline %s call %s named output %s requires child object output_schema", parentName, nodeName, portName)
+						}
+						properties, _ := childOutput.Raw["properties"].(map[string]any)
+						rawProperty, present := properties[portName].(map[string]any)
+						if !present || !isRequired(childOutput.Raw, portName) {
+							return fmt.Errorf("pipeline %s call %s: child output_schema must require named output %s", parentName, nodeName, portName)
+						}
+						producer, err := compileSchema(rawProperty)
+						if err != nil { return fmt.Errorf("pipeline %s call %s named output %s child schema: %w", parentName, nodeName, portName, err) }
+						if err := CheckKnownCompatibility(producer, consumer); err != nil {
+							return fmt.Errorf("pipeline %s call %s named output %s: %w", parentName, nodeName, portName, err)
+						}
 					}
 				}
 			}
