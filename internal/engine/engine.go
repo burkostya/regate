@@ -830,7 +830,12 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 		if kind == "" {
 			kind = "unknown"
 		}
-		ret.mcp, ret.error = r.mcpCall(ctx, cfg, u, n.Str("tool"), args, runID, n.Name, kind)
+		callContext := ctx
+		if retry, present := n.Attrs["retry"].(map[string]any); present {
+			callContext = withReadRetry(ctx, int(retry["max_attempts"].(int64)),
+				time.Duration(retry["delay_ms"].(int64))*time.Millisecond)
+		}
+		ret.mcp, ret.error = r.mcpCall(callContext, cfg, u, n.Str("tool"), args, runID, n.Name, kind)
 		if ret.error == nil {
 			ret.value = ret.mcp["structuredContent"]
 			if ret.value == nil {
@@ -930,7 +935,13 @@ func (r *Runtime) mcpCall(ctx context.Context,cfg *config.Config,u config.Upstre
         }
         return nil,err
     }
-    raw,e:=conn.CallTool(ctx,tool,args)
+    var raw map[string]any
+    var e error
+    if effect=="read" {
+        raw,e=r.callReadWithRetry(ctx,conn,tool,args)
+    } else {
+        raw,e=conn.CallTool(ctx,tool,args)
+    }
     if effect!="read" {
         state:="confirmed"
         reason:=""
