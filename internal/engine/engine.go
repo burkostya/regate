@@ -509,6 +509,11 @@ func (r *Runtime) execute(ctx context.Context, revision string, cfg *config.Conf
 			// nodeResult list, but it is still the single published terminal.
 			// Reconstruct the public response only after every branch settles;
 			// the shared final response boundary then validates/redacts it.
+			// A completed child may have emitted *multiple* output terminals
+			// before a sibling suspended. Resume reconstructs NamedOutputs
+			// from the checkpoint, even if this wave executes no output node.
+			// Presence is distinct from the single-value root response below.
+			out.OutputProduced = len(out.NamedOutputs) > 0
 			if len(out.NamedOutputs) == 1 {
 				for name, value := range out.NamedOutputs {
 					out.Value = value
