@@ -117,3 +117,61 @@ func TestAttributePatchCanRepairUnknownKind(t *testing.T) {
     if repaired != original { t.Fatalf("known kind repair changed unrelated source") }
     if _, err := Decode(repaired); err != nil { t.Fatal(err) }
 }
+
+
+func TestGraphPatchAddsTypedDataPortWhilePreservingControlAndSource(t *testing.T) {
+    complete:=dataPortHCL()
+    declared:=`    input_ports = {
+      text = {type = "string"}
+    }`
+    dataEdge:=`  edge {
+    kind = "data"
+    from = "produce"
+    to = "finish"
+    from_port = "value"
+    to_port = "text"
+  }`
+    if !strings.Contains(complete,declared) || !strings.Contains(complete,dataEdge) {
+        t.Fatal("typed port fixture changed")
+    }
+    // Both revisions are executable. A graph patch introduces a previously
+    // absent input_ports contract AND its data-edge binding in one operation.
+    original:=strings.Replace(complete,`value = "ports.text"`,`value = "literal:ok"`,1)
+    original=strings.Replace(original,declared,"",1)
+    original=strings.Replace(original,dataEdge,"",1)
+    if _,err:=Decode(original);err!=nil {t.Fatalf("invalid original: %v",err)}
+    desired:=strings.Replace(complete,`value = "ports.text"`,`value = "literal:ok"`,1)
+    blocks,err:=ParseForEdit(desired)
+    if err!=nil {t.Fatal(err)}
+    replacement:=""
+    for _,block:=range blocks {
+        if block.Type=="pipeline" && len(block.Labels)==1 && block.Labels[0]=="ports" {
+            replacement=desired[block.Start:block.End]
+        }
+    }
+    if replacement=="" {t.Fatal("missing pipeline")}
+    updated,err:=ReplaceBlock(original,"pipeline","ports",replacement)
+    if err!=nil {t.Fatalf("cannot add typed input_ports through graph patch: %v",err)}
+    if _,err=Decode(updated);err!=nil {t.Fatalf("patched graph invalid: %v",err)}
+    if !strings.Contains(updated,declared) || !strings.Contains(updated,dataEdge) {
+        t.Fatalf("lost typed port or data edge: %s",updated)
+    }
+    if !strings.Contains(updated,`    from = "produce"
+    to = "finish"
+  }`) {
+        t.Fatal("graph patch removed separate control dependency")
+    }
+    if !strings.HasSuffix(updated, original[strings.Index(original,`surface "ports"`):]) {
+        t.Fatal("graph patch rewrote unrelated surface HCL")
+    }
+    again,err:=ReplaceBlock(updated,"pipeline","ports",replacement)
+    if err!=nil || again!=updated {t.Fatalf("patch is not idempotent: %v",err)}
+}
+
+func TestKnownOutputPortsCanBeAddedByGraphEditor(t *testing.T) {
+    src:=example(t)
+    path:=[]BlockSelector{{Type:"pipeline",Label:"customer_summary"},{Type:"node",Label:"fetch"}}
+    updated,err:=AddAttribute(src,path,"output_ports",`{structured={type="object"}}`)
+    if err!=nil {t.Fatalf("output_ports should be an editable compiler field: %v",err)}
+    if _,err=Decode(updated);err!=nil {t.Fatalf("output port contract broke compilation: %v",err)}
+}
