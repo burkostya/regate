@@ -221,3 +221,56 @@ func TestMappedSuspendActivationRequiresBothOptInsAndTypedTerminal(t *testing.T)
         })
     }
 }
+
+func TestMappedAndIndependentSuspensionsShareOneRootBarrier(t *testing.T) {
+    upstream,calls:=testEffectUpstream(t,false)
+    defer upstream.Close()
+    source:=suspendableMappedWriterSource(upstream.URL)
+    source=strings.Replace(source,`pipeline "batch" {
+  entry = "each"`,`pipeline "batch" {
+  entry = "start"
+  node "start" {
+    kind = "input"
+  }
+  node "other" {
+    kind = "suspend"
+    output_schema = {type = "string"}
+  }
+  edge {
+    from = "start"
+    to = "each"
+  }
+  edge {
+    from = "start"
+    to = "other"
+  }`,1)
+    cfg,err:=config.Decode(source)
+    if err!=nil {t.Fatal(err)}
+    store:=effectTestStore(t)
+    args:=map[string]any{"records":[]any{map[string]any{"id":"A"},map[string]any{"id":"B"}}}
+    started,err:=New(store).Run(context.Background(),"rev",cfg,"mapped","write",args,false)
+    if err==nil || started.Status!="suspended" || calls.Load()!=1 {
+        t.Fatalf("independent suspension setup failed: %#v %v calls=%d",started,err,calls.Load())
+    }
+    want:=[][]string{{"each","0","pause"},{"other"}}
+    if !reflect.DeepEqual(started.SuspensionPaths,want) {
+        t.Fatalf("expected both suspended branches: %#v",started.SuspensionPaths)
+    }
+    parked,err:=New(store).ResumeAt(context.Background(),cfg,"rev",started.RunID,
+        []string{"each","0","pause"},"ok")
+    if err==nil || parked.Status!="suspended" || calls.Load()!=1 ||
+        !reflect.DeepEqual(parked.SuspensionPaths,[][]string{{"other"}}) {
+        t.Fatalf("answered map prematurely resumed against pending sibling: %#v %v calls=%d",parked,err,calls.Load())
+    }
+    resumed,err:=New(store).ResumeAt(context.Background(),cfg,"rev",started.RunID,
+        []string{"other"},"ok")
+    if err==nil || resumed.Status!="suspended" || calls.Load()!=2 ||
+        !reflect.DeepEqual(resumed.SuspensionPaths,[][]string{{"each","1","pause"}}) {
+        t.Fatalf("barrier release failed to advance exact map index: %#v %v calls=%d",resumed,err,calls.Load())
+    }
+    done,err:=New(store).ResumeAt(context.Background(),cfg,"rev",started.RunID,
+        []string{"each","1","pause"},"ok")
+    if err!=nil || done.Status!="success" || calls.Load()!=2 {
+        t.Fatalf("compositional map did not finish without write replay: %#v %v calls=%d",done,err,calls.Load())
+    }
+}
