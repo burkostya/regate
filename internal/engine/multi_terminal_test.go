@@ -114,7 +114,7 @@ func TestMultiTerminalChildRejectsSkippedOrInvalidOutputs(t *testing.T) {
         },
         {
             "invalid right terminal value",
-            strings.Replace(src, `value = "input.right"`, `value = "input.unknown"`, 1),
+            strings.Replace(src, `value = "input.right"`, `value = "1 + 1"`, 1),
             "JSON Schema",
         },
         {
