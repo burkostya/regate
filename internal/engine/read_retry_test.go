@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -143,8 +144,8 @@ func TestExplicitReadRetryNeverDispatchesMCPBusinessErrorTwice(t *testing.T) {
 	cfg,err:=config.Decode(readRetryPipeline(endpoint.URL,4,10))
 	if err!=nil {t.Fatal(err)}
 	got,err:=New(nil).Run(context.Background(),"rev",cfg,"test","read",nil,false)
-	if err!=nil || calls.Load()!=1 {
-		t.Fatalf("application-level MCP error retried: %#v %v calls=%d",got,err,calls.Load())
+	if err==nil || !strings.Contains(err.Error(),"isError") || calls.Load()!=1 {
+		t.Fatalf("application-level MCP error retried or accepted: %#v %v calls=%d",got,err,calls.Load())
 	}
 }
 
