@@ -849,3 +849,29 @@ from named subpipeline properties. A schema using indirect `$ref` or computed
 properties without an explicit, required direct property is not accepted as
 proof of a published name. This feature does not yet support multiple
 independent child `output` nodes or concurrent nested suspension points.
+
+
+### Multiple terminal output nodes in a called pipeline
+
+As a separate extension to the single-object named ports above, a called
+pipeline may have **multiple** distinct `output` nodes. Every terminal's node
+name becomes a **required** named result port of its `pipeline.call`. Each
+terminal must declare an explicit `output_schema` and the caller must
+declare a matching `output_ports.<terminal>` JSON Schema. No undeclared or
+renamed terminal is accepted. The reserved name `value` is unavailable to
+multi-terminal child outputs.
+
+After all child control branches settle, the caller constructs a single
+object `{terminal_name: validated_value, ...}`, available through the
+default `nodes.call.value` and through independently typed named data ports.
+Skipped terminals, invalid/absent persisted output records, or incompatible
+schemas fail before downstream effects. An optional caller
+`output_schema` must accept this object. Null values count as produced only
+when they pass the declared schema. On checkpoint resume, already completed
+sibling outputs are recovered from the stored state, not rerun.
+
+The contract currently requires **all** declared terminals to complete, even
+if their control paths are conditional; conditional alternatives should
+produce a single child object with explicit nullable/optional fields instead.
+Independent simultaneous suspensions and per-terminal optionality remain
+future work. Existing single-output `pipeline.call` semantics are unchanged.
