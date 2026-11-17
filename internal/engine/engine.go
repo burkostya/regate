@@ -153,6 +153,17 @@ type nodeResult struct {
 
 var ErrDenied = errors.New("policy denied")
 
+// scrubPublishedResult clears all partial client-facing values. A pending
+// suspension is not a failed result and must retain its checkpoint separately.
+func scrubPublishedResult(out *Outcome) {
+	out.Value = nil
+	out.MCP = nil
+	out.NamedOutputs = nil
+	out.OutputProduced = false
+	out.Nodes = nil
+	out.Checkpoint = nil
+}
+
 // A published MCP tool has one response value, even if its control graph has
 // multiple conditional output nodes. More than one successful terminal must
 // not silently select whichever parallel node happened to be last.
@@ -167,10 +178,7 @@ func requireUniqueSurfaceOutput(out *Outcome, pipelineName string) error {
 	}
 	sort.Strings(names)
 	// No partial result or MCP envelope may escape on ambiguous success.
-	out.Value = nil
-	out.MCP = nil
-	out.NamedOutputs = nil
-	out.OutputProduced = false
+	scrubPublishedResult(out)
 	out.Status = "failure"
 	return fmt.Errorf("surface pipeline %s has competing outputs: %s", pipelineName, strings.Join(names, ", "))
 }
@@ -182,12 +190,7 @@ func requireUniqueSurfaceOutput(out *Outcome, pipelineName string) error {
 // envelope, so callers cannot observe partially verified data.
 func (r *Runtime) finalizePublishedOutput(ctx context.Context, cfg *config.Config, surface, toolName string,
 	contract *config.SchemaContract, out *Outcome, dry bool) error {
-	scrub := func() {
-		out.Value = nil
-		out.MCP = nil
-		out.OutputProduced = false
-		out.NamedOutputs = nil
-	}
+	scrub := func() { scrubPublishedResult(out) }
 	if err := contract.Validate(out.Value); err != nil {
 		scrub()
 		return err
@@ -344,6 +347,9 @@ func (r *Runtime) Run(ctx context.Context, revision string, cfg *config.Config, 
 		finish("suspended", err)
 	} else {
 		finish("failure", err)
+	}
+	if out.Status != "suspended" {
+		scrubPublishedResult(&out)
 	}
 	out.Error = expr.RedactDiagnostic(err.Error())
             if cfg.Surfaces[surface].OAuth!="" {out.Error="operation failed"}
@@ -1333,13 +1339,32 @@ func (r *Runtime) Resume(ctx context.Context, cfg *config.Config, revision strin
 	if out.Status == "suspended" {
 		if out.Checkpoint == nil {
 			out.Status = "failure"
+			scrubPublishedResult(&out)
 			return out, fmt.Errorf("nested continuation checkpoint unavailable")
 		}
 		// execute has already atomically replaced the root checkpoint.
 	} else if completed {
 		if e := r.Store.DeleteSuspended(runID); e != nil {
 			out.Status = "failure"
+			scrubPublishedResult(&out)
 			return out, fmt.Errorf("clear completed checkpoint: %w", e)
+		}
+	}
+	if err != nil && out.Status != "suspended" {
+		scrubPublishedResult(&out)
+		out.Status = "failure"
+		if out.Error == "" {
+			out.Error = expr.RedactDiagnostic(err.Error())
+			if surface.OAuth != "" { out.Error = "operation failed" }
+		}
+		if !completed {
+			// A failing resumed *graph* keeps its checkpoint so the
+			// operator can correct the continuation. Never expose values
+			// from nodes that completed before the failure.
+			_, _ = r.intercept(ctx, cfg, "on_error", cp.Surface, cp.Tool,
+				map[string]any{"status": "failure", "message": out.Error, "run_id": runID}, false)
+			r.Store.WriteTrace(storage.Trace{RunID:runID, Revision:revision,
+				Surface:cp.Surface, Tool:cp.Tool, Status:"failure", Message:out.Error})
 		}
 	}
 	return out, err
