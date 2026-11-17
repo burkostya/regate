@@ -181,3 +181,54 @@ func TestPureCELMapStillWorksAndMappedSuspendCannotActivate(t *testing.T) {
         t.Fatalf("unsafe mapped suspension accepted: %v",err)
     }
 }
+
+func TestMappedPureChildPreservesInputOrderWithoutEffects(t *testing.T) {
+    src:=boundedPipelineMapSource("http://localhost:1234")
+    src=strings.Replace(src,`  node "create" {
+    kind = "mcp.call"
+    upstream = "crm"
+    tool = "create"
+    effect = "write"
+    arguments = "nodes.start.value"
+  }`,`  node "create" {
+    kind = "transform"
+    value = "nodes.start.value"
+  }`,1)
+    src=strings.Replace(src,`    allow_effects = true`,"",1)
+    cfg,err:=config.Decode(src)
+    if err!=nil {t.Fatal(err)}
+    for _,items:=range [][]any{
+        {map[string]any{"id":"B"},map[string]any{"id":"A"}},
+        {},
+    } {
+        expected:=make([]any,0,len(items))
+        expected=append(expected,items...)
+        out,err:=New(nil).Run(context.Background(),"rev",cfg,"mapped","write",
+            map[string]any{"records":items},true)
+        if err!=nil || !reflect.DeepEqual(out.Value,expected) {
+            t.Fatalf("pure mapped child reordered output or failed: %#v %v want=%#v",out,err,expected)
+        }
+    }
+}
+
+func TestMappedCalleesParticipateInTrustAndOAuthDelegation(t *testing.T) {
+    cfg,err:=config.Decode(boundedPipelineMapSource("http://localhost:1234"))
+    if err!=nil {t.Fatal(err)}
+    surface:=cfg.Surfaces["mapped"]
+    surface.OAuth="authenticated"
+    cfg.Surfaces["mapped"]=surface
+    tool:=surface.Tools[0]
+    if err:=enforceDataTrust(cfg,"mapped",tool);!errors.Is(err,ErrUntrustedDestination) {
+        t.Fatalf("untrusted mapped child bypassed authenticated trust check: %v",err)
+    }
+    upstream:=cfg.Upstreams["crm"]
+    upstream.TrustLevel="restricted"
+    upstream.OAuthExchange="delegated"
+    cfg.Upstreams["crm"]=upstream
+    if err:=enforceDataTrust(cfg,"mapped",tool);err!=nil {
+        t.Fatalf("trusted mapped child rejected: %v",err)
+    }
+    if !ToolNeedsDelegation(cfg,"mapped",tool) {
+        t.Fatal("mapped child OAuth exchange invisible to queued task gate")
+    }
+}
