@@ -24,7 +24,7 @@
 | Subscription change notification | Implemented subset | SSE activation test |
 | Outbound HTTP DNS/IP safety guard | Implemented initial fail-closed guard | `internal/netguard` unit tests (DNS rebinding / mixed DNS / loopback) |
 | Admin skills + `skills/list`, `skills/get` / `skill://` resources | Implemented subset | Admin skill test |
-| SvelteKit + Svelte Flow editor | **Type-check and build verified** | GitHub Actions npm install/check/build passed; browser E2E remains open |
+| SvelteKit + Svelte Flow editor | Functional console acceptance (#8), not full v1 | Production Node build, Chromium browser E2E against Go + demo MCP, typed graph and HCL CAS/activation/rollback checks; #9/#10 security and release gates remain |
 | Go race tests, vet, build | **Passed** | `go test -race ./...`, `go vet ./...`, `go build ...` |
 
 ## Unfinished functionality required for full v1
@@ -38,7 +38,7 @@
 7. SQLite transactions, legacy-state import and backups are implemented in PR #20. Remaining: durable execution leases/fencing, verified reconciliation/compensation, bounded scheduling and safe retention/compaction of all sensitive records.
 8. OAuth JWT/JWKS or RFC7662 introspection and issuer/audience/scope-verified public surfaces are implemented in PR #18. Management remains a separate static admin bearer; delegated upstream token exchange, end-to-end taint policies, provider-specific integration, audit-ready secret management and production threat verification remain open.
 9. Independent MCP resource/prompt discovery (including templates, pagination and revision-aware caching) now exists; source-safe mapping/editing, upstream change detection and compatibility diagnostics remain open.
-10. Complete UI build, type checks, browser/e2e tests, full graphical node/edge/port editor, impact analysis, robust source preservation and operator approval workflow.
+10. The functional Web console scope in #8 is covered by typed graph/HCL editor, authenticated catalog, dry/live revision-pinned execution, semantic diff, source-preserving draft CAS, tracing, activation/rollback and production-build Chromium E2E. Remaining operational browser/a11y/security hardening, provider attestation and full release impact proofs belong to #9/#10.
 11. OpenTelemetry spans/metrics/export, quotas and capacity controls, full audit history, release acceptance/e2e scenarios.
 12. Execute and check the formal model under TLC/Alloy, rather than keeping an unchecked design sketch.
 
@@ -1236,5 +1236,26 @@
   console always supplies them.
 - Go security tests and Chromium browser tests cover stale preconditions,
   dirty editors, zero dispatch on rejection and reviewed live requests. This
-  is not end-to-end approval attestation, full UI release acceptance (#8),
-  provider effect fencing, or a claim that full v1 (#10) is complete.
+  is not end-to-end approval attestation, production security verification
+  (#9), provider effect fencing, or a claim that full v1 (#10) is complete.
+
+#### Functional production-build console acceptance (#8, PR #93)
+
+- A SvelteKit Node adapter now serves the same-origin authenticated management
+  REST API in both developer and built-server deployments. The server-side
+  backend origin is configured by `REGATE_PROXY`; no arbitrary browser-origin
+  backend URL is accepted. The proxy forwards only authorization and content
+  negotiation, refuses redirects and streams requests without caching content.
+- Chromium E2E in CI starts the **production build**, the real Go gateway,
+  local independent demo MCP provider and an isolated temporary SQLite store.
+  The browser exercises typed graph/port editing, HCL compilation, CAS conflict
+  recovery, validation of edited HCL, activation and rollback as new immutable
+  revisions, trace filtering, dirty-source refusal and exact-revision live
+  execution. The Web workflow also verifies npm type checks and unit tests.
+- Activating or restoring a revision can no longer silently discard dirty
+  graph/HCL changes; saved drafts remain durable but an explicit rollback
+  confirmation states that the local draft selection will be cleared.
+- This closes functional issue #8 while preserving the full-v1 acceptance
+  contract: multi-provider production attestation, browser compatibility and
+  accessibility audits, credential/operational hardening, load/security tests
+  and holistic policy/effect verification remain in #9 and #10.
