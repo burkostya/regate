@@ -2,6 +2,7 @@ package storage
 
 import (
     "database/sql"
+    "errors"
     "encoding/json"
     "fmt"
     "os"
@@ -216,4 +217,40 @@ func TestMalformedLegacyJournalRequiresOperatorResolution(t *testing.T){
 func ExampleStore_Backup(){
     fmt.Println("SQLite snapshots use VACUUM INTO and never overwrite")
     // Output: SQLite snapshots use VACUUM INTO and never overwrite
+}
+
+func TestSQLiteDraftCASAndValidatedActivationSnapshot(t *testing.T) {
+    dir:=t.TempDir()
+    first,err:=New(dir,initSource())
+    if err!=nil {t.Fatal(err)}
+    defer first.Close()
+    second,err:=New(dir,initSource())
+    if err!=nil {t.Fatal(err)}
+    defer second.Close()
+
+    draft,err:=first.DraftCreate()
+    if err!=nil {t.Fatal(err)}
+    if draft.SourceDigest!=SourceDigest(draft.Source) || len(draft.SourceDigest)!=64 {
+        t.Fatalf("draft digest is not full SHA-256: %#v",draft)
+    }
+    next:=draft.Source+"\n# edited by a second process\n"
+    committed,err:=second.DraftUpdateIfSource(draft.ID,draft.Source,next)
+    if err!=nil {t.Fatal(err)}
+    if committed.SourceDigest!=SourceDigest(next) || committed.SourceDigest==draft.SourceDigest {
+        t.Fatal("updated draft did not carry new source digest")
+    }
+    if _,err=first.DraftUpdateIfSource(draft.ID,draft.Source,"stale overwrite");!errors.Is(err,ErrDraftSourceConflict) {
+        t.Fatalf("stale SQLite writer did not conflict: %v",err)
+    }
+    if _,err=first.ActivateIfSource(draft.ID,draft.Source);!errors.Is(err,ErrDraftSourceConflict) {
+        t.Fatalf("activation of unreviewed bytes was allowed: %v",err)
+    }
+    current,err:=first.DraftGet(draft.ID)
+    if err!=nil || current.Source!=next {t.Fatalf("conflict overwrote durable source: %#v %v",current,err)}
+    revision,err:=first.ActivateIfSource(draft.ID,committed.Source)
+    if err!=nil {t.Fatal(err)}
+    active,source,err:=second.Active()
+    if err!=nil || active.ID!=revision.ID || source!=next || active.Digest!=Hash(next) {
+        t.Fatalf("validated source disagrees with activated revision: %#v %q %v",active,source,err)
+    }
 }
