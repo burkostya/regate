@@ -5,7 +5,7 @@ EXTENDS Naturals, FiniteSets, TLC
  A deliberately small TLA+ sketch of one external effect's lifecycle.       
  It models the key safety requirement: if a request was dispatched and the   
  response was lost, no blind automatic retry is allowed.                    
- This file is NOT yet checked using TLC in the offline build environment.   
+ This small safety abstraction is checked by TLC in GitHub CI.   
 ***************************************************************************)
 VARIABLES stage, attempts, knownOutcome
 
