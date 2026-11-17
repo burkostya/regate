@@ -126,8 +126,9 @@ func validateBlock(b *Block, parent string, top bool) error {
 		if k == "map" {
 			_, expression := b.Attrs["mapping"]
 			_, child := b.Attrs["pipeline"]
-			if _, enabled := b.Attrs["parallelism"]; enabled && child {
-				return fmt.Errorf("%s: map parallelism is supported only for pure CEL mapping", where)
+			if _, enabled := b.Attrs["parallelism"]; enabled &&
+				(b.Attrs["allow_effects"] == true || b.Attrs["allow_suspend"] == true) {
+				return fmt.Errorf("%s: map parallelism requires an effect-free, non-suspendable mapping", where)
 			}
 			if expression == child {
 				return fmt.Errorf("%s: map requires exactly one of mapping or pipeline", where)

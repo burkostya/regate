@@ -853,9 +853,10 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 			ret.error = fmt.Errorf("map item count or restored prefix exceeds configured bound")
 			break
 		}
-		// Opt-in parallelism is deliberately limited to pure, effect-free CEL
-		// mappings. Effectful/suspendable child pipelines retain the durable,
-		// sequential per-item journal and checkpoint order.
+		// Opt-in parallelism is limited to effect-free, non-suspendable maps,
+		// either CEL or a statically verified transitive-pure child pipeline.
+		// Effectful/suspendable children retain sequential per-item journals
+		// and durable checkpoint order.
 		if childName == "" {
 			parallelism := n.Int("parallelism", 1)
 			if parallelism < 1 || parallelism > 16 || parallelism > maxItems {
@@ -891,6 +892,20 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 				}
 			}
 			if ret.error != nil { break }
+		}
+		if _, declared := n.Attrs["parallelism"]; declared {
+			parallelism := n.Int("parallelism", 0)
+			if parallelism < 1 || parallelism > 16 || parallelism > maxItems ||
+				n.Attrs["allow_effects"] == true || n.Attrs["allow_suspend"] == true ||
+				childCheckpoint != nil {
+				ret.error = fmt.Errorf("invalid effect-free pipeline map parallelism")
+				break
+			}
+			if parallelism > 1 {
+				ret.value, ret.error = r.evaluatePurePipelineMap(ctx, cfg, child, plan,
+					items, parallelism, runID, surface, toolName, revision, dry)
+				break
+			}
 		}
 		for i := start; i < len(items); i++ {
 			if err := ctx.Err(); err != nil {ret.error = err;break}

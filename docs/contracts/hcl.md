@@ -470,9 +470,12 @@ without publishing partial results. An optional `parallelism` from 1 to
 The default of 1 preserves sequential execution. All inputs are prevalidated
 before evaluation, and outputs are indexed by the original array position.
 Errors are reported in ascending item order after workers settle; a failed
-or cancelled map publishes no partial array. Pipeline-backed maps reject
-`parallelism` entirely, including `parallelism = 1`: remote writes and
-durable suspension remain deliberately sequential.
+or cancelled map publishes no partial array. The same bounded `parallelism`
+option is available for pipeline-backed maps **only** when the entire called
+pipeline is transitively pure (no `allow_effects` or `allow_suspend`).
+The compiler rejects external effects and nested suspension on every child
+path. Effectful or suspendable maps reject `parallelism` entirely, including
+`parallelism = 1`: external writes and durable checkpoints remain sequential.
 
 The **CEL mapping mode** makes no external calls. Its `mapping`
 attribute is mutually exclusive with the pipeline-backed mode below.
