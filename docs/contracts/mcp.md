@@ -44,6 +44,7 @@ error, never silently converted into a successful empty list.
 | Upstream pagination | Official SDK small pages across tools/resources/templates/prompts |
 | Malicious repeated cursor / excessive items | Unit tests for bounded collector |
 | Unknown result on interrupted write | Official SDK no-blind-retry test |
+| Malformed upstream JSON responses | Duplicate nested/escaped members, extra frames, invalid UTF-8 and overflow rejected before SDK |
 | Request cancellation | HTTP cancellation while policy is pending, assert no protected call |
 | SSE catalog changes | SDK subscription stream notified on activation |
 | Revision-scoped cache and in-flight requests | Activation tests |
@@ -70,3 +71,21 @@ The independent 8 MiB upstream response budget remains in force.
 
 This is a per-request limit, not a global throughput quota, a complete SSE
 stream-volume policy, or a comprehensive data-classification guarantee.
+
+## Untrusted upstream JSON response framing (#9)
+
+Incoming upstream MCP `application/json` responses (including structured
+vendor JSON media types) are validated as **one complete JSON frame**
+before the official Go SDK can interpret tool results or catalog metadata.
+The full frame must be at most 8 MiB, valid UTF-8, no more than 128
+levels deep, and free of duplicate JSON object names, including
+escape-equivalent names. Bad responses fail closed without including the
+remote payload in diagnostics. A tool whose malformed response follows
+dispatch remains an **uncertain external effect** under the effect journal
+contract; parsing failure is not permission to retry the write.
+
+The verifier buffers bounded JSON responses only. SSE responses retain
+the pre-existing total-body limit and SDK handling; strict per-event
+SSE JSON validation and independent conformance against external MCP
+servers remain release gates. Legitimate bodyless 202/204 notification
+acknowledgments are not parsed as JSON.
