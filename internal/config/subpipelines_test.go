@@ -75,6 +75,29 @@ func TestPurePipelineCallCompilationAndContracts(t *testing.T) {
 	}
 }
 
+// selfRecursiveCall makes the caller an input-entry pipeline so the
+// recursive call reaches cycle detection rather than failing entry checks.
+func selfRecursiveCall(base string) string {
+	source := strings.Replace(base, `pipeline = "inner"`, `pipeline = "outer"`, 1)
+	source = strings.Replace(source, `  entry = "caller"`, `  entry = "start"`, 1)
+	source = strings.Replace(source, `  node "caller" {`, `  node "start" {
+    kind = "input"
+  }
+  node "caller" {`, 1)
+	source = strings.Replace(source, `  edge {
+    from = "caller"
+    to = "finish"
+  }`, `  edge {
+    from = "start"
+    to = "caller"
+  }
+  edge {
+    from = "caller"
+    to = "finish"
+  }`, 1)
+	return source
+}
+
 func TestPurePipelineCallRejectedUnsafeConfigurations(t *testing.T) {
 	base := purePipelineCallSource()
 	childOutput := `  node "finish" {
@@ -92,7 +115,7 @@ func TestPurePipelineCallRejectedUnsafeConfigurations(t *testing.T) {
   }`
 	cases := []struct {name, src, want string}{
 		{"unknown pipeline", strings.Replace(base, `pipeline = "inner"`, `pipeline = "not_found"`, 1), "unknown called pipeline"},
-		{"cycle", strings.Replace(base, `pipeline = "inner"`, `pipeline = "outer"`, 1), "cyclic pipeline.call"},
+		{"cycle", selfRecursiveCall(base), "cyclic pipeline.call"},
 		{"suspending callee", strings.Replace(base, childTransform, blockedSuspend, 1), "cannot execute inside a pure pipeline.call"},
 		{"multiple outputs", strings.Replace(base, childOutput, childOutput + `
   node "second" {
