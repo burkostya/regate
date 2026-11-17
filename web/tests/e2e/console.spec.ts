@@ -44,7 +44,7 @@ test('real console edits typed port graph, validates HCL and rejects stale draft
   expect(draft.source).toContain('input_ports');
 
   await page.locator('.sidebar nav').getByRole('button', { name: 'HCL', exact: true }).click();
-  await expect(page.locator('#hcl-source')).toContainText('to_port = "customer"');
+  await expect(page.locator('#hcl-source')).toHaveValue(/to_port = "customer"/);
 
   const validateResponse = page.waitForResponse(response => response.url().endsWith('/api/validate'));
   await page.getByRole('button', { name: 'Validate', exact: true }).click();
