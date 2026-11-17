@@ -37,8 +37,14 @@ func nestedPureMapSource() string {
     value = "nodes.upper.value"
     output_schema = {type = "array", items = {type = "string"}}
   }
-  edge {from = "start", to = "upper"}
-  edge {from = "upper", to = "done"}
+  edge {
+    from = "start"
+    to = "upper"
+  }
+  edge {
+    from = "upper"
+    to = "done"
+  }
 }
 pipeline "middle" {
   entry = "start"
@@ -64,8 +70,14 @@ pipeline "middle" {
     value = "nodes.maps.value"
     output_schema = {type = "array", items = {type = "array", items = {type = "string"}}}
   }
-  edge {from = "start", to = "maps"}
-  edge {from = "maps", to = "done"}
+  edge {
+    from = "start"
+    to = "maps"
+  }
+  edge {
+    from = "maps"
+    to = "done"
+  }
 }
 pipeline "root" {
   entry = "each"
@@ -85,7 +97,10 @@ pipeline "root" {
     kind = "output"
     value = "nodes.each.value"
   }
-  edge {from = "each", to = "done"}
+  edge {
+    from = "each"
+    to = "done"
+  }
 }
 surface "nested" {
   path = "/mcp/nested"
