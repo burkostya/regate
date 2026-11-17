@@ -95,7 +95,7 @@ func TestDataPortsFailClosedAtActivation(t *testing.T) {
 		{"unknown source kind", strings.Replace(base, `kind = "data"`, `kind = "unknown"`, 1), "invalid control edge"},
 		{"guarded data edge", strings.Replace(base, `    from_port = "value"`, `    from_port = "value"
     when = "true"`, 1), "invalid data edge"},
-		{"unsupported output port", strings.Replace(base, `from_port = "value"`, `from_port = "structured"`, 1), "invalid data edge"},
+		{"undeclared structured output port", strings.Replace(base, `from_port = "value"`, `from_port = "structured"`, 1), "requires a declared MCP structured output port"},
 		{"invalid identifier", strings.Replace(base, `to_port = "text"`, `to_port = "bad-name"`, 1), "invalid data edge"},
 		{"undeclared port", strings.Replace(base, `to_port = "text"`, `to_port = "missing"`, 1), "undeclared data port"},
 		{"no declaration", strings.Replace(base, `    input_ports = {
