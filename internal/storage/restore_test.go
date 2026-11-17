@@ -48,6 +48,15 @@ func TestRestoreVerifiedBackupCopiesAllStateWithoutStartingWorker(t *testing.T) 
 	if err != nil || len(entries) != 1 || entries[0].Name() != databaseName {
 		t.Fatalf("restore exposed partial files: %#v %v", entries, err)
 	}
+	// Assert the byte digest before any SQLite observer legitimately changes
+	// journal metadata on opening the restored database.
+	if _, err := RestoreVerifiedBackup(archive, dir); !errors.Is(err, ErrUnsafeRestoreTarget) {
+		t.Fatalf("second restore was not rejected: %v", err)
+	}
+	after, err := VerifyBackup(filepath.Join(dir, databaseName))
+	if err != nil || after != expected {
+		t.Fatalf("second restore damaged original: %#v %v", after, err)
+	}
 	observer, err := New(dir, source)
 	if err != nil {
 		t.Fatal(err)
@@ -59,13 +68,6 @@ func TestRestoreVerifiedBackupCopiesAllStateWithoutStartingWorker(t *testing.T) 
 	_, loaded, err := observer.Active()
 	if err != nil || loaded != source {
 		t.Fatalf("restored immutable source changed: %q %v", loaded, err)
-	}
-	if _, err := RestoreVerifiedBackup(archive, dir); !errors.Is(err, ErrUnsafeRestoreTarget) {
-		t.Fatalf("second restore was not rejected: %v", err)
-	}
-	after, err := VerifyBackup(filepath.Join(dir, databaseName))
-	if err != nil || after.SHA256 != expected.SHA256 {
-		t.Fatalf("second restore damaged original: %#v %v", after, err)
 	}
 }
 

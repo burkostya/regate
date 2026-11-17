@@ -48,8 +48,15 @@ func RestoreVerifiedBackup(archive, stateDir string) (BackupManifest, error) {
 	if err != nil {
 		return empty, err
 	}
-	stagingDir, err := os.MkdirTemp(stateDir, ".regate-restore-*")
-	if err != nil {
+	// A fixed, exclusive staging directory is also a filesystem-level
+	// reservation. Competing restores cannot each open their own staging
+	// directory and invalidate one another's final empty-state check.
+	// A crash leaves this reservation for explicit operator inspection.
+	stagingDir := filepath.Join(stateDir, ".regate-restore-staging")
+	if err := os.Mkdir(stagingDir, 0700); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return empty, ErrUnsafeRestoreTarget
+		}
 		return empty, err
 	}
 	defer os.RemoveAll(stagingDir)
