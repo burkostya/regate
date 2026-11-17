@@ -800,3 +800,25 @@ rather than exposing stale pre-interceptor content.
 automatic text concatenation, decoding of image/audio blocks, or a
 multi-output contract for `pipeline.call`. Typed MCP content and
 structured ports may coexist but have separate requirements.
+
+### MCP tool-level error boundary (PR #55)
+
+An HTTP/JSON-RPC-successful `tools/call` response may still contain the
+MCP-standard `isError = true`, meaning the **tool** has reported an
+application-level failure. When this occurs inside a pipeline `mcp.call`
+or as a Regate MCP hook, the node now **fails closed** before validating or
+publishing output ports and before activating downstream steps. A Decision
+hook is not allowed to return `allow` using the same failing envelope, even
+if its `structuredContent` resembles a successful response. A malformed
+`isError` flag is rejected.
+
+For a transparent MCP proxy surface, the standard `isError` envelope is
+still returned intact to its MCP client; Regate does not replace the remote
+tool's valid MCP error result with a transport failure. The retry contract
+in PR #53 does not retry MCP application-level errors.
+
+A tool-level error must **not** be interpreted as proof that a previous
+effectful request did nothing: writes already admitted to the durable
+effect journal remain recorded and cannot be blindly replayed or refunded.
+This is fail-closed pipeline execution, **not** remote transaction rollback,
+provider idempotence proof or effect compensation.
