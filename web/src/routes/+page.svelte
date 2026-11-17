@@ -3,6 +3,7 @@
   import FlowCanvas from '$lib/FlowCanvas.svelte';
   import { api, setToken, type Catalog, type Pipeline, type Draft, type EdgeDef } from '$lib/api';
   import { pipelineToHCL, createNode } from '$lib/hcl';
+  import { assertGraphSnapshot, assertSavedHCL, type GraphSourceSnapshot } from '$lib/draftGuard';
 
   type Tab = 'Overview' | 'Upstreams' | 'Surfaces' | 'Rules' | 'Pipelines' | 'HCL' | 'Revisions' | 'Traces' | 'Effects';
   let tab = $state<Tab>('Pipelines');
@@ -18,6 +19,7 @@
   let dirty = $state(false);
   let draft = $state<Draft | null>(null);
   let editorText = $state('');
+  let graphSnapshot = $state<GraphSourceSnapshot | null>(null);
   let testArguments = $state('{"customer_id":"C123"}');
   let resultText = $state('');
   let message = $state('Enter the admin token to connect to Regate.');
@@ -46,15 +48,25 @@
       message = `Connected to Regate ${status?.revision?.slice(0, 8) ?? ''}`;
     });
   }
-  async function refresh() {
+  async function refresh(force = false) {
+    if (dirty && !force) throw new Error('Unsaved graph edits. Save the graph before refreshing.');
     [catalog, status, revisions, traces, effects] = await Promise.all([api('catalog'),api('status'),api('revisions'),api('traces'),api('effects')]);
     if (catalog && (!selected || !catalog.pipelines[selected])) selected = Object.keys(catalog.pipelines)[0] ?? '';
-    await selectPipeline(selected);
+    await selectPipeline(selected, true);
   }
-  async function selectPipeline(name: string) {
+  async function selectPipeline(name: string, discardChanges = false) {
+    if (dirty && !discardChanges) {
+      selected = activePipeline?.name ?? selected;
+      throw new Error('Unsaved graph edits. Save the graph before switching pipelines.');
+    }
     if (!catalog?.pipelines[name]) return;
+    const current = await api<GraphSourceSnapshot>('config');
+    if (status?.revision && current.revision !== status.revision) {
+      throw new Error('The active revision changed while loading the graph; refresh the catalog.');
+    }
     selected = name;
     activePipeline = structuredClone(catalog.pipelines[name]);
+    graphSnapshot = current;
     dirty = false; selectedNode = '';
     positions = await api(`layout/${encodeURIComponent(name)}`).catch(() => ({}));
   }
@@ -66,6 +78,9 @@
     return created;
   }
   async function createDraft() {
+    if (draft && !confirm('Discard the current draft from this editor and create a new one?')) return;
+    if (!draft && editorText.trim() && editorText !== graphSnapshot?.source &&
+      !confirm('Discard unsaved HCL editor changes and create a new draft?')) return;
     const created = await api<Draft>('drafts', 'POST', {});
     draft = created;
     editorText = created.source;
@@ -75,16 +90,25 @@
     const changedSource = editorText;
     const d = await ensureDraft();
     const source = changedSource.trim() ? changedSource : d.source;
-    draft = await api('draft-update','POST',{draft_id:d.id,source});
+    draft = await api('draft-update','POST',{draft_id:d.id,source,expected_source_digest:d.source_digest});
     editorText = source;
     message = 'HCL validated and saved in draft. Active configuration unchanged.';
   }
   async function saveGraph() {
-    if (!activePipeline) return;
+    if (!activePipeline || !graphSnapshot) return;
+    // Do not create a new draft while unsaved standalone HCL text exists.
+    if (!draft && editorText.trim() && editorText !== graphSnapshot.source) {
+      throw new Error('Unsaved HCL edits exist. Save or discard them before graphical editing.');
+    }
     const d = await ensureDraft();
-    const updated = await api<Draft>('graph-patch','POST',{draft_id:d.id,pipeline:activePipeline.name,source:pipelineToHCL(activePipeline)});
+    assertGraphSnapshot(d, graphSnapshot, status?.revision ?? '', editorText);
+    const updated = await api<Draft>('graph-patch','POST',{
+      draft_id:d.id,pipeline:activePipeline.name,source:pipelineToHCL(activePipeline),
+      expected_source_digest:d.source_digest
+    });
     draft = updated;
     editorText = updated.source;
+    graphSnapshot = { ...graphSnapshot, source: updated.source };
     dirty = false;
     message = 'Pipeline changed in draft; other top-level HCL blocks preserved.';
   }
@@ -106,17 +130,18 @@
   }
   async function activate() {
     if (!draft) throw new Error('Create and validate a draft first');
+    assertSavedHCL(draft, editorText);
     const result = await api('validate','POST',{draft_id:draft.id});
     if (!result.valid) throw new Error(result.error);
     if (!confirm('Activate this configuration revision? Existing calls continue on the previous revision.')) return;
-    await api('activate','POST',{draft_id:draft.id});
+    await api('activate','POST',{draft_id:draft.id,expected_source_digest:draft.source_digest});
     draft = null; editorText = ''; insight='';
-    await refresh(); message = 'New revision activated.';
+    await refresh(true); message = 'New revision activated.';
   }
   async function rollback(id: string) {
     if (!confirm(`Restore revision ${id.slice(0,12)} as a new activation?`)) return;
     await api('rollback','POST',{revision:id});
-    draft = null; await refresh(); message = 'Rollback activated.';
+    draft = null; await refresh(true); message = 'Rollback activated.';
   }
   async function runTool(live: boolean) {
     if (!catalog) return;
