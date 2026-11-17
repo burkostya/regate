@@ -153,6 +153,28 @@ type nodeResult struct {
 
 var ErrDenied = errors.New("policy denied")
 
+// A published MCP tool has one response value, even if its control graph has
+// multiple conditional output nodes. More than one successful terminal must
+// not silently select whichever parallel node happened to be last.
+// Called pipelines with explicit multi-terminal contracts aggregate separately.
+func requireUniqueSurfaceOutput(out *Outcome, pipelineName string) error {
+	if len(out.NamedOutputs) <= 1 {
+		return nil
+	}
+	names := make([]string, 0, len(out.NamedOutputs))
+	for name := range out.NamedOutputs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	// No partial result or MCP envelope may escape on ambiguous success.
+	out.Value = nil
+	out.MCP = nil
+	out.NamedOutputs = nil
+	out.OutputProduced = false
+	out.Status = "failure"
+	return fmt.Errorf("surface pipeline %s has competing outputs: %s", pipelineName, strings.Join(names, ", "))
+}
+
 func (r *Runtime) Run(ctx context.Context, revision string, cfg *config.Config, surface, toolName string, args map[string]any, dry bool) (Outcome, error) {
 	out := Outcome{RunID: storage.ID(), Revision: revision, Status: "running"}
     if err:=r.CheckQueuedTaskExecution(ctx);err!=nil{return out,err}
@@ -268,6 +290,9 @@ func (r *Runtime) Run(ctx context.Context, revision string, cfg *config.Config, 
 		if out.Status == "suspended" && (dry || r.Store == nil || out.Checkpoint == nil) {
 			out.Status = "failure"
 			err = fmt.Errorf("durable pipeline checkpoint unavailable")
+		}
+		if err == nil {
+			err = requireUniqueSurfaceOutput(&out, pipeline.Name)
 		}
 	}
 	if err == nil {
@@ -1249,13 +1274,21 @@ func (r *Runtime) Resume(ctx context.Context, cfg *config.Config, revision strin
 	defer cancel()
 	out, err := r.execute(runctx, revision, cfg, pipeline, runID,
 		cp.Surface, cp.Tool, cp.Input, false, &cp)
+	// A completed resumed root can still have parallel terminal results
+	// persisted before its suspension. Validate the complete set before
+	// publishing a response, and discard the consumed checkpoint even if
+	// the result is ambiguous: re-resume must never replay post-resume effects.
+	completed := err == nil && out.Status != "suspended"
+	if completed {
+		err = requireUniqueSurfaceOutput(&out, pipeline.Name)
+	}
 	if out.Status == "suspended" {
 		if out.Checkpoint == nil {
 			out.Status = "failure"
 			return out, fmt.Errorf("nested continuation checkpoint unavailable")
 		}
 		// execute has already atomically replaced the root checkpoint.
-	} else if err == nil {
+	} else if completed {
 		if e := r.Store.DeleteSuspended(runID); e != nil {
 			out.Status = "failure"
 			return out, fmt.Errorf("clear completed checkpoint: %w", e)

@@ -875,3 +875,26 @@ if their control paths are conditional; conditional alternatives should
 produce a single child object with explicit nullable/optional fields instead.
 Independent simultaneous suspensions and per-terminal optionality remain
 future work. Existing single-output `pipeline.call` semantics are unchanged.
+
+
+### Exclusive root tool output after a settled control graph
+
+A published tool may use multiple conditional `output` nodes to model
+mutually exclusive response branches. Exactly **one active completed output**
+is permitted for a single MCP response. After all control predecessors
+settle, if two or more root outputs complete, execution fails closed with
+stable, sorted terminal names. No arbitrarily last-finished result, partial
+MCP envelope or successful task response may escape. Zero output terminals
+retain the existing tool-contract behavior (and still undergo the tool's
+own `output_schema` validation if declared).
+
+This rule is enforced on both initial execution and durable root
+`Resume`, including outputs completed before a suspension and restored
+from checkpoint state. An already consumed resume checkpoint is cleared
+even when the newly completed root is rejected for competing outputs,
+preventing an authorized continuation from being replayed to seek a
+different result. This does not undo already dispatched external effects.
+
+**Exception:** named multi-terminal *called* pipelines deliberately
+aggregate all required child outputs into a typed object at their call
+boundary. They do not publish multiple independent MCP responses.

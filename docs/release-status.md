@@ -694,3 +694,16 @@
 - This is **not** conditional optional terminal delivery, parallel independent
   nested checkpoint support, effectful map, remote idempotency or full #7/#10
   acceptance.
+
+
+#### Root tool response exclusivity (PR #58)
+
+- Initial and resumed root pipelines now reject two or more completed
+  `output` terminals as an ambiguous MCP response; diagnostic names
+  are deterministic, values/envelopes are scrubbed on failure.
+- Valid mutually exclusive conditional root outputs continue to work.
+- Post-resume competing-output rejection consumes the durable checkpoint,
+  preventing accidental replay of the just-resumed execution.
+- Explicit multi-terminal `pipeline.call` child contracts are unaffected;
+  this is not proof of general idempotency, effect rollback or full
+  #7/#10 release acceptance.
