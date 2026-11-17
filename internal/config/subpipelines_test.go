@@ -106,7 +106,9 @@ func TestPurePipelineCallRejectedUnsafeConfigurations(t *testing.T) {
 		{"missing arguments", strings.Replace(base, `    arguments = {name = "input.name"}`, "", 1), "arguments"},
 		{"nonobject arguments", strings.Replace(base, `arguments = {name = "input.name"}`, `arguments = ["input.name"]`, 1), "arguments"},
 		{"incompatible callee input", strings.Replace(base, `input_schema = {type = "object"}`, `input_schema = {type = "string"}`, 1), "incompatible port types"},
-		{"incompatible callee output", strings.Replace(base, `output_schema = {type = "string"}`, `output_schema = {type = "integer"}`, 1), "incompatible port types"},
+		{"incompatible callee output", strings.Replace(base, `value = "nodes.upper.value"
+    output_schema = {type = "string"}`, `value = "nodes.upper.value"
+    output_schema = {type = "integer"}`, 1), "incompatible port types"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
