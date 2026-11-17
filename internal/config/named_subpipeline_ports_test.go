@@ -67,7 +67,7 @@ func TestNamedSubpipelinePortsRejectUnsafeContracts(t *testing.T) {
         {"unmapped call port", strings.Replace(src, `from_port = "second"`, `from_port = "unknown"`, 1), "requires declared pipeline.call output port unknown"},
         {"child schema absent", strings.Replace(src, childSchema, "", 1), "requires child object output_schema"},
         {"child property not required", strings.Replace(src, `required = ["first", "second"]`, `required = ["first"]`, 1), "must require named output second"},
-        {"child property missing", strings.Replace(src, `second = {type = "string"}}}`, `}}`, 1), "must require named output second"},
+        {"child property missing", strings.Replace(src, childSchema, `output_schema = {type = "object", required = ["first", "second"], properties = {first = {type = "string"}}}`, 1), "must require named output second"},
         {"known incompatible type", strings.Replace(src, ports, `output_ports = {first = {type = "string"}, second = {type = "integer"}}`, 1), "incompatible port types"},
         {"forbidden computed source port", strings.Replace(src, `from_port = "second"`, `from_port = "bad-port"`, 1), "invalid data edge"},
     }
