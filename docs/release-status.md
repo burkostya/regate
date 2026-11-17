@@ -632,3 +632,17 @@
 - Remaining #7/#10 work: generalized control retry, provider-attested
   idempotency/fencing, compensations and reconciliation, task crash replay,
   formal state-model checks, plus the full release acceptance matrix.
+
+#### Typed MCP content data port (PR #54)
+
+- A declared `mcp.call.output_ports.content` (explicit JSON Schema array)
+  exposes SDK `content` blocks for named data edges via
+  `edge.from_port="content"`. The default `value` and separately typed
+  `structured` port remain unchanged.
+- Producer/consumer type mismatch fails at compile time when provable;
+  missing, malformed or schema-invalid content fails before downstream
+  effects or output. `mock_content` enables deterministic dry-run tests.
+- Only an MCP call may produce this raw port, and post-call transformations
+  invalidate raw-envelope ports. This does **not** implement multi-output
+  subpipeline interfaces, media decoding, arbitrary envelope rewrites,
+  or full #7/#10 acceptance.
