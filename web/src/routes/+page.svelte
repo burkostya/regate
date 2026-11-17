@@ -152,9 +152,11 @@
     }
   }
   async function saveHCL() {
-    const changedSource = editorText;
+    // Never silently replace a deliberately cleared editor with old HCL.
+    // An empty source is sent exactly as reviewed (the server can reject it).
+    const source = editorText;
+    if (!draft && !source) throw new Error('Load HCL or create a draft before saving.');
     const d = await ensureDraft();
-    const source = changedSource.trim() ? changedSource : d.source;
     draft = await api('draft-update','POST',{draft_id:d.id,source,expected_source_digest:d.source_digest});
     editorText = source;
     message = 'HCL syntax checked and saved in draft. Run Validate before activation; active configuration is unchanged.';
@@ -182,6 +184,7 @@
     message = 'Node positions saved independently from HCL.';
   }
   async function validate() {
+    if (dirty) throw new Error('Unsaved graph edits exist. Save the graph to a draft before validating HCL.');
     // Validate the visible editor, including unsaved HCL without a draft.
     // Never report the active source as valid when the preview is invalid.
     const source = draft || editorText ? editorText : (await api<{source:string}>('config')).source;
@@ -191,6 +194,8 @@
     if (data.valid) message = 'Configuration validated'; else error = data.error;
   }
   async function diff() {
+    // Creating an implicit draft replaces editorText. Guard local edits first.
+    assertNoPendingEdits(dirty, draft, editorText, graphSnapshot);
     const d = await ensureDraft();
     insight = JSON.stringify(await api('diff','POST',{draft_id:d.id}),null,2);
     tab='HCL';

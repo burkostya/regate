@@ -325,3 +325,35 @@ test('activation refuses unsaved graphical edits before prompting or writing', a
   await page.locator('.sidebar nav').getByRole('button', { name: 'Pipelines', exact: true }).click();
   await expect(page.locator('#node-attributes')).toHaveValue(/must-not-discard/);
 });
+
+test('diff never creates a draft over unsaved HCL, and cleared HCL is not replaced by old source', async ({ page }) => {
+  const draftRequests: string[] = [];
+  page.on('request', r => {
+    if (/\/api\/drafts$/.test(new URL(r.url()).pathname) && r.method() === 'POST') {
+      draftRequests.push(r.url());
+    }
+  });
+
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveAttribute('data-regate-hydrated', 'true');
+  await page.getByLabel('Admin bearer token').fill(token);
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Execution graph' })).toBeVisible();
+  await page.locator('.sidebar nav').getByRole('button', { name: 'HCL', exact: true }).click();
+  await page.locator('#hcl-source').fill('# local unsaved changes\n');
+  await page.getByRole('button', { name: 'Diff', exact: true }).click();
+  await expect(page.locator('.toast.error')).toContainText('Unsaved HCL edits');
+  expect(draftRequests).toHaveLength(0);
+  await expect(page.locator('#hcl-source')).toHaveValue('# local unsaved changes\n');
+
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'New draft' }).click();
+  await expect(page.locator('#hcl-source')).not.toHaveValue('');
+  await page.locator('#hcl-source').fill('');
+  const update = page.waitForRequest(r => r.url().endsWith('/api/draft-update') && r.method() === 'POST');
+  const result = page.waitForResponse(r => r.url().endsWith('/api/draft-update') && r.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Save draft', exact: true }).click();
+  expect((await update).postDataJSON().source).toBe('');
+  await result;
+  await expect(page.locator('#hcl-source')).toHaveValue('');
+});

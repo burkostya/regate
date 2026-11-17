@@ -36,12 +36,12 @@ export function assertNoPendingEdits(
   snapshot: GraphSourceSnapshot | null
 ): void {
   if (dirtyGraph) {
-    throw new Error('Unsaved graph edits exist. Save the graph before changing the active revision.');
+    throw new Error('Unsaved graph edits exist. Save the graph before continuing.');
   }
   if (draft) {
     assertSavedHCL(draft, editorText);
   } else if (editorText && editorText !== snapshot?.source) {
-    throw new Error('Unsaved HCL edits exist. Save a draft before changing the active revision.');
+    throw new Error('Unsaved HCL edits exist. Save a draft before continuing.');
   }
 }
 
