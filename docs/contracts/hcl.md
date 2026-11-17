@@ -647,3 +647,8 @@ idempotence proof, permit automatic retries, grant new OAuth capabilities,
 or provide nested checkpoint resume. Effect classification, trust policy,
 provider response semantics and recovery are still operator/provider
 contracts which require their own evidence.
+
+Authenticated surface trust checks and queued-task OAuth delegation detection
+walk **all transitive called pipelines**, including shared subpipelines. Missing
+targets or recursive runtime mutations fail closed. A child writing Restricted
+data requires the same explicit trusted destination as a top-level write.
