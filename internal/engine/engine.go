@@ -805,6 +805,8 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 			break
 		}
 		result := make([]any, 0, len(items))
+		childName := n.Str("pipeline")
+		child, hasChild := cfg.Pipelines[childName]
 		for i, item := range items {
 			if e := ctx.Err(); e != nil {
 				ret.error = e
@@ -814,8 +816,52 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 				ret.error = fmt.Errorf("map item %d failed schema validation", i)
 				break
 			}
+			if childName != "" {
+				if !hasChild {
+					ret.error = fmt.Errorf("map child pipeline missing")
+					break
+				}
+				arguments, ok := item.(map[string]any)
+				if !ok || arguments == nil {
+					ret.error = fmt.Errorf("map item %d: pipeline argument must be an object", i)
+					break
+				}
+				// Each iteration has a distinct logical effect identity, derived
+				// from the immutable parent run, map node, child and item index.
+				// Process in input order: no hidden fan-out or ambiguous partial
+				// retry after a failed effectful iteration.
+				subrunID := derivedSubrunID(runID, n.Name, fmt.Sprintf("map:%s:%d", childName, i))
+				childCtx, cancel := context.WithTimeout(ctx, time.Duration(child.TimeoutMS)*time.Millisecond)
+				childCtx = withEffectScope(childCtx, subrunID)
+				if !dry && r.Store != nil {
+					r.Store.WriteTrace(storage.Trace{RunID:runID, Revision:revision, Surface:surface, Tool:toolName,
+						Node:fmt.Sprintf("%s[%d]",n.Name,i), Status:"subrun", Message:"nested run "+subrunID})
+				}
+				nested, nestedErr := r.execute(childCtx, revision, cfg, child, subrunID,
+					surface, toolName, arguments, dry, nil)
+				cancel()
+				if nested.Status == "suspended" {
+					ret.error = fmt.Errorf("map item %d: child suspension has no durable per-item checkpoint", i)
+					break
+				}
+				if nestedErr != nil {
+					ret.error = fmt.Errorf("map item %d: child pipeline failed: %w", i, nestedErr)
+					break
+				}
+				if !nested.OutputProduced {
+					ret.error = fmt.Errorf("map item %d: child pipeline produced no output", i)
+					break
+				}
+				result = append(result, nested.Value)
+				continue
+			}
+			// Existing pure CEL map remains unchanged.
 			local := map[string]any{
 				"input": item, "nodes": vars["nodes"], "ports": vars["ports"], "port_present": vars["port_present"],
+			}
+			if plan.Expressions["mapping"] == nil {
+				ret.error = fmt.Errorf("map mapping expression unavailable")
+				break
 			}
 			mapped, e := plan.Expressions["mapping"].Eval(ctx, local)
 			if e != nil {
