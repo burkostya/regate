@@ -507,3 +507,57 @@ recursive suspension/checkpoint model, or an assertion that operator
 policy/PII obligations follow arbitrary data across tenants. External
 effects in subpipelines require a separate durable effect identity and
 authoritative recovery protocol.
+
+
+### Explicit MCP structured output port (PR #49)
+
+`mcp.call` can expose a separately checked `structured` data port.
+An `output_ports.structured` JSON Schema contract is required on the
+producer. The data edge must name `from_port = "structured"`; its consumer
+must separately declare the matching `input_ports` schema. Both contracts
+are checked for known incompatibilities at compile time and for actual
+MCP `structuredContent` at runtime. Missing `structuredContent` is an
+error even when the consumer schema would otherwise allow null.
+
+```hcl
+node "lookup" {
+  kind     = "mcp.call"
+  upstream = "crm"
+  tool     = "get_customer"
+  effect   = "read"
+  arguments = {id = "input.id"}
+  output_ports = {
+    structured = {
+      type = "object"
+      required = ["id"]
+      properties = {id = {type = "string"}}
+    }
+  }
+}
+node "finish" {
+  kind = "output"
+  input_ports = {customer = {type = "object"}}
+  value = "ports.customer"
+}
+edge {
+  from = "lookup"
+  to   = "finish"
+}
+edge {
+  kind      = "data"
+  from      = "lookup"
+  from_port = "structured"
+  to        = "finish"
+  to_port   = "customer"
+}
+```
+
+`output_ports.value` is an optional extra contract for the ordinary node
+value. Existing `output_schema` and implicit `from_port = "value"` data
+edges remain valid. `structured` is *only* supported for MCP calls with an
+explicit schema; raw `mcp` envelopes, status and metadata are not implicitly
+exposed as typed ports. Dry-run MCP nodes can supply `mock_structured`
+alongside the existing `mock` to exercise this boundary without an upstream.
+Neither declared MCP annotations nor remote claims are trusted as a schema
+attestation. When an after-call interceptor rewrites the MCP result, raw
+structured content is invalidated rather than silently reused.
