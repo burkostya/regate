@@ -226,7 +226,9 @@
     const d = await api<{items:any[]}>('discover','POST',{name});
     discovered = d.items ?? [];
   }
-  onMount(() => {});
+  // E2E and assistive clients can distinguish a hydrated, interactive form
+  // from server-rendered markup whose submit handler is not attached yet.
+  onMount(() => { document.documentElement.dataset.regateHydrated = 'true'; });
 </script>
 
 <svelte:head>
