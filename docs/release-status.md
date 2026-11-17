@@ -1054,3 +1054,22 @@
 - This provides executable local E2E for one revision lifecycle, not
   production provider attestation, full browser coverage or full v1
   release acceptance.
+
+#### Transitive pure-map worker fanout containment (#7)
+
+- Pure pipeline-backed `map` workers now propagate a context marker
+  through nested `pipeline.call`/subpipeline execution. A nested pure
+  `map` declared with `parallelism > 1` executes in its enclosing
+  worker instead of spawning an additional worker pool. Both pipeline
+  children and pure CEL mappings honor the marker.
+- The HCL declaration remains valid and retains its configured bound;
+  only the effective runtime parallelism changes within an already
+  parallel map. Original input order, deterministic first-error,
+  cancellation and no-partial-output guarantees are preserved.
+- This contains multiplicative worker creation across the supported
+  nested pure-call depth; independent sibling maps are still subject
+  to their parent pipeline concurrency. A global cross-run scheduler
+  or per-tenant execution budget is **not** implemented here.
+- Go race/runtime tests cover three compositional levels of maps,
+  output shape, cancellation, and a fail-closed guard against bypassing
+  the nested-worker boundary. Full #7/#10 acceptance remains open.

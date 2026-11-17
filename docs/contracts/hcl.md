@@ -1091,3 +1091,17 @@ a separate binding. UI checks block obvious invalid declarations,
 but the compiled HCL graph remains the final authority for ordering,
 dominance, types, trust and effect permissions. All unrelated graph
 edges and their guards are preserved through serialization.
+
+### Nested pure-map concurrency semantics
+
+A pure `map` may declare `parallelism` of 1..16 (also bounded
+by `max_items`). The declared value is a maximum, **not** a guarantee
+of a fresh worker pool at each recursive call depth. When a pure
+pipeline-backed map invokes a child that contains another pure
+`map`, the inner map executes sequentially in the existing outer
+worker. This prevents the product of per-node bounds from generating
+an exponential number of concurrent goroutines. It does not change
+item order, typed output contracts, or fail-closed error semantics,
+and effectful maps always stay sequential. Independent top-level
+maps are still controlled by their enclosing pipeline scheduling;
+cross-run/tenant concurrency budgets are separate work.
