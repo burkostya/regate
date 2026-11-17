@@ -100,16 +100,8 @@ func errorJSON(w http.ResponseWriter, status int, e error) {
 	reply(w, status, map[string]any{"error": e.Error()})
 }
 func parseJSON(r *http.Request) (map[string]any, error) {
-	defer r.Body.Close()
-	var v map[string]any
-	d := json.NewDecoder(io.LimitReader(r.Body, 2<<20))
-	if e := d.Decode(&v); e != nil {
-		return nil, e
-	}
-	if v == nil {
-		return nil, fmt.Errorf("expected JSON object")
-	}
-	return v, nil
+    defer r.Body.Close()
+    return strictJSONObject(r.Body)
 }
 func (s *Service) api(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "GET" && r.Method != "POST" && r.Method != "PUT" {
