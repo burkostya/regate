@@ -211,6 +211,15 @@ func TestMappedPureChildPreservesInputOrderWithoutEffects(t *testing.T) {
     }
 }
 
+func TestMappedEffectRequiresExplicitAuthorization(t *testing.T) {
+    src:=strings.Replace(boundedPipelineMapSource("http://localhost:1234"),
+        `    allow_effects = true`,"",1)
+    if _,err:=config.Decode(src);err==nil ||
+        !strings.Contains(err.Error(),"cannot execute inside a pure") {
+        t.Fatalf("effectful mapped child bypassed explicit opt-in: %v",err)
+    }
+}
+
 func TestMappedCalleesParticipateInTrustAndOAuthDelegation(t *testing.T) {
     cfg,err:=config.Decode(boundedPipelineMapSource("http://localhost:1234"))
     if err!=nil {t.Fatal(err)}
