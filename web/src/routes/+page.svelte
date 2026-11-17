@@ -91,6 +91,23 @@
     editorText = created.source;
     message = `Draft ${created.id.slice(0,8)} created`;
   }
+  async function loadActiveHCL() {
+    const unsaved = dirty || (draft ? editorText !== draft.source :
+      Boolean(editorText) && editorText !== graphSnapshot?.source);
+    if ((draft || unsaved) &&
+        !confirm('Replace the HCL editor with active source? Unsaved local edits will be discarded; the persisted draft will remain unchanged.')) return;
+    const active = await api<GraphSourceSnapshot>('config');
+    if (dirty && catalog?.pipelines[selected]) {
+      activePipeline = $state.snapshot(catalog.pipelines[selected]);
+      selectedNode = ''; selectedEdgeIndex = null;
+      dirty = false;
+    }
+    editorText = active.source;
+    insight = '';
+    message = draft
+      ? 'Active HCL loaded as a preview; the saved draft is unchanged. Use Reload draft to return to the latest draft source.'
+      : 'Active HCL loaded for review; create a draft to save changes.';
+  }
   async function reloadDraft() {
     const previous = draft;
     if (!previous) throw new Error('No draft selected for reload.');
@@ -374,7 +391,7 @@
             <div class="split-pane bottom"><div class="pane"><h3>Tool arguments</h3><textarea rows="5" spellcheck="false" bind:value={testArguments}></textarea><p>Dry-run requires mocks for external call nodes and doesn't contact upstream services.</p></div><div class="pane"><h3>Last execution</h3><pre class="output">{resultText || 'No execution yet.'}</pre></div></div>
           {/if}
         {:else if tab==='HCL'}
-          <div class="page-title"><div><p class="eyebrow">DECLARATIVE SOURCE</p><h1>HCL editor</h1></div><div class="actions"><button class="secondary" onclick={() => task(async()=>{const r=await api<{source:string}>('config');editorText=r.source;})}>Load active</button><button class="secondary" onclick={() => task(diff)}>Diff</button><button class="secondary" onclick={() => task(validate)}>Validate</button>{#if draft}<button class="secondary" onclick={() => task(reloadDraft)}>Reload draft</button>{/if}<button class="primary" onclick={() => task(saveHCL)}>Save draft</button><button class="primary" onclick={() => task(activate)}>Activate</button></div></div>
+          <div class="page-title"><div><p class="eyebrow">DECLARATIVE SOURCE</p><h1>HCL editor</h1></div><div class="actions"><button class="secondary" onclick={() => task(loadActiveHCL)}>Load active</button><button class="secondary" onclick={() => task(diff)}>Diff</button><button class="secondary" onclick={() => task(validate)}>Validate</button>{#if draft}<button class="secondary" onclick={() => task(reloadDraft)}>Reload draft</button>{/if}<button class="primary" onclick={() => task(saveHCL)}>Save draft</button><button class="primary" onclick={() => task(activate)}>Activate</button></div></div>
           <div class="pane"><label for="hcl-source">Regate configuration {draft ? '· Draft '+draft.id.slice(0,8) : '· Active preview'}</label><textarea id="hcl-source" class="hcl-editor" spellcheck="false" bind:value={editorText} placeholder="Create a draft or load the active HCL source..."></textarea></div>
           {#if insight}<div class="pane"><h3>Validation / Impact</h3><pre class="output">{insight}</pre></div>{/if}
         {:else if tab==='Revisions'}
