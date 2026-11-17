@@ -767,6 +767,23 @@
   until all previously suspended siblings have answers. Tests cover invalid
   answers, ambiguous selection, partial checkpoint recovery, and no replay
   of earlier MCP writes.
-- This does **not** implement independently advancing branches, process-wide
-  concurrent-resume locking, effectful map, verified external idempotency,
-  or full release acceptance. Track #7/#10 as open.
+- This does **not** implement independently advancing branches, cross-process
+  same-run resume arbitration beyond the exclusive leader lease, effectful
+  map, verified external idempotency or full release acceptance.
+  Track #7/#10 as open.
+
+#### In-process per-run continuation serialization (#7 hardening)
+
+- Each SQLite Store holds a reference-counted per-run mutex for the full
+  `ResumeAt` lifecycle: read snapshot, validate path and leaf output,
+  persist partial reply or execute the final downstream graph, and delete
+  the consumed checkpoint.
+- Lock acquisition precedes final grant and execution-leader checks.
+  Concurrent distinct leaf replies on one run cannot overwrite one another;
+  duplicate answers observe the updated state and fail closed. Separate
+  run IDs do not block one another.
+- Race tests submit both pending nested continuation paths concurrently
+  through independent Runtime objects sharing one Store.
+- This uses the existing single-leader SQLite execution lease for
+  cross-process exclusion; it is not a provider-level transaction or
+  external exactly-once effect guarantee.
