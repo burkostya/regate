@@ -105,6 +105,10 @@ func (r *Runtime) DiscoverCatalog(ctx context.Context, cfg *config.Config, upstr
 }
 func checkOutbound(raw string) error { return netguard.ValidateURL(raw) }
 
+// Payloads may grow after CEL transformations; bound outbound hook data
+// before journaling or dispatch, independently of the inbound MCP body cap.
+const maxHTTPHookRequestBytes = 4 << 20
+
 func httpClient(timeout time.Duration) *http.Client { return netguard.Client(timeout) }
 
 type Outcome struct {
@@ -1302,6 +1306,9 @@ func (r *Runtime) runHook(ctx context.Context, h config.Hook, cfg *config.Config
 		}
 		body, e := json.Marshal(map[string]any{"input": value})
         if e!=nil{return nil,e}
+        if len(body)>maxHTTPHookRequestBytes {
+            return nil,fmt.Errorf("HTTP hook request exceeds %d bytes",maxHTTPHookRequestBytes)
+        }
 		timeout := time.Duration(h.TimeoutMS) * time.Millisecond
 		hc := httpClient(timeout)
 		request, e := http.NewRequestWithContext(ctx, "POST", h.URL, bytes.NewReader(body))

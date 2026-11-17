@@ -2,6 +2,7 @@ package engine
 
 import (
     "context"
+    "encoding/json"
     "errors"
     "fmt"
     "net/http"
@@ -210,5 +211,49 @@ func TestHTTPDecisionRejectsAmbiguousOversizedAndMalformedResponsesWithoutReplay
             }
             if calls.Load()!=1 {t.Fatalf("HTTP hook replayed after bad response: %d",calls.Load())}
         })
+    }
+}
+
+func TestHTTPHookRequestBodyBoundBeforeEffectAdmission(t *testing.T) {
+    var calls atomic.Int64
+    upstream:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request) {
+        calls.Add(1)
+        w.Header().Set("Content-Type","application/json")
+        fmt.Fprint(w,`{"value":{"ok":true}}`)
+    }))
+    defer upstream.Close()
+    store:=effectTestStore(t)
+    runtime:=New(store)
+    hook:=config.Hook{Name:"transform",Transport:"http",URL:upstream.URL,Contract:"transform",TimeoutMS:15000}
+
+    // Exact-limit payloads are accepted. The envelope size (not only the
+    // input value) counts against the wire budget.
+    makeInput:=func(length int) map[string]any {
+        return map[string]any{"payload":strings.Repeat("x",length)}
+    }
+    envelope,_:=json.Marshal(map[string]any{"input":makeInput(0)})
+    size:=maxHTTPHookRequestBytes-len(envelope)
+    atLimit:=makeInput(size)
+    encoded,_:=json.Marshal(map[string]any{"input":atLimit})
+    if len(encoded)!=maxHTTPHookRequestBytes {
+        t.Fatalf("test fixture is not at the actual JSON limit: %d",len(encoded))
+    }
+    out,err:=runtime.runHook(httpEffectContext("run-request-exact","node:hook"),hook,nil,atLimit,false)
+    if err!=nil {t.Fatalf("exact-boundary request rejected: %v",err)}
+    if v,ok:=out.(map[string]any);!ok || v["ok"]!=true {t.Fatalf("bad valid-hook result: %#v",out)}
+    before:=store.Effects()
+    if len(before)!=1 || before[0].Status!="confirmed" || calls.Load()!=1 {
+        t.Fatalf("exact-boundary request not durably confirmed: %#v / calls=%d",before,calls.Load())
+    }
+
+    // A single byte beyond the bound fails BEFORE BeginEffectBound and before
+    // external network I/O, so it cannot create an uncertain external write.
+    _,err=runtime.runHook(httpEffectContext("run-request-exceeded","node:hook"),hook,nil,makeInput(size+1),false)
+    if err==nil || !strings.Contains(err.Error(),"exceeds") {
+        t.Fatalf("oversized request was accepted: %v",err)
+    }
+    after:=store.Effects()
+    if len(after)!=1 || calls.Load()!=1 {
+        t.Fatalf("oversized hook dispatched or journaled an effect: %#v / calls=%d",after,calls.Load())
     }
 }

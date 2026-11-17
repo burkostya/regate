@@ -78,3 +78,14 @@ the remote service already committed a write. Only a valid response
 marks the HTTP POST effect confirmed. This is a transport-level
 framing guarantee, not verification of a remote Decision provider's
 trustworthiness.
+
+## Outbound HTTP hook request limit (#9)
+
+The encoded `{"input": ...}` request body is limited to 4 MiB,
+including the entire JSON envelope. This limit is enforced after
+transformations and before an HTTP write is admitted into the effect
+journal or sent over the network. Oversized payloads therefore cannot
+create an external effect or an ambiguous write outcome. The limit is
+separate from, and equally strict as, the 4 MiB response framing limit.
+The caller remains responsible for approved data transfer and trust
+classification; a size limit is not a data-loss-prevention policy.
