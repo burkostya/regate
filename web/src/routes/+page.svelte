@@ -274,9 +274,70 @@
         {:else if tab==='Pipelines'}
           <div class="page-title"><div><p class="eyebrow">PIPELINE DESIGNER</p><h1>Execution graph</h1></div><div class="actions"><select aria-label="Choose pipeline" bind:value={selected} onchange={() => task(() => selectPipeline(selected))}>{#each Object.keys(catalog?.pipelines ?? {}) as name}<option value={name}>{name}</option>{/each}</select>{#if dirty}<span class="unsaved">Unsaved graph edits</span>{/if}</div></div>
           {#if activePipeline}
-            <div class="editor-grid"><div class="palette"><h3>Pipeline nodes</h3><p>Add a processing step</p><div class="palette-items">{#each kinds as kind}<button title={'Add '+kind} onclick={() => addNode(kind)}><span class="plus">+</span>{kind}</button>{/each}</div><div class="palette-divider"></div><h3>Existing nodes</h3>{#each Object.values(activePipeline.nodes) as n}<button class:selected={selectedNode===n.name} class="node-item" onclick={() => selectNode(n.name)}>{n.name}<small>{n.kind}</small></button>{/each}</div>
-              <div class="canvas"><FlowCanvas {positions} pipeline={activePipeline} onchange={onGraphChange} onselect={selectNode}/></div>
-              <aside class="inspector"><h3>Inspector</h3>{#if selectedNode}<div class="field"><span class="field-label">Node</span><code>{selectedNode}</code></div><div class="field"><label for="node-attributes">Attributes (JSON)</label><textarea id="node-attributes" spellcheck="false" rows="13" bind:value={nodeJson}></textarea></div><div class="inspector-actions"><button class="primary" onclick={() => task(async()=>updateNode())}>Apply</button><button class="danger" onclick={() => task(async()=>removeNode())}>Delete</button></div>{:else}<p>Select a node in the graph or node list to edit its attributes.</p>{/if}<div class="divider"></div><h3>Pipeline details</h3><p>Entry: <code>{activePipeline.entry}</code></p><p>Timeout: {activePipeline.timeout_ms} ms</p><p>Concurrency: {activePipeline.concurrency}</p></aside></div>
+            <div class="editor-grid"><div class="palette"><h3>Pipeline nodes</h3><p>Add a processing step</p><div class="palette-items">{#each kinds as kind}<button title={'Add '+kind} onclick={() => addNode(kind)}><span class="plus">+</span>{kind}</button>{/each}</div><div class="palette-divider"></div><h3>Existing nodes</h3>{#each Object.values(activePipeline.nodes) as n}<button class:selected={selectedNode===n.name} class="node-item" onclick={() => selectNode(n.name)}>{n.name}<small>{n.kind}</small></button>{/each}
+                <div class="palette-divider"></div><h3>Graph edges</h3>
+                {#each activePipeline.edges as edge, i}
+                  <button class:selected={selectedEdgeIndex===i} class="node-item" onclick={() => selectEdge(i)}>
+                    {edge.from} → {edge.to}
+                    <small>{edge.kind==='data' ? 'data: '+(edge.from_port||'value')+' → '+edge.to_port : 'control'+(edge.when ? ': '+edge.when : '')}</small>
+                  </button>
+                {/each}
+                <button class="secondary" onclick={newDataBinding}>+ Bind data port</button>
+              </div>
+              <div class="canvas"><FlowCanvas {positions} pipeline={activePipeline} onchange={onGraphChange} onselect={selectNode} onselectedge={selectEdge}/></div>
+              <aside class="inspector">
+                <h3>Inspector</h3>
+                {#if selectedNode}
+                  <div class="field"><span class="field-label">Node</span><code>{selectedNode}</code></div>
+                  <div class="field"><label for="node-attributes">Attributes (JSON)</label>
+                    <textarea id="node-attributes" spellcheck="false" rows="13" bind:value={nodeJson}></textarea>
+                  </div>
+                  <div class="inspector-actions">
+                    <button class="primary" onclick={() => task(async()=>updateNode())}>Apply</button>
+                    <button class="danger" onclick={() => task(async()=>removeNode())}>Delete</button>
+                  </div>
+                {:else if selectedEdgeIndex !== null}
+                  <div class="field"><span class="field-label">{selectedEdgeIndex < 0 ? 'New data binding' : 'Existing edge'}</span>
+                    <code>{edgeDraft.kind==='data' ? 'data' : 'control'}</code>
+                  </div>
+                  <div class="field"><label for="edge-from">From node</label>
+                    <select id="edge-from" bind:value={edgeDraft.from}>
+                      {#each Object.keys(activePipeline.nodes) as name}<option value={name}>{name}</option>{/each}
+                    </select>
+                  </div>
+                  <div class="field"><label for="edge-to">To node</label>
+                    <select id="edge-to" bind:value={edgeDraft.to}>
+                      {#each Object.keys(activePipeline.nodes) as name}<option value={name}>{name}</option>{/each}
+                    </select>
+                  </div>
+                  {#if edgeDraft.kind==='data'}
+                    <div class="field"><label for="edge-from-port">Source output port</label>
+                      <input id="edge-from-port" bind:value={edgeDraft.from_port} placeholder="value"/>
+                    </div>
+                    <div class="field"><label for="edge-to-port">Target input port</label>
+                      <input id="edge-to-port" bind:value={edgeDraft.to_port} placeholder="declared input_ports name"/>
+                    </div>
+                    <p>Declare the target input_ports and any named source output_ports in node attributes first.</p>
+                  {:else}
+                    <div class="field"><label for="edge-when">Control guard</label>
+                      <input id="edge-when" bind:value={edgeDraft.when} placeholder="optional"/>
+                    </div>
+                  {/if}
+                  <div class="inspector-actions">
+                    <button class="primary" onclick={() => task(async()=>applyEdge())}>Apply edge</button>
+                    {#if selectedEdgeIndex >= 0}
+                      <button class="danger" onclick={() => task(async()=>deleteEdge())}>Delete edge</button>
+                    {/if}
+                  </div>
+                {:else}
+                  <p>Select a node or an edge in the graph, or create a data binding.</p>
+                {/if}
+                <div class="divider"></div>
+                <h3>Pipeline details</h3>
+                <p>Entry: <code>{activePipeline.entry}</code></p>
+                <p>Timeout: {activePipeline.timeout_ms} ms</p>
+                <p>Concurrency: {activePipeline.concurrency}</p>
+              </aside></div>
             <div class="toolbar"><div class="actions"><button class="primary" disabled={busy} onclick={() => task(saveGraph)}>Save graph to draft</button><button class="secondary" onclick={() => task(saveLayout)}>Save layout</button><button class="secondary" onclick={() => task(validate)}>Validate HCL</button></div><div class="actions"><button class="secondary" onclick={() => task(() => runTool(false))}>Dry-run</button><button class="secondary" onclick={() => task(() => runTool(true))}>Live run</button></div></div>
             <div class="split-pane bottom"><div class="pane"><h3>Tool arguments</h3><textarea rows="5" spellcheck="false" bind:value={testArguments}></textarea><p>Dry-run requires mocks for external call nodes and doesn't contact upstream services.</p></div><div class="pane"><h3>Last execution</h3><pre class="output">{resultText || 'No execution yet.'}</pre></div></div>
           {/if}
