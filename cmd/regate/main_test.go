@@ -68,3 +68,31 @@ func TestOfflineRestoreCLIProducesOnlyVerifiedManifest(t *testing.T) {
 		t.Fatal("restored source leaked into manifest")
 	}
 }
+
+func TestOfflineKeyAuditCLISuppressesSecrets(t *testing.T) {
+	s, err := storage.New(t.TempDir(), "regate {}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	archive := filepath.Join(t.TempDir(), "backup.sqlite")
+	if err := s.Backup(archive); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("REGATE_ADMIN_TOKEN", "")
+	var output bytes.Buffer
+	if err := verifyBackupKeysToWriter(archive, &output); err != nil {
+		t.Fatal(err)
+	}
+	var report storage.BackupKeyAudit
+	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.SnapshotSHA256) != 64 ||
+		report.QueuedAuthenticated != 0 || report.GrantsAuthenticated != 0 {
+		t.Fatalf("offline key verification reported incorrect counts: %#v", report)
+	}
+	if bytes.Contains(output.Bytes(), []byte("regate {}")) {
+		t.Fatal("original HCL source leaked in offline audit")
+	}
+}
