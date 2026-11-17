@@ -567,3 +567,16 @@
 - Ordinary value ports stay backward compatible. Multi-result envelopes,
   remote schema attestation and full MCP content/metadata transformation
   contracts remain open #7/#10 work.
+
+
+#### Explicit nullable optional ports (PR #50)
+
+- A `node.input_ports.<name>` wrapper with `optional=true` and a JSON
+  Schema accepting null allows selected data sources to be absent after a
+  skipped control branch. The separately compiled CEL `port_present.<name>`
+  distinguishes skipped from a completed source yielding JSON null.
+- Optional sources must be control ancestors, have a fully settled state and
+  retain runtime schema checks for completed data. Mandatory/undeclared ports,
+  missing MCP structured results, and pending sources still fail closed.
+- No implicit optionality, policy bypass, or change to join activation
+  thresholds. Multi-output effectful composition remains open.

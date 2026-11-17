@@ -73,6 +73,7 @@ func makeEnv() (*cel.Env, error) {
 		cel.Variable("input", cel.DynType),
 		cel.Variable("nodes", cel.DynType),
 		cel.Variable("ports", cel.DynType),
+		cel.Variable("port_present", cel.DynType),
 		// Compatibility for the pre-CEL prototype. New configurations should
 		// prefer CEL receiver methods such as "alice".contains("lic").
 		cel.Function("lower", cel.Overload("regate_lower_string", []*cel.Type{cel.StringType}, cel.StringType, cel.UnaryBinding(strUnary(strings.ToLower)))),

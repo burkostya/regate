@@ -31,6 +31,7 @@ type NodeIR struct {
 	InputSchema  *SchemaContract
 	OutputSchema *SchemaContract
 	InputPorts   map[string]*SchemaContract // Named JSON Schema bindings supplied only by data edges.
+	OptionalPorts map[string]bool // A skipped control ancestor may bind an explicit nullable port.
 	OutputPorts  map[string]*SchemaContract // Optional published value and explicit MCP structuredContent contracts.
 }
 type ToolContract struct {
@@ -46,7 +47,7 @@ type PipelineIR struct {
 }
 
 var nodeRef = regexp.MustCompile(`\bnodes\.([a-zA-Z_][a-zA-Z0-9_]*)`)
-var portRef = regexp.MustCompile(`\bports\.([a-zA-Z_][a-zA-Z0-9_]*)`)
+var portRef = regexp.MustCompile(`\b(?:ports|port_present)\.([a-zA-Z_][a-zA-Z0-9_]*)`)
 var portIdentifier = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 func (c *Config) Compile() error {
@@ -110,13 +111,28 @@ func (c *Config) Compile() error {
 			case "input":
 				resultType = PortObject
 			}
-			compiled := &NodeIR{Name: id, Kind: n.Kind, Span: n.Span, Output: resultType, Expressions: map[string]*expr.Value{}, InputPorts: map[string]*SchemaContract{}, OutputPorts: map[string]*SchemaContract{}}
+			compiled := &NodeIR{Name: id, Kind: n.Kind, Span: n.Span, Output: resultType, Expressions: map[string]*expr.Value{}, InputPorts: map[string]*SchemaContract{}, OptionalPorts: map[string]bool{}, OutputPorts: map[string]*SchemaContract{}}
 			if portSchemas, ok := n.Attrs["input_ports"].(map[string]any); ok {
 				for portName, raw := range portSchemas {
 					declared, ok := raw.(map[string]any)
 					if !ok { return fmt.Errorf("pipeline %s node %s port %s: schema must be an object", name, id, portName) }
-					schema, err := compileSchema(declared)
+					schemaDefinition := declared
+					if _, hasSchema := declared["schema"]; hasSchema || declared["optional"] != nil {
+						optional, ok := declared["optional"].(bool)
+						if !ok || !optional || len(declared) != 2 {
+							return fmt.Errorf("pipeline %s node %s port %s: optional port requires optional=true and schema only", name, id, portName)
+						}
+						schemaDefinition, ok = declared["schema"].(map[string]any)
+						if !ok {
+							return fmt.Errorf("pipeline %s node %s port %s: optional schema must be an object", name, id, portName)
+						}
+						compiled.OptionalPorts[portName] = true
+					}
+					schema, err := compileSchema(schemaDefinition)
 					if err != nil { return fmt.Errorf("pipeline %s node %s port %s: %w", name, id, portName, err) }
+					if compiled.OptionalPorts[portName] && schema.Validate(nil) != nil {
+						return fmt.Errorf("pipeline %s node %s port %s: optional schema must accept null", name, id, portName)
+					}
 					compiled.InputPorts[portName] = schema
 				}
 			}
@@ -232,7 +248,12 @@ func (c *Config) Compile() error {
 		for _, edge := range p.Edges {
 			if edge.Kind != "data" { continue }
 			if !guaranteed[edge.To][edge.From] {
-				return fmt.Errorf("pipeline %s node %s: data port %s source %s is not guaranteed to complete before activation", name, edge.To, edge.ToPort, edge.From)
+				if !plan.Nodes[edge.To].OptionalPorts[edge.ToPort] {
+					return fmt.Errorf("pipeline %s node %s: data port %s source %s is not guaranteed to complete before activation", name, edge.To, edge.ToPort, edge.From)
+				}
+				if !isAncestor(edge.From, edge.To, p.Edges) {
+					return fmt.Errorf("pipeline %s node %s: optional data port %s source %s is not a control predecessor", name, edge.To, edge.ToPort, edge.From)
+				}
 			}
 			fromPort := edge.FromPort
 			if fromPort == "" { fromPort = "value" }
