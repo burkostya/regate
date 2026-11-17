@@ -491,6 +491,19 @@ func (r *Runtime) execute(ctx context.Context, revision string, cfg *config.Conf
 				}
 				out.NamedOutputs[name] = value
 			}
+			// A root output may have completed in a wave before a sibling
+			// suspension. On resumed execution it is absent from this wave's
+			// nodeResult list, but it is still the single published terminal.
+			// Reconstruct the public response only after every branch settles;
+			// the shared final response boundary then validates/redacts it.
+			if len(out.NamedOutputs) == 1 {
+				for name, value := range out.NamedOutputs {
+					out.Value = value
+					out.OutputProduced = true // A completed JSON null is also present.
+					record := values[name].(map[string]any)
+					out.MCP, _ = record["mcp"].(map[string]any)
+				}
+			}
 			if out.Status == "running" {
 				out.Status = "success"
 			}
