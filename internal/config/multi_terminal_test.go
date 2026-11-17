@@ -95,7 +95,7 @@ func TestMultiTerminalChildRejectsAmbiguousInterfaces(t *testing.T) {
     output_schema = {type = "string"}
   }`
     cases := []struct{name, source, want string}{
-        {"missing output port", strings.Replace(src, ports, `output_ports = {left = {type = "string"}}`, 1), "must declare output_ports for child terminal right"},
+        {"missing output port", strings.Replace(src, ports, `output_ports = {left = {type = "string"}}`, 1), "requires declared pipeline.call output port right"},
         {"invented output", strings.Replace(src, ports, `output_ports = {left = {type = "string"}, right = {type = "string"}, extra = {type = "string"}}`, 1), "undeclared child terminal extra"},
         {"child untyped", strings.Replace(src, right, strings.Replace(right, `    output_schema = {type = "string"}
 `, "", 1), 1), "child terminal right requires output_schema"},
