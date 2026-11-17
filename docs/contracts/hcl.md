@@ -936,3 +936,25 @@ and the caller's own `output_schema` may require particular keys
 when appropriate. Optionality never suppresses schema validation for
 provided values, and downstream effects only activate after the
 caller and consumer contracts have passed.
+
+
+### Failed run and resume output isolation (PR #61)
+
+A root pipeline may finish an `output` node while other branches
+are still running. Completion of a single terminal is **not**
+publication. If a later node or schema validation fails, `Run`
+and `Resume` return a failed outcome with no partial `Value`, MCP
+envelope, output-produced flag, node payload, or continuation
+checkpoint. The failure itself is reported with redacted diagnostics
+and best-effort error observers.
+
+A genuine `suspended` status retains its durable checkpoint and
+resume instructions. If graph evaluation fails after a resume,
+the **previous suspended checkpoint** remains in durable storage
+for explicit operator correction/reconciliation. This differs
+from a fully completed graph whose *final public response*
+was rejected (PR #59): that completed checkpoint is consumed
+to prevent duplicate post-graph response hooks.
+
+This protection concerns public result isolation, not atomic
+rollback of effects already issued during a failed graph wave.
