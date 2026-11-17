@@ -1192,3 +1192,17 @@
 - Tests use real local JWKS, introspection and token-exchange providers;
   invalid syntax cannot create a trusted principal or delegated bearer.
   Real-provider interoperability and full v1 security gates remain open.
+
+#### Independent two-upstream composition and curated-surface E2E (#9/#10)
+
+- A real HTTP transport test launches independent CRM and agent MCP
+  fixtures on distinct ports. The source binds each upstream separately,
+  publishes an independent second tool/resource/prompt surface, and
+  exercises the modern 2026-07-28 public MCP transport.
+- The allowed branch gates CRM behind a live Decision API, performs MCP
+  retrieval and HTTP redaction, then passes only masked data to an
+  independently hosted MCP agent. The denied branch must not invoke
+  either protected MCP tool; calls are counted on both providers.
+- This expands release acceptance coverage but is still a deterministic
+  loopback fixture, not a production/provider interoperability matrix,
+  exhaustive fault injection, performance validation or formal DLP proof.
