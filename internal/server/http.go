@@ -125,7 +125,7 @@ func (s *Service) api(w http.ResponseWriter, r *http.Request) {
 			reply(w, 200, s.Store.History())
 			return
 		case "traces":
-            query,err:=parseTraceQuery(r.URL.Query())
+            query,err:=parseTraceRequestQuery(r.URL.RawQuery)
             if err!=nil {
                 errorJSON(w,400,err)
                 return
