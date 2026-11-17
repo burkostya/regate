@@ -753,3 +753,20 @@
 - Regression tests use a root output completed in one execution wave
   followed by an invalid terminal in a later wave, for both run and
   resume. This does not undo or automatically retry external effects.
+
+#### Independent parallel suspension collection (next #7 milestone)
+
+- Parallel `suspend` and opted-in nested `pipeline.call` branches may
+  share one durable root checkpoint, preserving per-branch leaf schemas,
+  immutable child args, completed sibling outputs and effect identities.
+- `ResumeAt` and `tasks/update.inputResponses.resume.path` select one
+  exact array-of-node-names path; ambiguous legacy pathless calls and
+  duplicate answers fail closed before a task is claimed. A single path
+  continues to accept the original pathless resume API.
+- Persist each validated leaf answer without executing downstream nodes
+  until all previously suspended siblings have answers. Tests cover invalid
+  answers, ambiguous selection, partial checkpoint recovery, and no replay
+  of earlier MCP writes.
+- This does **not** implement independently advancing branches, process-wide
+  concurrent-resume locking, effectful map, verified external idempotency,
+  or full release acceptance. Track #7/#10 as open.
