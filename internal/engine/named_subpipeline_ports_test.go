@@ -70,7 +70,7 @@ func TestNamedSubpipelinePortsFailClosedBeforeParentOutput(t *testing.T) {
         },
         {
             "parent port runtime refinement",
-            strings.Replace(base, `second = {type = "string"}}`, `second = {type = "string", pattern = "^Z$"}}`, 1),
+            strings.Replace(base, `output_ports = {first = {type = "string"}, second = {type = "string"}}`, `output_ports = {first = {type = "string"}, second = {type = "string", pattern = "^Z$"}}`, 1),
             "output port second failed schema validation",
         },
     }
