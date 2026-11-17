@@ -8,7 +8,7 @@ import (
 func TestReadObjectStrictFraming(t *testing.T) {
     good:=[]string{
         `{"decision":"allow"}`,
-        `{"decision":"allow","detail":{"one":1,"two":[true,null]}}   \n`,
+        `{"decision":"allow","detail":{"one":1,"two":[true,null]}}   `,
     }
     for _,raw:=range good {
         if v,err:=ReadObject(strings.NewReader(raw),1024);err!=nil || v["decision"]!="allow" {
