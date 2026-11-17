@@ -1088,3 +1088,22 @@
   proof. Existing historical journals are not destructively rewritten,
   arbitrary PII forms may still require explicit masking, and backup/
   retention and complete production privacy acceptance remain open.
+
+#### Bounded exact-match trace queries and read-only console inspection (#9)
+
+- Authenticated `GET /api/traces` accepts optional exact `run_id`,
+  `status` and `limit` (1–2000). Invalid/ambiguous filters fail with
+  HTTP 400. The limit is applied **after** filtering among the newest
+  2000 retained SQLite trace records, rather than hiding matching runs
+  behind unrelated newer events.
+- The Svelte console exposes these filters, a bounded row selector and
+  sanitized diagnostic inspection. Its trace refresh is isolated from
+  full catalog/graph reload and cannot discard a dirty graph.
+- Go storage/server tests check exact selection, latest-first ordering,
+  retention, admin authentication, malformed/duplicate parameters and
+  legacy unfiltered reads. Chromium E2E confirms trace filtering works
+  while a node graph contains unsaved changes.
+- This is an operator-oriented bounded **projection**, not a durable
+  OpenTelemetry export, full log search, distributed trace backend or
+  long-term audit retention. Complete #9/#10 production acceptance
+  remains open.
