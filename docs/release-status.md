@@ -933,3 +933,17 @@
 - Any pipeline-backed/effectful/suspendable map rejects the option.
   This provides **no** concurrent writes, remote idempotency, parallel
   durable checkpointing or full #7/#10 release acceptance.
+
+#### Bounded parallel pure called-pipeline map (#7)
+
+- Pipeline-backed maps now accept `parallelism` only when the statically
+  validated child call graph is transitively pure. No effects or suspend
+  paths can be delegated; the existing per-item durable journal and
+  checkpoint code remains strictly sequential for effectful maps.
+- Bounded workers run isolated child subruns with derived identities and
+  per-child timeouts, collecting both single and multi-terminal typed
+  results in original input order. Optional terminal fields stay sparse.
+- Child errors are selected by smallest input index and no partial batch
+  value is published. The full child-input array is validated first.
+- This is *not* parallel external writes, resource transactions,
+  provider-level idempotency, or complete #7/#10 acceptance.
