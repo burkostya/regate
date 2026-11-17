@@ -85,7 +85,7 @@ func TestMultiTerminalRootResumeStillRejectsCompetingOutputs(t *testing.T) {
 		t.Fatalf("competing root did not suspend: %#v %v", first, err)
 	}
 	done, err := New(store).Resume(context.Background(), cfg, "rev", first.RunID, "ack")
-	if err == nil || !strings.Contains(err.Error(), "multiple") || done.Status != "failure" ||
+	if err == nil || !strings.Contains(err.Error(), "competing outputs") || done.Status != "failure" ||
 		done.Value != nil || done.OutputProduced || done.MCP != nil {
 		t.Fatalf("competing resumed root outputs were published: %#v %v", done, err)
 	}
