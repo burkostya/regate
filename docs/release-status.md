@@ -962,3 +962,27 @@
   guards, duplicate endpoints, serialization and fail-closed reconnects.
 - Browser E2E, full GUI port editing, stale draft conflict handling
   and complete #8/#10 release acceptance remain open.
+
+#### SQLite draft CAS and verified-source activation (#8/#10)
+
+- Editable drafts return a full SHA-256 `source_digest` computed from exact
+  persisted HCL bytes. Management MCP and REST draft/graph/attribute
+  operations accept optional `expected_source_digest`. Stale preconditions
+  fail closed instead of overwriting another editor's modifications.
+- All source-preserving graph and attribute edits use an atomic SQLite
+  compare-and-swap even for legacy callers omitting an explicit precondition.
+  Full-source replacement remains deliberately unconditional for legacy
+  clients unless they opt into the digest precondition.
+- Activation now checks in the same SQLite transaction that the draft
+  source is **exactly** the source used for compilation and MCP catalog
+  preparation. The UI requires the reviewed draft digest at activation.
+  A concurrent writer cannot activate different code from what Regate
+  publishes in memory.
+- The visual editor rejects graph saves after standalone HCL draft edits,
+  stale active revisions and unsaved HCL text. It does not pretend to be
+  a source parser for opaque HCL: explicit HCL editing is required
+  instead of silently reintroducing an older graph.
+- Tests cover independent SQLite connections, stale management edits,
+  reviewed activation, browser-side projection guards and Web/Go CI.
+  Full collaborative draft merges, true browser E2E and v1 #8/#10
+  acceptance remain open.
