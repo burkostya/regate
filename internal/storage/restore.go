@@ -1,15 +1,36 @@
 package storage
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 var ErrUnsafeRestoreTarget = errors.New("restore requires an empty private state directory")
+var ErrRestoreQuarantined = errors.New("restored SQLite state is quarantined: offline operator acknowledgment required")
+
+const restoreQuarantineFile = ".regate-restore-quarantine"
+const restoreReceiptFile = ".regate-restore-acknowledgment.json"
+
+type restoreQuarantineRecord struct {
+	SnapshotSHA256 string `json:"snapshot_sha256"`
+	RestoredAt time.Time `json:"restored_at"`
+}
+
+// A restored snapshot cannot be opened by Store.New or acquire execution
+// leadership until offline reconciliation has explicitly invalidated all
+// potentially replayable historical tasks and credentials.
+func checkRestoreQuarantine(dir string) error {
+	_,err:=os.Lstat(filepath.Join(dir,restoreQuarantineFile))
+	if err==nil{return ErrRestoreQuarantined}
+	if errors.Is(err,os.ErrNotExist){return nil}
+	return err
+}
 
 // RestoreVerifiedBackup publishes a verified offline snapshot into an existing,
 // empty, private state directory. It never opens the destination as a Store:
@@ -23,7 +44,8 @@ var ErrUnsafeRestoreTarget = errors.New("restore requires an empty private state
 // This operation does NOT fence an external Regate worker or prove that
 // encryption keyrings for queued tasks and OAuth grants are available.
 // Operators must fence the old worker and keep its remote effects isolated
-// before allowing a restored worker to acquire execution leadership.
+// before acknowledging the quarantine. Restored nonterminal work and
+// grants will be invalidated, not blindly replayed, at acknowledgment.
 func RestoreVerifiedBackup(archive, stateDir string) (BackupManifest, error) {
 	empty := BackupManifest{}
 	if strings.TrimSpace(archive) == "" || strings.TrimSpace(stateDir) == "" {
@@ -113,10 +135,31 @@ func RestoreVerifiedBackup(archive, stateDir string) (BackupManifest, error) {
 	if len(entries) != 1 || entries[0].Name() != filepath.Base(stagingDir) {
 		return empty, ErrUnsafeRestoreTarget
 	}
+	// Publish the durable quarantine sentinel FIRST. A crash can leave a
+	// blocked directory, but can never expose an executable restored DB.
+	markerPath := filepath.Join(stateDir, restoreQuarantineFile)
+	marker, err := os.OpenFile(markerPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return empty, err
+	}
+	markerError := json.NewEncoder(marker).Encode(restoreQuarantineRecord{
+		SnapshotSHA256: staged.SHA256, RestoredAt: time.Now().UTC(),
+	})
+	if markerError == nil { markerError = marker.Sync() }
+	if closeErr := marker.Close(); markerError == nil { markerError = closeErr }
+	if markerError != nil {
+		_ = os.Remove(markerPath)
+		return empty, markerError
+	}
+	databasePublished := false
+	defer func() {
+		if !databasePublished { _ = os.Remove(markerPath) }
+	}()
 	published := filepath.Join(stateDir, databaseName)
 	if err = os.Link(stagedPath, published); err != nil {
 		return empty, fmt.Errorf("restore cannot publish over existing state: %w", err)
 	}
+	databasePublished = true
 	parent, err := os.Open(stateDir)
 	if err != nil {
 		return empty, err

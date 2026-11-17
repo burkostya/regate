@@ -45,8 +45,11 @@ func TestRestoreVerifiedBackupCopiesAllStateWithoutStartingWorker(t *testing.T) 
 		t.Fatalf("installed snapshot invalid: %#v %v", installed, err)
 	}
 	entries, err := os.ReadDir(dir)
-	if err != nil || len(entries) != 1 || entries[0].Name() != databaseName {
-		t.Fatalf("restore exposed partial files: %#v %v", entries, err)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("restore missing a quarantine marker or leaked staging: %#v %v", entries, err)
+	}
+	if _,err:=os.Stat(filepath.Join(dir,restoreQuarantineFile));err!=nil{
+		t.Fatalf("quarantine marker missing: %v",err)
 	}
 	// Assert the byte digest before any SQLite observer legitimately changes
 	// journal metadata on opening the restored database.
@@ -57,17 +60,11 @@ func TestRestoreVerifiedBackupCopiesAllStateWithoutStartingWorker(t *testing.T) 
 	if err != nil || after != expected {
 		t.Fatalf("second restore damaged original: %#v %v", after, err)
 	}
-	observer, err := New(dir, source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer observer.Close()
-	if err := observer.AcquireExecutionLease(); !errors.Is(err, ErrExecutionLeaseHeld) {
-		t.Fatalf("restored database bypassed original live leader: %v", err)
-	}
-	_, loaded, err := observer.Active()
-	if err != nil || loaded != source {
-		t.Fatalf("restored immutable source changed: %q %v", loaded, err)
+	// A copied lease is not enough to protect against writes committed
+	// AFTER the snapshot: execution is unconditionally quarantined.
+	if observer,err:=New(dir, source);!errors.Is(err,ErrRestoreQuarantined){
+		if observer!=nil {_=observer.Close()}
+		t.Fatalf("restored database was opened before acknowledgment: %v",err)
 	}
 }
 
@@ -165,7 +162,7 @@ func TestRestoreVerifiedBackupConcurrentPublishIsNoOverwrite(t *testing.T) {
 		t.Fatalf("raced restore changed installed backup: %#v %v", found, err)
 	}
 	entries, err := os.ReadDir(dir)
-	if err != nil || len(entries) != 1 {
+	if err != nil || len(entries) != 2 {
 		t.Fatalf("failed publishers left temporary state: %#v %v", entries, err)
 	}
 }
