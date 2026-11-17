@@ -9,9 +9,10 @@
     positions: Record<string, { x: number; y: number }>;
     onchange: (edges: EdgeDef[], positions: Record<string, { x: number; y: number }>) => void;
     onselect: (id: string) => void;
+    onselectedge: (index: number) => void;
   };
 
-  let { pipeline, positions, onchange, onselect }: Props = $props();
+  let { pipeline, positions, onchange, onselect, onselectedge }: Props = $props();
 
   let nodes = $state.raw<FlowNode[]>([]);
   let edges = $state.raw<FlowEdge[]>([]);
@@ -45,6 +46,11 @@
 <div class="flow-wrap">
   <SvelteFlow bind:nodes bind:edges fitView colorMode="dark" onconnect={onConnect}
     onnodeclick={(event: any) => { const n = event?.node ?? event?.detail?.node; if (n?.id) onselect(n.id); }}
+    onedgeclick={(event: any) => {
+      const edge = event?.edge ?? event?.detail?.edge;
+      const match = /^regate-edge-(\d+)$/.exec(String(edge?.id ?? ''));
+      if (match) onselectedge(Number(match[1]));
+    }}
     onnodedragstop={() => update()}>
     <Background variant={BackgroundVariant.Dots} gap={22} size={1} />
     <Controls />
