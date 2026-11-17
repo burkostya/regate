@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +19,37 @@ import (
 )
 
 var running sync.Map // task id -> context.CancelFunc; one-process cancellation
+
+// suspensionInputRequest binds exactly one response key to one checkpoint
+// generation. A new key on each subsequent suspension rejects stale replies
+// (including duplicates arriving after the previous continuation completed).
+func suspensionInputRequest(key, message string) map[string]any {
+    return map[string]any{key: map[string]any{
+        "method": "elicitation/create",
+        "params": map[string]any{
+            "mode": "form",
+            "message": message,
+            "requestedSchema": map[string]any{
+                "type": "object",
+                "additionalProperties": true,
+            },
+        },
+    }}
+}
+
+func resumeResponseKey(task storage.TaskRecord, usingGrant bool) string {
+    if usingGrant { return "resume" } // existing delegated grant re-entry
+    key := ""
+    for candidate := range task.InputRequests {
+        if candidate != "resume" && !strings.HasPrefix(candidate, "resume-") {
+            continue
+        }
+        if key != "" { return "" } // ambiguous outstanding resume requests
+        key = candidate
+    }
+    return key
+}
+
 
 // A delegated task can continue only while a verified subject bearer is
 // live in this process. Neither the token nor a refresh token is persisted.
@@ -156,7 +189,7 @@ func (s *Service) createTaskFor(ctx context.Context,cfg *config.Config,revision 
 		if out.Status == "suspended" {
 			current.Status = "input_required"
 			current.StatusMessage = "Agent or user input needed to resume pipeline"
-			current.InputRequests = map[string]any{"resume": map[string]any{"method": "elicitation/create", "params": map[string]any{"mode": "form", "message": "Provide the data required to resume the Regate pipeline", "requestedSchema": map[string]any{"type": "object", "additionalProperties": true}}}}
+			current.InputRequests = suspensionInputRequest("resume", "Provide the data required to resume the Regate pipeline")
 		} else {
 			current.Status = "completed"
 			current.StatusMessage = "Execution completed"
@@ -214,7 +247,9 @@ func (s *Service) TaskUpdateWithContext(ctx context.Context,id, owner string, in
     if usingGrant {
         if err:=s.Engine.CheckGrantExecution(ctx);err!=nil{return nil,err}
     }
-	response, ok := inputResponses["resume"].(map[string]any)
+	key := resumeResponseKey(t, usingGrant)
+	if key == "" { return map[string]any{}, nil }
+	response, ok := inputResponses[key].(map[string]any)
 	if !ok {
 		return map[string]any{}, nil
 	}
@@ -287,12 +322,20 @@ func (s *Service) TaskUpdateWithContext(ctx context.Context,id, owner string, in
 			return
 		}
 		updated.RunID = out.RunID
-		if out.Status == "suspended" {
+		if errors.Is(err, engine.ErrInvalidResumeInput) {
+			// The value failed *before* any node/effect dispatch. Keep the same
+			// outstanding response ID so the caller can correct and resubmit it.
 			updated.Status = "input_required"
-			// The update protocol always accepts inputResponses["resume"].
-			// Publishing "resume_next" here previously stranded a task after
-			// a second suspension without a matching update handler.
-			updated.InputRequests = map[string]any{"resume": map[string]any{"method": "elicitation/create", "params": map[string]any{"mode": "form", "message": "Additional continuation data", "requestedSchema": map[string]any{"type": "object", "additionalProperties": true}}}}
+			updated.StatusMessage = "Invalid continuation input; provide a value matching the requested schema"
+			updated.InputRequests = t.InputRequests
+			if len(updated.InputRequests) == 0 {
+				updated.InputRequests = suspensionInputRequest("resume", "Correct the continuation input")
+			}
+			updated.Result = nil
+		} else if out.Status == "suspended" {
+			updated.Status = "input_required"
+			updated.StatusMessage = "Additional continuation input required"
+			updated.InputRequests = suspensionInputRequest("resume-"+storage.ID(), "Additional continuation data")
 		} else {
 			updated.Status = "completed"
 			updated.Result = taskSafeResult(updated,out,err)

@@ -1143,11 +1143,11 @@ func completeSuspendedCheckpoint(cfg *config.Config, pipelineName string,
 			return fmt.Errorf("suspend output contract unavailable")
 		}
 		if err := plan.Nodes[cp.SuspendNode].OutputSchema.Validate(value); err != nil {
-			return fmt.Errorf("suspend continuation failed output schema: %w", err)
+			return fmt.Errorf("%w: suspend continuation failed output schema: %v", ErrInvalidResumeInput, err)
 		}
 		if port := plan.Nodes[cp.SuspendNode].OutputPorts["value"]; port != nil {
 			if err := port.Validate(value); err != nil {
-				return fmt.Errorf("suspend continuation failed value port schema: %w", err)
+				return fmt.Errorf("%w: suspend continuation failed value port schema: %v", ErrInvalidResumeInput, err)
 			}
 		}
 		cp.States[cp.SuspendNode] = "completed"
