@@ -396,7 +396,16 @@ func (s *Store) DraftUpdateIfSource(id, expectedSource, source string)(Draft,err
     }
     return s.DraftGet(id)
 }
+// ActivateIfSource pins the exact HCL bytes validated and prepared by the
+// service. A concurrent edit must never activate different bytes from those
+// used to construct the public MCP catalog and authorization policies.
+func (s *Store) ActivateIfSource(id, expectedSource string)(Revision,error) {
+    return s.activateDraft(id,&expectedSource)
+}
 func (s *Store) Activate(id string)(Revision,error) {
+    return s.activateDraft(id,nil)
+}
+func (s *Store) activateDraft(id string, expectedSource *string)(Revision,error) {
     if len(id)!=24{return Revision{},fmt.Errorf("invalid draft id")}
     tx,err:=s.db.BeginTx(context.Background(),nil)
     if err!=nil{return Revision{},err}
@@ -404,6 +413,9 @@ func (s *Store) Activate(id string)(Revision,error) {
     var base,source,active string
     err=tx.QueryRow("SELECT base,source FROM drafts WHERE id=?",id).Scan(&base,&source)
     if err!=nil{return Revision{},err}
+    if expectedSource!=nil && source!=*expectedSource {
+        return Revision{},ErrDraftSourceConflict
+    }
     err=tx.QueryRow("SELECT id FROM revisions ORDER BY seq DESC LIMIT 1").Scan(&active)
     if err!=nil{return Revision{},err}
     if active!=base {
