@@ -815,3 +815,17 @@
 - Tests cover rejected typed continuation followed by successful
   correction, and a final tool output contract failure. This does not
   provide automatic reconciliation of ambiguous remote writes.
+
+#### TLC-executed bounded safety models (#7/#9)
+
+- CI now downloads a version-pinned TLC 1.8.0 JAR with a verified
+  SHA-256 digest and **executes** `EffectLifecycle.tla` against explicit
+  `TypeOK`, no-blind-write-retry, and known-resolution invariants.
+- `ParallelSuspensions.tla` exhaustively explores two- and three-branch
+  configurations with two competing continuation clients, rejecting an
+  answer, crash while holding a run guard, accepted replies, and final
+  publication after all branches settle. Invariants cover no duplicate
+  writes/replies, durable answer presence and no premature publication.
+- Keep #7/#9/#10 open: small finite models are not Go code proofs.
+  Model-based runtime trace checking, real crash/provider failure
+  scenarios, formal join semantics and complete release acceptance remain.
