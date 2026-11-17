@@ -16,3 +16,38 @@ jobs:
       - run: npm install --no-audit --no-fund
       - run: npm run check
       - run: npm run build
+
+  browser-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    needs: checks
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install web dependencies
+        working-directory: web
+        run: npm install --no-audit --no-fund
+      - name: Install Chromium and required system libraries
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+      - name: Real Go gateway and browser acceptance
+        working-directory: web
+        env:
+          CI: 'true'
+          REGATE_E2E_ADMIN_TOKEN: 'regate-browser-e2e-ci-token'
+        run: npm run test:e2e
+      - name: Upload failed browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regate-browser-e2e-diagnostics
+          path: |
+            web/test-results/
+            web/playwright-report/
+          if-no-files-found: ignore
