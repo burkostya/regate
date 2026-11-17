@@ -1386,6 +1386,67 @@ func equalSuspensionPath(a, b []string) bool {
 	return true
 }
 
+// validateMappedFrame verifies the frozen array, completed result prefix and
+// selected iteration against the immutable map/child contracts. A checkpoint
+// cannot redirect an accepted reply to an earlier (already effectful) index.
+func validateMappedFrame(cfg *config.Config, pipelineName, nodeName string,
+	frame *Checkpoint, runID, revision, surface, tool string) error {
+	pipeline, ok := cfg.Pipelines[pipelineName]
+	if !ok {return fmt.Errorf("mapped checkpoint pipeline not found")}
+	node, ok := pipeline.Nodes[nodeName]
+	if !ok || node.Kind != "map" || node.Str("pipeline") == "" ||
+		node.Attrs["allow_effects"] != true || node.Attrs["allow_suspend"] != true {
+		return fmt.Errorf("mapped checkpoint not authorized")
+	}
+	childName := node.Str("pipeline")
+	child, exists := cfg.Pipelines[childName]
+	if !exists {return fmt.Errorf("mapped child pipeline not found")}
+	if frame == nil || frame.FrameKind != "map" ||
+		frame.RunID != mappedFrameRunID(runID, nodeName, childName) ||
+		frame.Revision != revision || frame.Surface != surface || frame.Tool != tool ||
+		frame.Child == nil || frame.SuspendNode != "" || len(frame.Suspensions) > 0 ||
+		frame.Input != nil || frame.States != nil || frame.Values != nil || frame.Fired != nil {
+		return fmt.Errorf("invalid mapped checkpoint frame identity")
+	}
+	limit := node.Int("max_items", 0)
+	if frame.MapItems == nil || limit < 1 || limit > 64 ||
+		len(frame.MapItems) == 0 || len(frame.MapItems) > limit ||
+		frame.MapIndex < 0 || frame.MapIndex >= len(frame.MapItems) ||
+		len(frame.MapResults) != frame.MapIndex {
+		return fmt.Errorf("invalid mapped checkpoint index or completed prefix")
+	}
+	plan := cfg.Plans[pipelineName]
+	childPlan := cfg.Plans[childName]
+	if plan == nil || childPlan == nil || plan.Nodes[nodeName] == nil ||
+		childPlan.Nodes[child.Entry] == nil {
+		return fmt.Errorf("missing mapped continuation contracts")
+	}
+	inputSchema := plan.Nodes[nodeName].InputSchema
+	childInput := childPlan.Nodes[child.Entry].InputSchema
+	outputs := []string{}
+	for name, item := range child.Nodes {
+		if item.Kind == "output" {outputs = append(outputs, name)}
+	}
+	if len(outputs) != 1 || childPlan.Nodes[outputs[0]] == nil ||
+		childPlan.Nodes[outputs[0]].OutputSchema == nil {
+		return fmt.Errorf("mapped continuation requires one typed child output")
+	}
+	outputSchema := childPlan.Nodes[outputs[0]].OutputSchema
+	for i, item := range frame.MapItems {
+		arguments, ok := item.(map[string]any)
+		if !ok || arguments == nil ||
+			inputSchema.Validate(item) != nil || childInput.Validate(item) != nil {
+			return fmt.Errorf("invalid mapped checkpoint input %d", i)
+		}
+	}
+	for i, value := range frame.MapResults {
+		if outputSchema.Validate(value) != nil {
+			return fmt.Errorf("invalid mapped checkpoint completed output %d", i)
+		}
+	}
+	return nil
+}
+
 // validateSuspensionTree verifies the durable snapshot against the immutable
 // pipeline contract, including every parked branch (not only the selected one).
 // A completed leaf is allowed after another parallel leaf was answered, but
