@@ -139,7 +139,7 @@ func (c *Config) Compile() error {
 			if portSchemas, ok := n.Attrs["output_ports"].(map[string]any); ok {
 				for portName, raw := range portSchemas {
 					if !portIdentifier.MatchString(portName) ||
-						(portName != "value" && !(portName == "structured" && n.Kind == "mcp.call")) {
+						(portName != "value" && !(n.Kind == "mcp.call" && (portName == "structured" || portName == "content"))) {
 						return fmt.Errorf("pipeline %s node %s: unsupported output port %s", name, id, portName)
 					}
 					declared, ok := raw.(map[string]any)
