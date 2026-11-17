@@ -65,7 +65,11 @@ func knownEditableAttr(b *Block, name string) bool {
     if b.Type == "node" {
         // Operators must be able to repair an unresolved/unknown kind in an
         // incomplete draft without switching to the full-source editor.
-        if name == "kind" || name == "input_schema" || name == "output_schema" { return true }
+        // Every executable node kind accepts the same typed port contracts.
+        // Keep the graph patch allowlist aligned with ValidateBlockSchema:
+        // the compiler still validates types and data-edge dependencies.
+        if name == "kind" || name == "input_schema" || name == "output_schema" ||
+            name == "input_ports" || name == "output_ports" { return true }
         _, ok := nodeAttributes[b.String("kind")][name]
         return ok
     }
