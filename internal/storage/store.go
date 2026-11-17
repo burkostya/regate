@@ -84,7 +84,43 @@ type Store struct {
     leaseDone chan struct{}
     grantKeys *GrantKeyRing
     queueKeys *TaskQueueKeyRing
+    suspendedRunMu sync.Mutex
+    suspendedRuns map[string]*suspendedRunLock
 }
+
+// A run guard is shared by all Runtime objects using one execution-leader
+// Store. Reference counts include waiters, so eviction never replaces the
+// mutex while a concurrent resume is waiting for it.
+type suspendedRunLock struct {
+    mu sync.Mutex
+    references int
+}
+
+// LockSuspendedRun serializes read/validate/answer/execute/delete for one
+// durable run. The caller must hold the guard through effectful execution.
+// Different run IDs are independent. Cross-process execution is fenced by
+// the SQLite execution leader lease, not this local mutex.
+func (s *Store) LockSuspendedRun(runID string) func() {
+    s.suspendedRunMu.Lock()
+    if s.suspendedRuns == nil { s.suspendedRuns = map[string]*suspendedRunLock{} }
+    lock := s.suspendedRuns[runID]
+    if lock == nil {
+        lock = &suspendedRunLock{}
+        s.suspendedRuns[runID] = lock
+    }
+    lock.references++
+    s.suspendedRunMu.Unlock()
+
+    lock.mu.Lock()
+    return func() {
+        lock.mu.Unlock()
+        s.suspendedRunMu.Lock()
+        lock.references--
+        if lock.references == 0 { delete(s.suspendedRuns, runID) }
+        s.suspendedRunMu.Unlock()
+    }
+}
+
 const databaseName = "regate.sqlite"
 
 func New(dir,initial string) (*Store,error) {

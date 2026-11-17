@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/burkostya/regate/internal/config"
@@ -89,9 +90,8 @@ func TestNestedSuspensionSettlesParallelExternalWrite(t *testing.T) {
 	}
 }
 
-func TestMultipleSimultaneousSuspensionsDurableAndSelected(t *testing.T) {
-	upstream,count:=testEffectUpstream(t,false)
-	defer upstream.Close()
+func parallelSuspensionsConfig(t *testing.T,url string) *config.Config {
+	t.Helper()
 	parallel:=`pipeline "outer" {
   entry = "entry"
   node "entry" {
@@ -141,8 +141,15 @@ func TestMultipleSimultaneousSuspensionsDurableAndSelected(t *testing.T) {
   }
 }
 `
-	cfg,err:=config.Decode(replaceOuterPipeline(t,nestedSuspensionSource(upstream.URL),parallel))
+	cfg,err:=config.Decode(replaceOuterPipeline(t,nestedSuspensionSource(url),parallel))
 	if err!=nil {t.Fatal(err)}
+	return cfg
+}
+
+func TestMultipleSimultaneousSuspensionsDurableAndSelected(t *testing.T) {
+	upstream,count:=testEffectUpstream(t,false)
+	defer upstream.Close()
+	cfg:=parallelSuspensionsConfig(t,upstream.URL)
 	s:=effectTestStore(t)
 	out,err:=New(s).Run(context.Background(),"rev",cfg,"nested","write",
 		map[string]any{"id":"C402"},false)
@@ -187,5 +194,55 @@ func TestMultipleSimultaneousSuspensionsDurableAndSelected(t *testing.T) {
 	}
 	if err:=s.GetSuspended(out.RunID,&cp);err!=sql.ErrNoRows {
 		t.Fatalf("completed checkpoint was not removed: %v",err)
+	}
+}
+
+func TestConcurrentIndependentResumePathsNeverLoseAnswers(t *testing.T) {
+	upstream,calls:=testEffectUpstream(t,false)
+	defer upstream.Close()
+	cfg:=parallelSuspensionsConfig(t,upstream.URL)
+	store:=effectTestStore(t)
+	initial,err:=New(store).Run(context.Background(),"rev",cfg,"nested","write",
+		map[string]any{"id":"C403"},false)
+	if err==nil || initial.Status!="suspended" || calls.Load()!=2 {
+		t.Fatalf("parallel setup failed: %#v %v writes=%d",initial,err,calls.Load())
+	}
+	type result struct {out Outcome;err error}
+	results:=make(chan result,2)
+	start:=make(chan struct{})
+	var wg sync.WaitGroup
+	for _,item:=range []struct{path []string;value string}{
+		{[]string{"first","wait"},"one"}, {[]string{"second","wait"},"two"},
+	} {
+		wg.Add(1)
+		go func(path []string,value string) {
+			defer wg.Done()
+			<-start
+			out,err:=New(store).ResumeAt(context.Background(),cfg,"rev",initial.RunID,path,value)
+			results<-result{out,err}
+		}(item.path,item.value)
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	completed,suspended:=0,0
+	for res:=range results {
+		switch res.out.Status {
+		case "success":
+			if res.err!=nil {t.Fatalf("successful resume returned error: %v",res.err)}
+			completed++
+		case "suspended":
+			if res.err==nil {t.Fatal("suspension missing expected indication")}
+			suspended++
+		default:
+			t.Fatalf("lost or failed concurrent continuation: %#v %v",res.out,res.err)
+		}
+	}
+	if completed!=1 || suspended!=1 || calls.Load()!=2 {
+		t.Fatalf("unexpected outcomes: complete=%d parked=%d writes=%d",completed,suspended,calls.Load())
+	}
+	var cp Checkpoint
+	if err:=store.GetSuspended(initial.RunID,&cp);err!=sql.ErrNoRows {
+		t.Fatalf("concurrently completed run retained a checkpoint: %v",err)
 	}
 }
