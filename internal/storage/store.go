@@ -386,15 +386,29 @@ func (s *Store) DraftUpdate(id,source string)(Draft,error) {
 // writers, including independent Regate processes, from losing an edit.
 func (s *Store) DraftUpdateIfSource(id, expectedSource, source string)(Draft,error) {
     if len(id)!=24 { return Draft{},fmt.Errorf("invalid draft id") }
-    result,err:=s.db.Exec("UPDATE drafts SET source=? WHERE id=? AND source=?",source,id,expectedSource)
+    tx,err:=s.db.BeginTx(context.Background(),nil)
+    if err!=nil {return Draft{},err}
+    defer tx.Rollback()
+    result,err:=tx.Exec("UPDATE drafts SET source=? WHERE id=? AND source=?",source,id,expectedSource)
     if err!=nil { return Draft{},err }
     rows,err:=result.RowsAffected()
     if err!=nil { return Draft{},err }
     if rows==0 {
-        if _,err:=s.DraftGet(id);err!=nil { return Draft{},err }
+        var count int
+        if err:=tx.QueryRow("SELECT count(*) FROM drafts WHERE id=?",id).Scan(&count);err!=nil {
+            return Draft{},err
+        }
+        if count==0 {return Draft{},sql.ErrNoRows}
         return Draft{},ErrDraftSourceConflict
     }
-    return s.DraftGet(id)
+    var base,date string
+    if err:=tx.QueryRow("SELECT base,created FROM drafts WHERE id=?",id).Scan(&base,&date);err!=nil {
+        return Draft{},err
+    }
+    created,err:=time.Parse(time.RFC3339Nano,date)
+    if err!=nil {return Draft{},err}
+    if err=tx.Commit();err!=nil {return Draft{},err}
+    return Draft{ID:id,Base:base,Source:source,SourceDigest:SourceDigest(source),Created:created},nil
 }
 // ActivateIfSource pins the exact HCL bytes validated and prepared by the
 // service. A concurrent edit must never activate different bytes from those
