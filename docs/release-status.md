@@ -872,3 +872,21 @@
 - This does not imply exactly-once provider writes, cross-resource
   transactions, or automatic reconciliation of ambiguous effects.
   #7/#10 acceptance remains open.
+
+#### Real-browser control-plane acceptance (issue #8)
+
+- Playwright launches the actual Go Regate gateway against an isolated
+  SQLite state directory, plus SvelteKit/Vite proxied to its management API.
+  No API interception or fake server is used by the browser flow.
+- Chromium test covers unauthenticated/invalid-bearer rejection,
+  authenticated catalog/graph, pure-pipeline dry-run, draft source
+  creation/save, semantic diff, validation, explicit confirmation for
+  activation, immutable revision creation, rollback into a new revision,
+  restoration of the original HCL and continued MCP-surface visibility.
+- The test also checks that the bearer token is not persisted in browser
+  local/session storage. CI installs Chromium and runs this independently
+  of Go race checks after the Svelte check/build gate.
+- This is an initial **real browser** acceptance slice, not full #8/#10:
+  visual edge drag/drop and HCL opaque-preservation under concurrent edits,
+  OAuth UI flows, live upstream tools, responsive accessibility, load,
+  security/credential isolation and multi-browser coverage remain.
