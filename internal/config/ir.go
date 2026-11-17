@@ -139,13 +139,19 @@ func (c *Config) Compile() error {
 			if portSchemas, ok := n.Attrs["output_ports"].(map[string]any); ok {
 				for portName, raw := range portSchemas {
 					if !portIdentifier.MatchString(portName) ||
-						(portName != "value" && !(portName == "structured" && n.Kind == "mcp.call")) {
+						(portName != "value" && !(n.Kind == "mcp.call" && (portName == "structured" || portName == "content"))) {
 						return fmt.Errorf("pipeline %s node %s: unsupported output port %s", name, id, portName)
 					}
 					declared, ok := raw.(map[string]any)
 					if !ok { return fmt.Errorf("pipeline %s node %s output port %s needs a JSON Schema object", name, id, portName) }
 					schema, err := compileSchema(declared)
 					if err != nil { return fmt.Errorf("pipeline %s node %s output port %s: %w", name, id, portName, err) }
+					if portName == "content" {
+						types := schema.Types()
+						if len(types) != 1 || types[0] != "array" {
+							return fmt.Errorf("pipeline %s node %s output port content: explicit array JSON Schema required", name, id)
+						}
+					}
 					compiled.OutputPorts[portName] = schema
 				}
 			}

@@ -510,15 +510,15 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("pipeline %s: missing to node %s", name, e.To)
 			}
 			if e.Kind == "data" {
-				if e.When != "" || (e.FromPort != "" && e.FromPort != "value" && e.FromPort != "structured") ||
+				if e.When != "" || (e.FromPort != "" && e.FromPort != "value" && e.FromPort != "structured" && e.FromPort != "content") ||
 					!portIdentifier.MatchString(e.ToPort) || e.From == e.To {
 					return fmt.Errorf("pipeline %s: invalid data edge %s -> %s port %q", name, e.From, e.To, e.ToPort)
 				}
-				if e.FromPort == "structured" {
+				if e.FromPort == "structured" || e.FromPort == "content" {
 					source := p.Nodes[e.From]
 					output, ok := source.Attrs["output_ports"].(map[string]any)
-					if source.Kind != "mcp.call" || !ok || output["structured"] == nil {
-						return fmt.Errorf("pipeline %s: structured data edge requires a declared MCP structured output port on %s", name, e.From)
+					if source.Kind != "mcp.call" || !ok || output[e.FromPort] == nil {
+						return fmt.Errorf("pipeline %s: %s data edge requires a declared MCP %s output port on %s", name, e.FromPort, e.FromPort, e.From)
 					}
 				}
 				declared, ok := p.Nodes[e.To].Attrs["input_ports"].(map[string]any)

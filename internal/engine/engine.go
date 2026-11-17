@@ -463,15 +463,13 @@ func (r *Runtime) execute(ctx context.Context, revision string, cfg *config.Conf
 						return
 					}
 					var value any
-					if binding.fromPort == "structured" {
-						raw, ok := state["mcp"].(map[string]any)
-						if !ok {
-							results[i] = nodeResult{name: name, error: fmt.Errorf("data port %s missing structured MCP output", port)}
-							return
-						}
-						value, ok = raw["structuredContent"]
-						if !ok {
-							results[i] = nodeResult{name: name, error: fmt.Errorf("data port %s missing structured MCP output", port)}
+					if binding.fromPort == "structured" || binding.fromPort == "content" {
+						field := "structuredContent"
+						if binding.fromPort == "content" { field = "content" }
+						raw, hasEnvelope := state["mcp"].(map[string]any)
+						if hasEnvelope { value, ok = raw[field] }
+						if !hasEnvelope || !ok {
+							results[i] = nodeResult{name: name, error: fmt.Errorf("data port %s missing %s MCP output", port, binding.fromPort)}
 							return
 						}
 					} else {
@@ -807,6 +805,10 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 				if structuredMock, provided := n.Attrs["mock_structured"]; provided {
 					ret.mcp = map[string]any{"structuredContent": structuredMock}
 				}
+				if contentMock, provided := n.Attrs["mock_content"]; provided {
+					if ret.mcp == nil { ret.mcp = map[string]any{} }
+					ret.mcp["content"] = contentMock
+				}
 			} else {
 				ret.error = fmt.Errorf("node %s has no mock for dry-run", n.Name)
 			}
@@ -888,10 +890,12 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 			if portName == "value" {
 				value = ret.value
 			} else {
+				field := "structuredContent"
+				if portName == "content" { field = "content" }
 				var provided bool
-				if ret.mcp != nil { value, provided = ret.mcp["structuredContent"] }
+				if ret.mcp != nil { value, provided = ret.mcp[field] }
 				if !provided {
-					ret.error = fmt.Errorf("node %s missing structured MCP output", n.Name)
+					ret.error = fmt.Errorf("node %s missing %s MCP output", n.Name, portName)
 					break
 				}
 			}
