@@ -525,6 +525,48 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 				ret.value = out
 			}
 		}
+	case "map":
+		// Pure, bounded mapping: each CEL evaluation runs with the item as
+		// its local input. No hook, MCP request or external effect is invoked
+		// per element; each evaluation retains its own CEL cost budget.
+		raw, e := get("items")
+		if e != nil {
+			ret.error = e
+			break
+		}
+		items, ok := raw.([]any)
+		if !ok {
+			ret.error = fmt.Errorf("map items must be an array")
+			break
+		}
+		maxItems := n.Int("max_items", 0)
+		if maxItems < 1 || maxItems > 64 || len(items) > maxItems {
+			ret.error = fmt.Errorf("map item count exceeds configured bound")
+			break
+		}
+		result := make([]any, 0, len(items))
+		for i, item := range items {
+			if e := ctx.Err(); e != nil {
+				ret.error = e
+				break
+			}
+			if e := plan.InputSchema.Validate(item); e != nil {
+				ret.error = fmt.Errorf("map item %d failed schema validation", i)
+				break
+			}
+			local := map[string]any{
+				"input": item, "nodes": vars["nodes"], "ports": vars["ports"],
+			}
+			mapped, e := plan.Expressions["mapping"].Eval(ctx, local)
+			if e != nil {
+				ret.error = fmt.Errorf("map item %d: %w", i, e)
+				break
+			}
+			result = append(result, mapped)
+		}
+		if ret.error == nil {
+			ret.value = result
+		}
 	case "mask.pii":
 		v, e := get("value")
 		if e != nil {
