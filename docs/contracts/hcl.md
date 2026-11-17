@@ -470,3 +470,40 @@ This node makes **no external calls in the per-item loop**. Mapping an
 HTTP/MCP agent subpipeline, retries and effectful loops need separate effect
 identities, fencing, retry contracts and explicit authorization; they are
 not implemented by `kind = "map"`.
+
+
+### Composable pure subpipelines (PR #48)
+
+A `pipeline.call` node invokes a named, immutable HCL pipeline within the
+current execution. The callee has an `input` entry and exactly one `output`
+node; `arguments` is an object (literal mapping or CEL returning an object),
+and the output value becomes the parent call node's `value`. Call-level
+`input_schema`/`output_schema` and callee input/output schemas enforce the
+interface; statically obvious mismatches are rejected before activation.
+
+```hcl
+node "run_cleaner" {
+  kind      = "pipeline.call"
+  pipeline  = "normalize_customer"
+  arguments = {name = "input.customer_name"}
+  input_schema = {type = "object"}
+}
+```
+
+Only **pure** callees are allowed in this milestone: `input`, `output`,
+`transform`, `filter`, `validate`, `condition`, `parallel`,
+`join`, bounded `map`, `mask.pii`, and other pure `pipeline.call` nodes.
+The compiler rejects transitive `policy.check`, hooks, MCP/HTTP calls and
+`suspend` in callee graphs. Cycles are forbidden and maximum call depth is 8,
+including the calling pipeline. A child can have branch guards; if its
+output node is not activated, the parent call fails closed rather than
+publishing a missing result. Child runtimes enforce the callee timeout and
+existing bounded graph concurrency. Nested trace identifiers are derived
+deterministically from parent run + call identity; the outer run ID remains
+unchanged.
+
+This is **not** effectful nested composition, multi-output contracts, a
+recursive suspension/checkpoint model, or an assertion that operator
+policy/PII obligations follow arbitrary data across tenants. External
+effects in subpipelines require a separate durable effect identity and
+authoritative recovery protocol.

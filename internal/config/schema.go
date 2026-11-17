@@ -36,6 +36,7 @@ var nodeAttributes = map[string]map[string]string{
 	"parallel":     {"kind": "string", "value": "expression", "mapping": "expression"},
 	"join":         {"kind": "string", "mode": "string", "quorum": "positive-int", "value": "expression", "mapping": "expression"},
 	"map":          {"kind": "string", "items": "expression", "mapping": "expression", "max_items": "positive-int"},
+	"pipeline.call": {"kind": "string", "pipeline": "string", "arguments": "object-or-expression"},
 	"mcp.call":     {"kind": "string", "upstream": "string", "tool": "string", "effect": "string", "arguments": "object-or-expression", "mock": "any"},
 	"hook.call":    {"kind": "string", "hook": "string", "value": "expression"},
 	"http.call":    {"kind": "string", "url": "string", "auth_env": "string", "timeout_ms": "positive-int", "value": "expression", "trust_level": "string"},
@@ -116,7 +117,7 @@ func validateBlock(b *Block, parent string, top bool) error {
 	}
 	if b.Type == "node" {
 		k := b.String("kind")
-		for _, name := range map[string][]string{"condition": {"test"}, "map": {"items", "mapping", "max_items"}, "mcp.call": {"upstream", "tool"}, "hook.call": {"hook"}, "policy.check": {"policy"}, "http.call": {"url"}}[k] {
+		for _, name := range map[string][]string{"condition": {"test"}, "map": {"items", "mapping", "max_items"}, "pipeline.call": {"pipeline", "arguments"}, "mcp.call": {"upstream", "tool"}, "hook.call": {"hook"}, "policy.check": {"policy"}, "http.call": {"url"}}[k] {
 			if _, ok := b.Attrs[name]; !ok {
 				return fmt.Errorf("%s: %s requires %q", where, k, name)
 			}

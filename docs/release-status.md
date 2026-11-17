@@ -541,3 +541,16 @@
   No partial output is exposed on item failure or bounds overflow.
 - This is deliberately **not** effectful map/subpipeline execution, bounded
   retry, isolation across iterations or complete full-v1 DAG semantics.
+
+
+#### Pure named pipeline composition (PR #48)
+
+- New `pipeline.call` node binds object arguments to a named callee with an
+  input entry and exactly one output. Both invocation and callee schemas
+  are validated, and missing conditional outputs fail closed.
+- Compiler checks the transitive call graph for unknown targets, recursion,
+  depth >8 and any effectful/suspending/Decision step in a callee.
+  Parent/child output tracing has a derived stable subrun ID.
+- This pure composition milestone does not implement effectful nested
+  pipelines, durable subpipeline checkpoints, per-call resource budgets,
+  or full #7/#10 v1 acceptance.

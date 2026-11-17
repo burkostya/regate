@@ -114,6 +114,7 @@ type Outcome struct {
 	MCP      map[string]any `json:"mcp,omitempty"`
 	Error    string         `json:"error,omitempty"`
 	Nodes    map[string]any `json:"nodes,omitempty"`
+	OutputProduced bool `json:"-"` // True even for a deliberately null output.
 }
 type Checkpoint struct {
 	RunID       string            `json:"run_id"`
@@ -437,7 +438,7 @@ func (r *Runtime) execute(ctx context.Context, revision string, cfg *config.Conf
 					ports[port] = value
 				}
 				vars := map[string]any{"input": input, "nodes": snap, "ports": ports}
-				results[i] = r.evalNode(ctx, cfg, p.Nodes[name], cfg.Plans[p.Name].Nodes[name], vars, dry, runID, surface, toolName)
+				results[i] = r.evalNode(ctx, cfg, p.Nodes[name], cfg.Plans[p.Name].Nodes[name], vars, dry, runID, surface, toolName, revision)
 			}(index, name)
 		}
 		wg.Wait()
@@ -460,6 +461,7 @@ func (r *Runtime) execute(ctx context.Context, revision string, cfg *config.Conf
 			states[res.name] = "completed"
 			values[res.name] = map[string]any{"value": res.value, "structured": structured(res.mcp), "mcp": res.mcp, "status": "success"}
 			if p.Nodes[res.name].Kind == "output" {
+				out.OutputProduced = true
 				out.Value = res.value
 				if res.mcp != nil {
 					out.MCP = res.mcp
@@ -483,7 +485,7 @@ func structured(v map[string]any) any {
 	}
 	return v["structuredContent"]
 }
-func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Node, plan *config.NodeIR, vars map[string]any, dry bool, runID, surface, toolName string) nodeResult {
+func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Node, plan *config.NodeIR, vars map[string]any, dry bool, runID, surface, toolName, revision string) nodeResult {
     ctx=withEffectStep(ctx,"node:"+n.Name)
 	ret := nodeResult{name: n.Name}
 	checkInput := func(value any) bool {
@@ -525,6 +527,37 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 				ret.value = out
 			}
 		}
+	case "pipeline.call":
+		// Only compiler-verified, acyclic pure DAGs may be called. No nested
+		// effects or checkpoints are admissible without hierarchical fencing.
+		value, err := get("arguments")
+		if err != nil { ret.error = err; break }
+		args, ok := value.(map[string]any)
+		if !ok {
+			ret.error = fmt.Errorf("pipeline.call arguments must be an object")
+			break
+		}
+		if !checkInput(args) { break }
+		childName := n.Str("pipeline")
+		child, ok := cfg.Pipelines[childName]
+		if !ok { ret.error = fmt.Errorf("unknown called pipeline"); break }
+		// A derived trace identity isolates two nested call frames from one
+		// another. It cannot become an external effect identity because the
+		// callee is enforced pure at activation.
+		sum := sha256.Sum256([]byte(runID + "\x00" + n.Name + "\x00" + childName))
+		nestedRunID := fmt.Sprintf("%s/sub-%x", runID, sum[:8])
+		nestedContext, cancel := context.WithTimeout(ctx, time.Duration(child.TimeoutMS)*time.Millisecond)
+		nested, nestedErr := r.execute(nestedContext, revision, cfg, child, nestedRunID, surface, toolName, args, dry, nil)
+		cancel()
+		if nestedErr != nil {
+			ret.error = fmt.Errorf("called pipeline %s: %w", childName, nestedErr)
+			break
+		}
+		if !nested.OutputProduced {
+			ret.error = fmt.Errorf("called pipeline %s did not produce an output", childName)
+			break
+		}
+		ret.value = nested.Value
 	case "map":
 		// Pure, bounded mapping: each CEL evaluation runs with the item as
 		// its local input. No hook, MCP request or external effect is invoked
