@@ -26,6 +26,7 @@ import (
 
     "github.com/burkostya/regate/internal/config"
     "github.com/burkostya/regate/internal/netguard"
+    "github.com/burkostya/regate/internal/strictjson"
 )
 
 var ErrInvalidToken = errors.New("invalid OAuth access token")
@@ -85,6 +86,10 @@ func (v *Verifier) Verify(ctx context.Context, token string) (Principal,error) {
 }
 
 func decodeJSONObject(blob []byte) (map[string]any,error) {
+    // JWT/introspection/refresh claims must not contain ambiguous nested
+    // members or alternate UTF-8 decodings. The local token verifier can
+    // reject the entire document before interpreting any authorization data.
+    if err:=strictjson.Check(blob);err!=nil{return nil,err}
     d:=json.NewDecoder(bytes.NewReader(blob))
     d.UseNumber()
     opening,err:=d.Token()
@@ -223,6 +228,9 @@ func (v *Verifier) fetchKeys(ctx context.Context) error {
     if resp.StatusCode!=http.StatusOK {return ErrInvalidToken}
     data,err:=io.ReadAll(io.LimitReader(resp.Body,(1<<20)+1))
     if err!=nil || len(data)>1<<20{return ErrInvalidToken}
+    // Reject duplicate JWKS keys even when they are nested inside an
+    // otherwise valid, correctly signed key descriptor.
+    if err:=strictjson.Check(data);err!=nil{return ErrInvalidToken}
     var doc jwkDocument
     if err:=json.Unmarshal(data,&doc);err!=nil{return ErrInvalidToken}
     if len(doc.Keys)==0 || len(doc.Keys)>64 {return ErrInvalidToken}

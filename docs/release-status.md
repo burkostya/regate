@@ -1181,3 +1181,14 @@
   limits and unknown-write reconciliation remain unchanged.
 - This is a per-hook payload bound, not a global throughput quota or
   cross-tenant concurrency scheduler.
+
+#### Unambiguous OAuth/IdP JSON before authorization (#5/#9)
+
+- Reject duplicate JSON members recursively, including escaped-equivalent
+  names, and malformed or trailing frames for JWT header/claims, opaque
+  introspection, JWKS and token-exchange responses.
+- Reuse bounded framing validation without widening existing size limits,
+  leaking sensitive token contents or introducing silent last-wins grants.
+- Tests use real local JWKS, introspection and token-exchange providers;
+  invalid syntax cannot create a trusted principal or delegated bearer.
+  Real-provider interoperability and full v1 security gates remain open.
