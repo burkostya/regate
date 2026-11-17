@@ -593,3 +593,7 @@
   logical child subrun; subrun traces link to the parent.
 - This is a fail-closed, opt-in execution boundary, **not** nested
   checkpoint/resume, a provider idempotence guarantee, or full #7 release.
+
+- Security review closes the former top-level-only gap: Restricted-data
+  destination trust and async delegated-OAuth requirements recursively inspect
+  nested child calls. Invalid/missing runtime targets fail closed.
