@@ -7,7 +7,7 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "test:edges": "node --experimental-strip-types --test tests/graph-edges.test.mjs"
+    "test:edges": "node --experimental-strip-types --test tests/graph-edges.test.mjs tests/draft-guards.test.mjs"
   },
   "dependencies": {
     "@xyflow/svelte": "^1.0.0",

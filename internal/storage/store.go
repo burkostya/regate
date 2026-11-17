@@ -30,11 +30,19 @@ func ID() string {
     return hex.EncodeToString(b)
 }
 func Hash(s string) string {h:=sha256.Sum256([]byte(s));return hex.EncodeToString(h[:])[:20]}
+// SourceDigest is the full SHA-256 of exactly the stored editable HCL bytes,
+// not the shorter public revision identifier.
+func SourceDigest(source string) string {
+    sum := sha256.Sum256([]byte(source))
+    return hex.EncodeToString(sum[:])
+}
+var ErrDraftSourceConflict = errors.New("draft source conflict: stale editor snapshot")
 
 type Draft struct {
     ID string `json:"id"`
     Base string `json:"base"`
     Source string `json:"source"`
+    SourceDigest string `json:"source_digest"`
     Created time.Time `json:"created"`
 }
 type Revision struct {
@@ -347,7 +355,7 @@ func (s *Store) DraftCreate()(Draft,error) {
     var base,source string
     err=tx.QueryRow("SELECT id,source FROM revisions ORDER BY seq DESC LIMIT 1").Scan(&base,&source)
     if err!=nil{return Draft{},err}
-    draft:=Draft{ID:ID(),Base:base,Source:source,Created:time.Now().UTC()}
+    draft:=Draft{ID:ID(),Base:base,Source:source,SourceDigest:SourceDigest(source),Created:time.Now().UTC()}
     if _,err=tx.Exec("INSERT INTO drafts(id,base,source,created) VALUES(?,?,?,?)",
         draft.ID,draft.Base,draft.Source,draft.Created.Format(time.RFC3339Nano));err!=nil{return Draft{},err}
     return draft,tx.Commit()
@@ -360,7 +368,9 @@ func (s *Store) DraftGet(id string)(Draft,error) {
         Scan(&d.ID,&d.Base,&d.Source,&date)
     if err!=nil{return Draft{},err}
     d.Created,err=time.Parse(time.RFC3339Nano,date)
-    return d,err
+    if err != nil { return Draft{},err }
+    d.SourceDigest = SourceDigest(d.Source)
+    return d,nil
 }
 func (s *Store) DraftUpdate(id,source string)(Draft,error) {
     if len(id)!=24{return Draft{},fmt.Errorf("invalid draft id")}
@@ -371,7 +381,45 @@ func (s *Store) DraftUpdate(id,source string)(Draft,error) {
     if rows==0{return Draft{},sql.ErrNoRows}
     return s.DraftGet(id)
 }
+// DraftUpdateIfSource atomically changes a draft only if its persisted
+// source is exactly the snapshot the editor read. This prevents concurrent
+// writers, including independent Regate processes, from losing an edit.
+func (s *Store) DraftUpdateIfSource(id, expectedSource, source string)(Draft,error) {
+    if len(id)!=24 { return Draft{},fmt.Errorf("invalid draft id") }
+    tx,err:=s.db.BeginTx(context.Background(),nil)
+    if err!=nil {return Draft{},err}
+    defer tx.Rollback()
+    result,err:=tx.Exec("UPDATE drafts SET source=? WHERE id=? AND source=?",source,id,expectedSource)
+    if err!=nil { return Draft{},err }
+    rows,err:=result.RowsAffected()
+    if err!=nil { return Draft{},err }
+    if rows==0 {
+        var count int
+        if err:=tx.QueryRow("SELECT count(*) FROM drafts WHERE id=?",id).Scan(&count);err!=nil {
+            return Draft{},err
+        }
+        if count==0 {return Draft{},sql.ErrNoRows}
+        return Draft{},ErrDraftSourceConflict
+    }
+    var base,date string
+    if err:=tx.QueryRow("SELECT base,created FROM drafts WHERE id=?",id).Scan(&base,&date);err!=nil {
+        return Draft{},err
+    }
+    created,err:=time.Parse(time.RFC3339Nano,date)
+    if err!=nil {return Draft{},err}
+    if err=tx.Commit();err!=nil {return Draft{},err}
+    return Draft{ID:id,Base:base,Source:source,SourceDigest:SourceDigest(source),Created:created},nil
+}
+// ActivateIfSource pins the exact HCL bytes validated and prepared by the
+// service. A concurrent edit must never activate different bytes from those
+// used to construct the public MCP catalog and authorization policies.
+func (s *Store) ActivateIfSource(id, expectedSource string)(Revision,error) {
+    return s.activateDraft(id,&expectedSource)
+}
 func (s *Store) Activate(id string)(Revision,error) {
+    return s.activateDraft(id,nil)
+}
+func (s *Store) activateDraft(id string, expectedSource *string)(Revision,error) {
     if len(id)!=24{return Revision{},fmt.Errorf("invalid draft id")}
     tx,err:=s.db.BeginTx(context.Background(),nil)
     if err!=nil{return Revision{},err}
@@ -379,6 +427,9 @@ func (s *Store) Activate(id string)(Revision,error) {
     var base,source,active string
     err=tx.QueryRow("SELECT base,source FROM drafts WHERE id=?",id).Scan(&base,&source)
     if err!=nil{return Revision{},err}
+    if expectedSource!=nil && source!=*expectedSource {
+        return Revision{},ErrDraftSourceConflict
+    }
     err=tx.QueryRow("SELECT id FROM revisions ORDER BY seq DESC LIMIT 1").Scan(&active)
     if err!=nil{return Revision{},err}
     if active!=base {

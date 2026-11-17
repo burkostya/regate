@@ -86,10 +86,19 @@ func (s *Service) Current() (*config.Config, storage.Revision) {
 }
 func (s *Service) Validate(source string) (*config.Config, error) { return config.Decode(source) }
 func (s *Service) Activate(id string) (storage.Revision, error) {
+    return s.ActivateIfDigest(id,"")
+}
+
+// ActivateIfDigest binds the operator's reviewed draft and the prepared MCP
+// catalog to one immutable source snapshot, despite concurrent draft edits.
+func (s *Service) ActivateIfDigest(id, expectedDigest string) (storage.Revision, error) {
 	d, e := s.Store.DraftGet(id)
 	if e != nil {
 		return storage.Revision{}, e
 	}
+    if expectedDigest!="" && d.SourceDigest!=expectedDigest {
+        return storage.Revision{},storage.ErrDraftSourceConflict
+    }
 	cfg, e := s.Validate(d.Source)
 	if e != nil {
 		return storage.Revision{}, e
@@ -100,7 +109,7 @@ func (s *Service) Activate(id string) (storage.Revision, error) {
 	next, revision, e := s.inbound.prepare(s, cfg)
     if e != nil { return storage.Revision{}, fmt.Errorf("prepare MCP catalog: %w", e) }
     s.mu.Lock()
-    rev, e := s.Store.Activate(id)
+    rev, e := s.Store.ActivateIfSource(id,d.Source)
 	if e != nil {
 		s.mu.Unlock()
 		return rev, e

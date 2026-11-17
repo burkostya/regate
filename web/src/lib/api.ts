@@ -9,7 +9,7 @@ export type Catalog = {
   policies: Record<string, unknown>;
   interceptors: unknown[];
 };
-export type Draft = { id: string; base: string; source: string; created: string };
+export type Draft = { id: string; base: string; source: string; source_digest: string; created: string };
 
 let authToken = '';
 export function setToken(value: string) { authToken = value; }
