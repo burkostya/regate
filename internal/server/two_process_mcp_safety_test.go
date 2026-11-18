@@ -1,0 +1,257 @@
+package server
+
+import (
+    "context"
+    "net/http"
+    "net/http/httptest"
+    "os"
+    "path/filepath"
+    "strings"
+    "testing"
+    "time"
+
+    "github.com/burkostya/regate/internal/mcp"
+    "github.com/burkostya/regate/internal/storage"
+)
+
+// End-to-end local provider contracts (both separate OS processes).
+// Actual provider state, not a mock gateway response, is fsynced after each
+// write, fence takeover, idempotent replay and compensating tombstone.
+func TestTwoProcessMCPDurableProviderContracts(t *testing.T) {
+    t.Setenv("REGATE_ADMIN_TOKEN","two-mcp-safety-admin")
+    root:=t.TempDir()
+    dirs:=map[string]string{}
+    providers:=map[string]*standProcess{}
+    for _,name:=range []string{"alpha","beta"} {
+        dirs[name]=filepath.Join(root,name)
+        providers[name]=startStandProcess(t,name,dirs[name])
+    }
+    data,err:=os.ReadFile("../../examples/two-mcp-stand.hcl")
+    if err!=nil {t.Fatal(err)}
+    src:=string(data)
+    src=strings.ReplaceAll(src,"http://127.0.0.1:9201",
+        strings.TrimSuffix(providers["alpha"].url,"/mcp"))
+    src=strings.ReplaceAll(src,"http://127.0.0.1:9202",
+        strings.TrimSuffix(providers["beta"].url,"/mcp"))
+    svc,err:=New(filepath.Join(root,"gateway"),src)
+    if err!=nil {t.Fatal(err)}
+    defer svc.Store.Close()
+    gateway:=httptest.NewServer(svc.Handler())
+    defer gateway.Close()
+    base:=gateway.URL
+    ctx,cancel:=context.WithTimeout(context.Background(),35*time.Second)
+    defer cancel()
+
+    for index,name:=range []string{"alpha","beta"} {
+        t.Run(name,func(t *testing.T){
+            // A real provider fsyncs original value + operation token BEFORE
+            // the transport is lost, for two wholly separate local processes.
+            lost:=map[string]any{
+                "record_id":"inverse_"+name,
+                "value":"synthetic_"+name,
+                "fault":"drop_after_commit",
+            }
+            received:=standCall(t,base,name,name+"_put",lost)
+            if received["isError"]!=true {
+                t.Fatalf("lost write response was reported confirmed: %v",received)
+            }
+            var source storage.Effect
+            for _,effect:=range svc.Store.Effects() {
+                if effect.Operation==name+".put_record" && effect.Status=="unknown" {
+                    source=effect
+                }
+            }
+            if source.ID=="" || source.IntentDigest=="" ||
+                source.TargetDigest!=storage.TargetDigest("mcp",providers[name].url) {
+                t.Fatalf("unknown write has no durable provenance: %+v",source)
+            }
+            // Compensation cannot be dispatched on a merely UNKNOWN result.
+            inverseArgs:=map[string]any{
+                "effect_id":source.ID,"contract":name+"_undo",
+                "intent":lost,"actor":"test-operator",
+                "reason":"verified remote record and approved compensating tombstone",
+            }
+            blocked:=jsonPost(t,base+"/api/effect-compensate",
+                "two-mcp-safety-admin",inverseArgs)
+            _=blocked.Body.Close()
+            if blocked.StatusCode!=http.StatusBadRequest {
+                t.Fatalf("unknown original was compensated: HTTP %d",blocked.StatusCode)
+            }
+            unauth:=jsonPost(t,base+"/api/effect-compensate","",inverseArgs)
+            _=unauth.Body.Close()
+            if unauth.StatusCode!=http.StatusUnauthorized {
+                t.Fatalf("anonymous inverse accepted: HTTP %d",unauth.StatusCode)
+            }
+            read:=standContent(t,standCall(t,base,name,name+"_get",
+                map[string]any{"record_id":"inverse_"+name}))
+            assertRecord(t,read,name,"inverse_"+name,"synthetic_"+name)
+            originalToken:=read["record"].(map[string]any)["operation_token"]
+            if token,ok:=originalToken.(string);!ok || len(token)!=64 {
+                t.Fatalf("provider did not fsync injected operation identity: %v",originalToken)
+            }
+            wrongIntent:=map[string]any{"record_id":"inverse_"+name,
+                "value":"tampered","fault":"drop_after_commit"}
+            rejected:=jsonPost(t,base+"/api/effect-readback","two-mcp-safety-admin",
+                map[string]any{"effect_id":source.ID,
+                    "adapter":name+"_record","intent":wrongIntent})
+            _=rejected.Body.Close()
+            if rejected.StatusCode!=http.StatusBadRequest {
+                t.Fatalf("changed original intent accepted: HTTP %d",rejected.StatusCode)
+            }
+            if other:=[]string{"alpha","beta"}[1-index];other!=name {
+                cross:=jsonPost(t,base+"/api/effect-compensate",
+                    "two-mcp-safety-admin",map[string]any{
+                        "effect_id":source.ID,"contract":other+"_undo",
+                        "intent":lost,"actor":"test-operator",
+                        "reason":"intentionally wrong endpoint"})
+                _=cross.Body.Close()
+                if cross.StatusCode!=http.StatusBadRequest {
+                    t.Fatalf("cross-provider inverse accepted: HTTP %d",cross.StatusCode)
+                }
+            }
+            applied:=decode(t,jsonPost(t,base+"/api/effect-readback",
+                "two-mcp-safety-admin",map[string]any{
+                    "effect_id":source.ID,"adapter":name+"_record","intent":lost}))
+            if applied["status"]!="resolved_applied" {
+                t.Fatalf("provider-native token readback failed: %v",applied)
+            }
+            inverse:=decode(t,jsonPost(t,base+"/api/effect-compensate",
+                "two-mcp-safety-admin",inverseArgs))
+            if inverse["status"]!="confirmed" || inverse["compensates"]!=source.ID {
+                t.Fatalf("approved inverse did not reach provider: %v",inverse)
+            }
+            persisted,err:=svc.Store.EffectGet(storage.CompensationID(source.ID))
+            if err!=nil || persisted.Status!="confirmed" ||
+                persisted.Compensates!=source.ID || persisted.TargetDigest!=source.TargetDigest ||
+                persisted.Approval==nil || persisted.Approval.Actor!="test-operator" {
+                t.Fatalf("inverse lacks immutable audit/provenance: %+v %v",persisted,err)
+            }
+            prior,err:=svc.Store.EffectGet(source.ID)
+            if err!=nil || prior.Status!="resolved_applied" {
+                t.Fatalf("inverse silently rewrote original proof: %+v %v",prior,err)
+            }
+            after:=standContent(t,standCall(t,base,name,name+"_get",
+                map[string]any{"record_id":"inverse_"+name}))
+            record:=after["record"].(map[string]any)
+            if record["compensated"]!=true || record["operation_token"]!=originalToken ||
+                record["value"]!="synthetic_"+name {
+                t.Fatalf("provider tombstone destroyed original evidence: %v",record)
+            }
+            repeated:=jsonPost(t,base+"/api/effect-compensate",
+                "two-mcp-safety-admin",inverseArgs)
+            _=repeated.Body.Close()
+            if repeated.StatusCode!=http.StatusBadRequest {
+                t.Fatalf("Regate admitted duplicate inverse: HTTP %d",repeated.StatusCode)
+            }
+            direct:=mcp.NewConn(providers[name].url,"",5*time.Second)
+            duplicate,err:=direct.CallTool(ctx,"revoke_record",
+                map[string]any{"record_id":"inverse_"+name})
+            if err!=nil || duplicate["isError"]!=true {
+                t.Fatalf("provider itself admitted a duplicate inverse: %#v %v",duplicate,err)
+            }
+            stats:=standStats(t,base,name)
+            assertStandCount(t,stats,"writes_committed",1)
+            assertStandCount(t,stats,"compensations_received",2)
+            assertStandCount(t,stats,"compensations_committed",1)
+
+            // Provider-native high-watermark: an epoch installed by the new
+            // leader is persisted independently on each provider. Stale
+            // generations cannot commit even if they carry a valid token.
+            epoch:=float64(index+4)
+            current:=int(index+4)
+            fence,err:=direct.CallTool(ctx,"advance_fence",
+                map[string]any{"fence_epoch":current})
+            if err!=nil || fence["isError"]==true {
+                t.Fatalf("new provider fence rejected: %#v %v",fence,err)
+            }
+            oldFence,err:=direct.CallTool(ctx,"advance_fence",
+                map[string]any{"fence_epoch":current-1})
+            if err!=nil || oldFence["isError"]!=true {
+                t.Fatalf("stale fence promoted provider: %#v %v",oldFence,err)
+            }
+            newRecord:=map[string]any{
+                "record_id":"fenced_"+name,"value":"fenced_synthetic_"+name,
+                "fence_epoch":current,
+            }
+            success:=standContent(t,standCall(t,base,name,name+"_put",newRecord))
+            assertRecord(t,success,name,"fenced_"+name,"fenced_synthetic_"+name)
+            token,ok:=success["record"].(map[string]any)["operation_token"].(string)
+            if !ok || len(token)!=64 {t.Fatal("fenced write lost provider operation token")}
+            remoteArgs:=map[string]any{
+                "record_id":"fenced_"+name,"value":"fenced_synthetic_"+name,
+                "operation_token":token,"fence_epoch":current,
+            }
+            same,err:=direct.CallTool(ctx,"put_record",remoteArgs)
+            if err!=nil || same["isError"]==true ||
+                same["structuredContent"].(map[string]any)["idempotent_replay"]!=true {
+                t.Fatalf("native same-token replay not idempotent: %#v %v",same,err)
+            }
+            changed:=map[string]any{
+                "record_id":"fenced_"+name,"value":"different",
+                "operation_token":token,"fence_epoch":current,
+            }
+            mismatch,err:=direct.CallTool(ctx,"put_record",changed)
+            if err!=nil || mismatch["isError"]!=true {
+                t.Fatalf("reused idempotency key changed payload: %#v %v",mismatch,err)
+            }
+            reuse,err:=direct.CallTool(ctx,"put_record",map[string]any{
+                "record_id":"other_"+name,"value":"fenced_synthetic_"+name,
+                "operation_token":token,"fence_epoch":current,
+            })
+            if err!=nil || reuse["isError"]!=true {
+                t.Fatalf("operation key reused across records: %#v %v",reuse,err)
+            }
+            stale,err:=direct.CallTool(ctx,"put_record",map[string]any{
+                "record_id":"stale_"+name,"value":"should_never_commit",
+                "fence_epoch":current-1,
+            })
+            if err!=nil || stale["isError"]!=true {
+                t.Fatalf("old leader wrote after provider takeover: %#v %v",stale,err)
+            }
+            stats=standStats(t,base,name)
+            assertStandCount(t,stats,"writes_committed",2)
+            assertStandCount(t,stats,"idempotent_replays",1)
+            assertStandCount(t,stats,"fenced_rejections",1)
+            assertStandCount(t,stats,"fence_epoch",epoch)
+
+            // Kill the provider, reopen its fsynced directory under a
+            // distinct process and verify idempotency + fence + tombstone.
+            oldPID:=providers[name].cmd.Process.Pid
+            providers[name].stop()
+            fresh:=startStandProcess(t,name,dirs[name])
+            providers[name]=fresh
+            if fresh.cmd.Process.Pid==oldPID {t.Fatal("provider process was not replaced")}
+            restarted:=mcp.NewConn(fresh.url,"",5*time.Second)
+            oldRecord,err:=restarted.CallTool(ctx,"get_record",
+                map[string]any{"record_id":"inverse_"+name})
+            if err!=nil || oldRecord["isError"]==true {t.Fatalf("restarted provider lost tombstone: %v",err)}
+            old:=standContent(t,oldRecord)["record"].(map[string]any)
+            if old["compensated"]!=true || old["operation_token"]!=originalToken {
+                t.Fatalf("provider restart lost compensation provenance: %#v",old)
+            }
+            persistedStats,err:=restarted.CallTool(ctx,"stats",map[string]any{})
+            if err!=nil {t.Fatal(err)}
+            recovered:=standContent(t,persistedStats)
+            assertStandCount(t,recovered,"writes_committed",2)
+            assertStandCount(t,recovered,"compensations_committed",1)
+            assertStandCount(t,recovered,"idempotent_replays",1)
+            assertStandCount(t,recovered,"fence_epoch",epoch)
+            afterRestart,err:=restarted.CallTool(ctx,"put_record",
+                map[string]any{"record_id":"stale_after_restart_"+name,
+                    "value":"forbidden","fence_epoch":current-1})
+            if err!=nil || afterRestart["isError"]!=true {
+                t.Fatalf("process restart reset provider fence: %#v %v",afterRestart,err)
+            }
+            // A *fresh* leader generation fences the old generation even
+            // for an otherwise correct operation key.
+            promoted,err:=restarted.CallTool(ctx,"advance_fence",
+                map[string]any{"fence_epoch":current+1})
+            if err!=nil || promoted["isError"]==true {t.Fatalf("second promotion failed: %v",err)}
+            oldReplay,err:=restarted.CallTool(ctx,"put_record",remoteArgs)
+            if err!=nil || oldReplay["isError"]!=true {
+                t.Fatalf("stale token replay bypassed new epoch: %#v %v",oldReplay,err)
+            }
+            t.Logf("%s: durable readback/inverse, idempotence and fencing across independent process restart",name)
+        })
+    }
+}
