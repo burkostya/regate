@@ -148,24 +148,27 @@ func TestMCPReadbackRequiresOriginalOperationToken(t *testing.T) {
     identity:=storage.EffectID("token-run","create",operation)
     for _,tc:=range []struct{
         name string
-        providerToken string
+        providerTokenMode string
         tamperIntent bool
+        mutateContract bool
         wantSuccess bool
         wantReads int64
     }{
-        {"committed-token",identity,false,true,1},
-        {"prior-record-identical-payload",strings.Repeat("0",64),false,false,1},
-        {"provider-does-not-return-token","",false,false,1},
-        {"caller-forges-reserved-token",identity,true,false,0},
+        {"committed-token","match",false,false,true,1},
+        {"prior-record-identical-payload",strings.Repeat("0",64),false,false,false,1},
+        {"provider-does-not-return-token","",false,false,false,1},
+        {"caller-forges-reserved-token","match",true,false,false,0},
+        {"changed-active-readback-contract","match",false,true,false,0},
     } {
         t.Run(tc.name,func(t *testing.T) {
             reads:=new(atomic.Int64)
+            providerToken:=tc.providerTokenMode
             sdkServer:=sdk.NewServer(&sdk.Implementation{Name:"token-test",Version:"1"},nil)
             sdkServer.AddTool(&sdk.Tool{Name:"find",InputSchema:map[string]any{"type":"object"}},
                 func(_ context.Context,_ *sdk.CallToolRequest)(*sdk.CallToolResult,error) {
                     reads.Add(1)
                     record:=map[string]any{"external_id":"C123"}
-                    if tc.providerToken!="" {record["operation_token"]=tc.providerToken}
+                    if providerToken!="" {record["operation_token"]=providerToken}
                     return &sdk.CallToolResult{StructuredContent:map[string]any{"record":record},
                         Content:[]sdk.Content{&sdk.TextContent{Text:"fixture read"}}},nil
                 })
@@ -178,8 +181,12 @@ func TestMCPReadbackRequiresOriginalOperationToken(t *testing.T) {
             rule.WriteTokenArgument="operation_token"
             rule.ResultTokenPointer="/structuredContent/record/operation_token"
             cfg.Readbacks["crm_check"]=rule
+            expectedToken,err:=ReadbackOperationToken(identity,rule,cfg.Upstreams["crm"])
+            if err!=nil {t.Fatal(err)}
+            if expectedToken==identity {t.Fatal("write token ignored contract binding")}
+            if tc.providerTokenMode=="match" {providerToken=expectedToken}
             original:=map[string]any{"external_id":"C123"}
-            wire,err:=attachWriteToken(original,"operation_token",identity)
+            wire,err:=attachWriteToken(original,"operation_token",expectedToken)
             if err!=nil {t.Fatal(err)}
             if _,has:=original["operation_token"];has {t.Fatal("mutated caller original intent")}
             attempt,err:=store.BeginEffectBound("token-run","create",operation,
@@ -187,7 +194,12 @@ func TestMCPReadbackRequiresOriginalOperationToken(t *testing.T) {
             if err!=nil {t.Fatal(err)}
             if err:=store.CompleteEffect(attempt.ID,"unknown","ambiguous outcome");err!=nil {t.Fatal(err)}
             if tc.tamperIntent {
-                original["operation_token"]=identity
+                original["operation_token"]=expectedToken
+            }
+            if tc.mutateContract {
+                current:=cfg.Readbacks["crm_check"]
+                current.ReadTool="another-read-method"
+                cfg.Readbacks["crm_check"]=current
             }
             resolved,err:=New(store).ReconcileMCP(context.Background(),cfg,attempt.ID,
                 "crm_check",original)
