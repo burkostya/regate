@@ -1553,7 +1553,22 @@ func validateSuspensionTree(cfg *config.Config, pipelineName string, cp *Checkpo
 			if cp.States[name] == "completed" {
 				state, ok := cp.Values[name].(map[string]any)
 				if !ok { return fmt.Errorf("completed suspend leaf has no value") }
-				if _, ok := state["value"]; !ok { return fmt.Errorf("completed suspend leaf has no value") }
+				value, ok := state["value"]
+				if !ok { return fmt.Errorf("completed suspend leaf has no value") }
+				// Every already-accepted reply must still satisfy the pinned
+				// output contract on recovery, not merely have a value key.
+				plan := cfg.Plans[pipelineName]
+				if plan == nil || plan.Nodes[name] == nil {
+					return fmt.Errorf("completed suspend leaf contract unavailable")
+				}
+				if err := plan.Nodes[name].OutputSchema.Validate(value); err != nil {
+					return fmt.Errorf("completed suspend leaf failed output schema: %w", err)
+				}
+				if port := plan.Nodes[name].OutputPorts["value"]; port != nil {
+					if err := port.Validate(value); err != nil {
+						return fmt.Errorf("completed suspend leaf failed value port schema: %w", err)
+					}
+				}
 			}
 		case "pipeline.call":
 			if cp.States[name] != "pending" || child == nil ||
@@ -1699,28 +1714,40 @@ func (r *Runtime) ResumeAt(ctx context.Context, cfg *config.Config, revision str
 	if err := validateSuspensionTree(cfg, pipelineName, &cp, runID,
 		revision, cp.Surface, cp.Tool, 1); err != nil { return out, err }
 	pending := PendingSuspensionPaths(&cp)
-	if len(path) == 0 {
-		if len(pending) != 1 { return out, fmt.Errorf("resume requires an explicit suspension path") }
-		path = pending[0]
-	}
-	found := false
-	for _, candidate := range pending {
-		if equalSuspensionPath(path, candidate) { found = true; break }
-	}
-	if !found { return out, fmt.Errorf("unknown or already answered suspension path") }
-	if err := completeSuspendedCheckpoint(cfg, pipelineName, &cp, runID,
-		revision, cp.Surface, cp.Tool, path, value, 1); err != nil {
-		return out, err
-	}
-	if remaining := PendingSuspensionPaths(&cp); len(remaining) > 0 {
-		// Parked independent branches do not run any downstream effects until
-		// every pending leaf has an accepted, schema-checked answer.
-		if err := r.Store.PutSuspended(runID, &cp); err != nil { return out, err }
-		out.Status = "suspended"
-		out.Checkpoint = &cp
-		out.SuspensionPaths = remaining
-		out.Value = map[string]any{"run_id": runID, "paths": remaining}
-		return out, fmt.Errorf("waiting for %d suspension(s)", len(remaining))
+	if len(pending) == 0 {
+		// A crash or a downstream graph failure can leave a checkpoint
+		// whose final leaf answer was already durably accepted. Re-drive
+		// that immutable snapshot, never accept a replacement answer.
+		if len(path) != 0 || value != nil {
+			return out, fmt.Errorf("accepted continuation is already durable; recovery forbids new input")
+		}
+	} else {
+		if len(path) == 0 {
+			if len(pending) != 1 { return out, fmt.Errorf("resume requires an explicit suspension path") }
+			path = pending[0]
+		}
+		found := false
+		for _, candidate := range pending {
+			if equalSuspensionPath(path, candidate) { found = true; break }
+		}
+		if !found { return out, fmt.Errorf("unknown or already answered suspension path") }
+		if err := completeSuspendedCheckpoint(cfg, pipelineName, &cp, runID,
+			revision, cp.Surface, cp.Tool, path, value, 1); err != nil {
+			return out, err
+		}
+		// Commit EVERY accepted response, including the final leaf, before
+		// executing any downstream node. A crash after this barrier must
+		// not let a caller replace the answer or replay a remote effect.
+		if err := r.Store.PutSuspended(runID, &cp); err != nil {
+			return out, fmt.Errorf("persist accepted continuation: %w", err)
+		}
+		if remaining := PendingSuspensionPaths(&cp); len(remaining) > 0 {
+			out.Status = "suspended"
+			out.Checkpoint = &cp
+			out.SuspensionPaths = remaining
+			out.Value = map[string]any{"run_id": runID, "paths": remaining}
+			return out, fmt.Errorf("waiting for %d suspension(s)", len(remaining))
+		}
 	}
 	runctx, cancel := context.WithTimeout(ctx, time.Duration(pipeline.TimeoutMS)*time.Millisecond)
 	defer cancel()

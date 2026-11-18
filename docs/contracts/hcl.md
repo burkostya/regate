@@ -785,6 +785,33 @@ cannot be submitted again. Once only one leaf is pending, the previous
 pathless `resume` contract remains supported. Caller identity, original
 revision, delegation, leader lease and journal fencing remain enforced.
 
+The **last** accepted suspension answer is also persisted to SQLite **before**
+any newly eligible downstream node runs. If the worker crashes or the graph
+fails after accepting it, the fully answered checkpoint can be recovered
+without another answer. Recovery requires the original revision and owner /
+grant checks; the previously accepted value cannot be replaced. Management
+`regate_resume` may omit `value` for such a checkpoint. An async task
+recovery uses a separate explicit `tasks/update` input:
+
+```json
+{
+  "inputResponses": {
+    "resume": {
+      "action": "accept",
+      "recover": true
+    }
+  }
+}
+```
+
+The recovery form forbids both `content` and `path` and is rejected while
+any leaf remains unanswered. A completed answer is revalidated against its
+pinned leaf schema before downstream execution. Previously admitted writes
+remain fenced by their durable effect IDs (including confirmed and unknown
+outcomes); recovery is **not** permission to retry a remote write. Failures
+after the graph has fully completed and consumed its checkpoint, including
+final publication errors, cannot re-run response hooks.
+
 If any sibling fails or the checkpoint cannot be stored, the run fails
 closed. This adds parallel *input collection*, not automatic retries,
 arbitrary independent per-branch progression, encrypted checkpoint data,

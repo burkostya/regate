@@ -1416,3 +1416,25 @@
   provider-native write idempotency, durable reconciliation, or full v1.
 - The existing independent two-OS-process local MCP stand remains required
   for safe, repeatable write/fault/restart acceptance.
+
+#### Durable final-answer barrier for suspension recovery (#7)
+
+- Every accepted leaf answer, including the **last** independent or nested
+  suspension, is committed to the root SQLite checkpoint **before** running
+  newly eligible downstream steps. A crash in this interval can no longer
+  turn an accepted final answer back into an unvalidated pending input.
+- Recovery of a fully answered checkpoint requires an explicit answer-free
+  operation: engine/management `Resume` with no value or owner-authorized
+  `tasks/update` with `inputResponses.resume = {action: "accept", recover: true}`.
+  Re-submitted `content` or `path` is rejected. Invalid stored leaf values
+  also fail their original output JSON Schema and value-port contract before
+  any downstream external effect.
+- The async task remains `input_required` with a distinct recovery request
+  if its graph fails after accepting the final answer. Regression tests cover
+  SQLite reopen, immutable committed answers, schema-tampered checkpoints,
+  recovery without duplicating a confirmed MCP write, and rejected owner /
+  replacement attempts.
+- This is a durable continuation barrier, **not** a multi-resource provider
+  transaction, proof of exactly-once delivery, or permission to retry
+  `unknown` writes. External provider attestation and release acceptance
+  remain open in #7/#9/#10.
