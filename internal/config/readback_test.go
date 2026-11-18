@@ -71,3 +71,29 @@ func TestReadbackOptionalSemanticMatchContract(t *testing.T) {
         })
     }
 }
+
+func TestReadbackPerEffectWriteTokenContract(t *testing.T) {
+    pair := "  write_token_argument = \"operation_token\"\n  result_token_pointer = \"/structuredContent/record/operation_token\"\n"
+    valid := strings.Replace(validReadbackHCL,"  safe_read = true\n",pair+"  safe_read = true\n",1)
+    cfg,err:=Decode(example(t)+"\n"+valid)
+    if err!=nil {t.Fatalf("valid token contract rejected: %v",err)}
+    rule:=cfg.Readbacks["crm_check"]
+    if rule.WriteTokenArgument!="operation_token" ||
+        rule.ResultTokenPointer!="/structuredContent/record/operation_token" {
+        t.Fatalf("token contract lost: %+v",rule)
+    }
+    for _,tc:=range []struct{name,source string}{
+        {"missing-provider-pointer",strings.Replace(valid,"  result_token_pointer = \"/structuredContent/record/operation_token\"\n","",1)},
+        {"missing-write-argument",strings.Replace(valid,"  write_token_argument = \"operation_token\"\n","",1)},
+        {"invalid-argument-name",strings.Replace(valid,"operation_token\"","a.b\" ",1)},
+        {"invalid-argument-prefix",strings.Replace(valid,"operation_token\"","1token\" ",1)},
+        {"invalid-result-pointer",strings.Replace(valid,"result_token_pointer = \"/structuredContent/record/operation_token\"","result_token_pointer = \"/record/~2bad\"",1)},
+        {"conflicting-token-contract",valid+"\n"+strings.Replace(valid,`readback "crm_check"`,`readback "another"`,1)},
+    } {
+        t.Run(tc.name,func(t *testing.T){
+            if _,err:=Decode(example(t)+"\n"+tc.source);err==nil {
+                t.Fatalf("invalid token contract accepted: %s",tc.name)
+            }
+        })
+    }
+}
