@@ -154,6 +154,80 @@ func TestTwoProcessMCPDurableProviderContracts(t *testing.T) {
             assertStandCount(t,stats,"compensations_received",2)
             assertStandCount(t,stats,"compensations_committed",1)
 
+            // The INVERSE can itself be committed by the provider before
+            // either an ordinary MCP application error or a lost TCP reply.
+            // No retry follows an unknown inverse, even though an independent
+            // get_record proves that the tombstone survived.
+            failureID:="inverse_error_"+name
+            if index==1 {failureID="inverse_drop_"+name}
+            failureIntent:=map[string]any{
+                "record_id":failureID,"value":"second_synthetic_"+name,
+                "fault":"error_after_commit",
+            }
+            secondWrite:=standCall(t,base,name,name+"_put",failureIntent)
+            if secondWrite["isError"]!=true {
+                t.Fatalf("test failed to create second UNKNOWN write: %#v",secondWrite)
+            }
+            var secondEffect storage.Effect
+            for _,candidate:=range svc.Store.Effects() {
+                if candidate.Operation==name+".put_record" && candidate.Status=="unknown" {
+                    secondEffect=candidate
+                }
+            }
+            if secondEffect.ID=="" || secondEffect.ID==source.ID {
+                t.Fatalf("second independent unknown effect missing: %+v",secondEffect)
+            }
+            secondResolved:=decode(t,jsonPost(t,base+"/api/effect-readback",
+                "two-mcp-safety-admin",map[string]any{
+                    "effect_id":secondEffect.ID,"adapter":name+"_record",
+                    "intent":failureIntent,
+                }))
+            if secondResolved["status"]!="resolved_applied" {
+                t.Fatalf("second provider write did not reconcile: %#v",secondResolved)
+            }
+            failureInverseArgs:=map[string]any{
+                "effect_id":secondEffect.ID,"contract":name+"_undo",
+                "intent":failureIntent,"actor":"test-operator",
+                "reason":"post-commit compensation ambiguity test",
+            }
+            inverseResponse:=jsonPost(t,base+"/api/effect-compensate",
+                "two-mcp-safety-admin",failureInverseArgs)
+            _=inverseResponse.Body.Close()
+            if inverseResponse.StatusCode==http.StatusOK {
+                t.Fatal("post-commit inverse error or lost response was incorrectly confirmed")
+            }
+            unknownInverse,err:=svc.Store.EffectGet(storage.CompensationID(secondEffect.ID))
+            if err!=nil || unknownInverse.Status!="unknown" ||
+                unknownInverse.Compensates!=secondEffect.ID {
+                t.Fatalf("ambiguous inverse is not a durable unknown effect: %+v %v",unknownInverse,err)
+            }
+            tombstone:=standContent(t,standCall(t,base,name,name+"_get",
+                map[string]any{"record_id":failureID}))
+            if tombstone["record"].(map[string]any)["compensated"]!=true {
+                t.Fatalf("provider committed inverse not visible after fault: %#v",tombstone)
+            }
+            noRetry:=jsonPost(t,base+"/api/effect-compensate",
+                "two-mcp-safety-admin",failureInverseArgs)
+            _=noRetry.Body.Close()
+            if noRetry.StatusCode!=http.StatusBadRequest {
+                t.Fatalf("unknown inverse was blindly replayed: HTTP %d",noRetry.StatusCode)
+            }
+            // A human may make a durable resolution only after a separate
+            // provider read. This is NOT an automatic absence inference.
+            explicit:=decode(t,jsonPost(t,base+"/api/effect-decide",
+                "two-mcp-safety-admin",map[string]any{
+                    "effect_id":unknownInverse.ID,"actor":"test-operator",
+                    "verdict":"applied",
+                    "reason":"verified fixture tombstone by fresh provider read",
+                }))
+            if explicit["status"]!="resolved_applied" {
+                t.Fatalf("operator did not resolve verified inverse: %#v",explicit)
+            }
+            stats=standStats(t,base,name)
+            assertStandCount(t,stats,"compensations_received",3)
+            assertStandCount(t,stats,"compensations_committed",2)
+            assertStandCount(t,stats,"writes_committed",2)
+
             // Provider-native high-watermark: an epoch installed by the new
             // leader is persisted independently on each provider. Stale
             // generations cannot commit even if they carry a valid token.
@@ -209,7 +283,7 @@ func TestTwoProcessMCPDurableProviderContracts(t *testing.T) {
                 t.Fatalf("old leader wrote after provider takeover: %#v %v",stale,err)
             }
             stats=standStats(t,base,name)
-            assertStandCount(t,stats,"writes_committed",2)
+            assertStandCount(t,stats,"writes_committed",3)
             assertStandCount(t,stats,"idempotent_replays",1)
             assertStandCount(t,stats,"fenced_rejections",1)
             assertStandCount(t,stats,"fence_epoch",epoch)
@@ -229,11 +303,17 @@ func TestTwoProcessMCPDurableProviderContracts(t *testing.T) {
             if old["compensated"]!=true || old["operation_token"]!=originalToken {
                 t.Fatalf("provider restart lost compensation provenance: %#v",old)
             }
+            secondAfterRestart,err:=restarted.CallTool(ctx,"get_record",
+                map[string]any{"record_id":failureID})
+            if err!=nil || secondAfterRestart["isError"]==true ||
+                standContent(t,secondAfterRestart)["record"].(map[string]any)["compensated"]!=true {
+                t.Fatalf("provider restart lost uncertain inverse tombstone: %#v %v",secondAfterRestart,err)
+            }
             persistedStats,err:=restarted.CallTool(ctx,"stats",map[string]any{})
             if err!=nil {t.Fatal(err)}
             recovered:=standContent(t,persistedStats)
-            assertStandCount(t,recovered,"writes_committed",2)
-            assertStandCount(t,recovered,"compensations_committed",1)
+            assertStandCount(t,recovered,"writes_committed",3)
+            assertStandCount(t,recovered,"compensations_committed",2)
             assertStandCount(t,recovered,"idempotent_replays",1)
             assertStandCount(t,recovered,"fence_epoch",epoch)
             afterRestart,err:=restarted.CallTool(ctx,"put_record",
