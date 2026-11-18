@@ -36,6 +36,26 @@ provider, and (4) zero effects admitted to the write journal.
 The fixture in `examples/public-anonymous-mcp.hcl` publishes:
 - `/mcp/mslearn`: `search_docs` → `mslearn.microsoft_docs_search`
 - `/mcp/deepwiki`: `wiki_structure` → `deepwiki.read_wiki_structure`
+- `/mcp/combined`: `public_docs_check` → one typed, concurrent
+  `public_documentation_probe` DAG that reads from **both** providers and
+  releases a response only after an `all` join.
+
+The combined tool accepts public `query` and `repoName` strings with
+bounded JSON Schema constraints; the opt-in live test supplies fixed public
+inputs only. Its two `mcp.call` nodes declare `effect = "read"` and explicit
+nonempty `content` array contracts. Each vendor's returned content is
+validated but **never returned verbatim**: the published schema exposes only
+positive `microsoft_blocks` and `deepwiki_blocks` counts. One incoming
+`tools/call` now tests two real third-party tool executions in one
+parallel Regate wave with a complete-fan-in join. The deterministic Go compiler
+test also rejects changing that join from `all` to `any`, because the
+terminal references both upstream results.
+
+This is evidence of **real read-only cross-provider composition**, not
+evidence that remote MCP providers can safely accept anonymous writes.
+The read-only declarations are operator assertions about specific provider
+tools, not vendor attestations of read consistency. Never send confidential
+payloads, credentials or private repository identities to these services.
 
 The test sets `REGATE_ALLOWED_HOSTS=learn.microsoft.com,mcp.deepwiki.com`
 explicitly, honoring Regate's existing outbound DNS/IP security guard.
