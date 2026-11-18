@@ -55,6 +55,27 @@ readback "beta_record" {
   safe_read       = true
 }
 
+# Explicit operator-approved inverses. Only the management API may invoke
+# them after an original effect was independently resolved as applied.
+# The fixture uses immutable record IDs and persists a tombstone instead of
+# deleting the original record or its provider operation token.
+compensation "alpha_undo" {
+  for_operation = "alpha.put_record"
+  upstream       = "alpha"
+  tool           = "revoke_record"
+  intent_pointer = "/record_id"
+  argument       = "record_id"
+  enabled        = true
+}
+compensation "beta_undo" {
+  for_operation = "beta.put_record"
+  upstream       = "beta"
+  tool           = "revoke_record"
+  intent_pointer = "/record_id"
+  argument       = "record_id"
+  enabled        = true
+}
+
 # A real typed DAG, not a mock endpoint: protect the read and subsequent
 # external write with an actual Decision POST; no bypass edge is allowed.
 pipeline "copy_record" {
