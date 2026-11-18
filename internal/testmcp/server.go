@@ -322,8 +322,11 @@ type faultEnvelope struct {
 // SDK executes the put and the file is fsynced. This tests an ambiguous
 // provider write response, not a simulated failure before execution.
 func (s *Server) Handler() http.Handler {
+	// Keep one immutable SDK catalog per fixture process. All requests
+	// share this server; each client session remains independently stateless.
+	sdkServer := s.mcpServer()
 	sdkHandler := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server {
-		return s.mcpServer()
+		return sdkServer
 	}, &sdk.StreamableHTTPOptions{
 		Stateless: true, JSONResponse: true,
 		MaxRequestBodyBytes: maxWireBytes,
