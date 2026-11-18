@@ -2,6 +2,7 @@ package server
 
 import (
     "context"
+    "errors"
     "net/http"
     "net/http/httptest"
     "os"
@@ -10,6 +11,7 @@ import (
     "testing"
     "time"
 
+    "github.com/burkostya/regate/internal/config"
     "github.com/burkostya/regate/internal/mcp"
     "github.com/burkostya/regate/internal/storage"
 )
@@ -115,6 +117,32 @@ func TestTwoProcessMCPDurableProviderContracts(t *testing.T) {
             if applied["status"]!="resolved_applied" {
                 t.Fatalf("provider-native token readback failed: %v",applied)
             }
+            // The provider record is authentic, but the current HCL
+            // could be maliciously changed before compensation. Deriving
+            // the write token with a drifted adapter must NOT authorize
+            // the old effect under new semantics or dispatch any inverse.
+            liveCfg,_:=svc.Current()
+            drifted:=*liveCfg
+            drifted.Readbacks=make(map[string]config.Readback,len(liveCfg.Readbacks))
+            for key,definition:=range liveCfg.Readbacks {drifted.Readbacks[key]=definition}
+            changed:=drifted.Readbacks[name+"_record"]
+            changed.ReadTool="stats"
+            drifted.Readbacks[name+"_record"]=changed
+            if _,err:=svc.Engine.CompensateMCP(ctx,&drifted,source.ID,
+                name+"_undo",lost,"test-operator","drifted adapter must fail");
+                !errors.Is(err,storage.ErrInvalidEvidence) {
+                t.Fatalf("readback contract drift allowed inverse: %v",err)
+            }
+            spoofed:=map[string]any{}
+            for key,value:=range lost {spoofed[key]=value}
+            spoofed["operation_token"]=originalToken
+            if _,err:=svc.Engine.CompensateMCP(ctx,liveCfg,source.ID,
+                name+"_undo",spoofed,"test-operator","caller token must fail");
+                !errors.Is(err,storage.ErrInvalidEvidence) {
+                t.Fatalf("caller-supplied provider write token authorized inverse: %v",err)
+            }
+            assertStandCount(t,standStats(t,base,name),"compensations_received",0)
+
             inverse:=decode(t,jsonPost(t,base+"/api/effect-compensate",
                 "two-mcp-safety-admin",inverseArgs))
             if inverse["status"]!="confirmed" || inverse["compensates"]!=source.ID {
