@@ -36,6 +36,17 @@ type diskState struct {
 	OperationTokens map[string]string `json:"operation_tokens,omitempty"`
 	WritesReceived int64             `json:"writes_received"`
 	WritesCommitted int64            `json:"writes_committed"`
+	// The provider's own durable monotone generation. Only the current
+	// generation can mutate a record; an old worker cannot write after
+	// a newer generation has been observed by this provider.
+	FenceEpoch uint64 `json:"fence_epoch,omitempty"`
+	FencedRejections int64 `json:"fenced_rejections,omitempty"`
+	IdempotentReplays int64 `json:"idempotent_replays,omitempty"`
+	// An inverse is an irreversible, durable tombstone, not a deletion of
+	// source evidence. Original record + operation token remain readable.
+	Compensated map[string]bool `json:"compensated,omitempty"`
+	CompensationsReceived int64 `json:"compensations_received,omitempty"`
+	CompensationsCommitted int64 `json:"compensations_committed,omitempty"`
 }
 
 // Server has private process-local memory and a private fsynced JSON file.
@@ -83,7 +94,7 @@ func New(instance, dir string) (*Server, error) {
 	}
 	s := &Server{instance: instance, path: filepath.Join(dir, "records.json")}
 	s.state = diskState{Instance: instance, Records: map[string]string{},
-		OperationTokens: map[string]string{}}
+		OperationTokens: map[string]string{}, Compensated: map[string]bool{}}
 	body, err := os.ReadFile(s.path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
@@ -100,7 +111,10 @@ func New(instance, dir string) (*Server, error) {
 	if restored.Instance != instance || restored.Records == nil ||
 		len(restored.Records) > maxRecordCount ||
 		restored.WritesCommitted > restored.WritesReceived ||
-		restored.WritesReceived < 0 || restored.WritesCommitted < 0 {
+		restored.WritesReceived < 0 || restored.WritesCommitted < 0 ||
+		restored.FencedRejections < 0 || restored.IdempotentReplays < 0 ||
+		restored.CompensationsReceived < 0 || restored.CompensationsCommitted < 0 ||
+		restored.CompensationsCommitted > restored.CompensationsReceived {
 		return nil, errors.New("test MCP state belongs to another instance or is invalid")
 	}
 	for id, value := range restored.Records {
@@ -108,11 +122,24 @@ func New(instance, dir string) (*Server, error) {
 			return nil, errors.New("invalid persisted test MCP record")
 		}
 	}
-	for id,token:=range restored.OperationTokens {
-		if _,exists:=restored.Records[id];!exists || token=="" || !validOperationToken(token) {
-			return nil,errors.New("invalid persisted test MCP operation token")
+	seenTokens := map[string]bool{}
+	for id, token := range restored.OperationTokens {
+		if _, exists := restored.Records[id]; !exists || token == "" ||
+			!validOperationToken(token) || seenTokens[token] {
+			return nil, errors.New("invalid or reused persisted test MCP operation token")
+		}
+		seenTokens[token] = true
+	}
+	for id, compensated := range restored.Compensated {
+		if !compensated || restored.OperationTokens[id] == "" {
+			return nil, errors.New("invalid persisted test MCP compensation")
 		}
 	}
+	if len(restored.Compensated) != int(restored.CompensationsCommitted) {
+		return nil, errors.New("inconsistent persisted compensation count")
+	}
+	if restored.Compensated == nil { restored.Compensated = map[string]bool{} }
+	if restored.OperationTokens == nil { restored.OperationTokens = map[string]string{} }
 	s.state = restored
 	return s, nil
 }
@@ -157,71 +184,155 @@ func (s *Server) persist(next diskState) error {
 	return d.Sync()
 }
 
-func (s *Server) put(id, value, token string) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	next := s.state
-	next.Records = make(map[string]string, len(s.state.Records)+1)
-	for k, v := range s.state.Records {
-		next.Records[k] = v
-	}
-	next.OperationTokens=make(map[string]string,len(s.state.OperationTokens)+1)
-	for k,v:=range s.state.OperationTokens {next.OperationTokens[k]=v}
-	next.WritesReceived++
-	_, found := next.Records[id]
-	if !found && len(next.Records) >= maxRecordCount {
-		return false, errors.New("fixture record capacity reached")
-	}
-	if !found {
-		next.Records[id] = value
-		if token!="" {next.OperationTokens[id]=token}
-		next.WritesCommitted++
-	}
-	if err := s.persist(next); err != nil {
-		return false, err
-	}
-	s.state = next
-	if found {
-		return false, errors.New("duplicate record ID; fixture never silently overwrites a write")
-	}
-	return true, nil
+// copyState is called with the lock held. Mutating a copy ensures failed
+// fsync does not accidentally alter the in-memory committed state.
+func (s *Server) copyState() diskState {
+    next := s.state
+    next.Records = make(map[string]string,len(s.state.Records))
+    for k,v:=range s.state.Records {next.Records[k]=v}
+    next.OperationTokens = make(map[string]string,len(s.state.OperationTokens))
+    for k,v:=range s.state.OperationTokens {next.OperationTokens[k]=v}
+    next.Compensated = make(map[string]bool,len(s.state.Compensated))
+    for k,v:=range s.state.Compensated {next.Compensated[k]=v}
+    return next
 }
 
-func (s *Server) lookup(id string) (string, string, bool) {
-	s.reads.Add(1)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	v, ok := s.state.Records[id]
-	return v,s.state.OperationTokens[id],ok
+// advanceFence is explicit fixture-only provider takeover. The generation is
+// atomically persisted with records; lower generations cannot mutate after it.
+// A production adapter would need authenticated promotion and bound tokens.
+func (s *Server) advanceFence(epoch uint64) error {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    if epoch == 0 || epoch <= s.state.FenceEpoch {
+        return errors.New("fence generation must increase")
+    }
+    next:=s.copyState()
+    next.FenceEpoch=epoch
+    if err:=s.persist(next);err!=nil{return err}
+    s.state=next
+    return nil
 }
 
+// put implements native provider idempotency keyed by operation token AND
+// immutable record identity/value. A reused token for a different record,
+// changed payload, or compensated record is never a successful replay.
+func (s *Server) put(id, value, token string, epoch uint64) (bool, error) {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    next:=s.copyState()
+    next.WritesReceived++
+    if epoch != next.FenceEpoch {
+        next.FencedRejections++
+        if err:=s.persist(next);err!=nil{return false,err}
+        s.state=next
+        return false,errors.New("stale provider fence generation")
+    }
+    if previous, found:=next.Records[id];found {
+        if token!="" && next.OperationTokens[id]==token &&
+            previous==value && !next.Compensated[id] {
+            next.IdempotentReplays++
+            if err:=s.persist(next);err!=nil{return false,err}
+            s.state=next
+            return true,nil
+        }
+        if err:=s.persist(next);err!=nil{return false,err}
+        s.state=next
+        return false,errors.New("record already exists with a different effect or was compensated")
+    }
+    for _,prior:=range next.OperationTokens {
+        if token!="" && prior==token {
+            if err:=s.persist(next);err!=nil{return false,err}
+            s.state=next
+            return false,errors.New("operation token already used for another record")
+        }
+    }
+    if len(next.Records)>=maxRecordCount {
+        return false,errors.New("fixture record capacity reached")
+    }
+    next.Records[id]=value
+    if token!="" {next.OperationTokens[id]=token}
+    next.WritesCommitted++
+    if err:=s.persist(next);err!=nil{return false,err}
+    s.state=next
+    return false,nil
+}
+
+func (s *Server) revoke(id string,epoch uint64) error {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    next:=s.copyState()
+    next.CompensationsReceived++
+    if epoch!=next.FenceEpoch {
+        next.FencedRejections++
+        if err:=s.persist(next);err!=nil{return err}
+        s.state=next
+        return errors.New("stale provider fence generation")
+    }
+    if _,exists:=next.Records[id];!exists || next.OperationTokens[id]=="" ||
+        next.Compensated[id] {
+        if err:=s.persist(next);err!=nil{return err}
+        s.state=next
+        return errors.New("compensation requires a live immutable token-bound record")
+    }
+    next.Compensated[id]=true
+    next.CompensationsCommitted++
+    if err:=s.persist(next);err!=nil{return err}
+    s.state=next
+    return nil
+}
+
+func (s *Server) lookup(id string) (string,string,bool,bool) {
+    s.reads.Add(1)
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    v,ok:=s.state.Records[id]
+    return v,s.state.OperationTokens[id],s.state.Compensated[id],ok
+}
 func (s *Server) has(id string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	_, ok := s.state.Records[id]
-	return ok
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    _,ok:=s.state.Records[id]
+    return ok
 }
-
+func (s *Server) hasCompensated(id string) bool {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    return s.state.Compensated[id]
+}
 func (s *Server) stats() map[string]any {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return map[string]any{
-		"instance": s.instance,
-		"writes_received": s.state.WritesReceived,
-		"writes_committed": s.state.WritesCommitted,
-		"record_count": len(s.state.Records),
-		"reads": s.reads.Load(),
-	}
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    return map[string]any{
+        "instance":s.instance,
+        "writes_received":s.state.WritesReceived,
+        "writes_committed":s.state.WritesCommitted,
+        "idempotent_replays":s.state.IdempotentReplays,
+        "fence_epoch":s.state.FenceEpoch,
+        "fenced_rejections":s.state.FencedRejections,
+        "compensations_received":s.state.CompensationsReceived,
+        "compensations_committed":s.state.CompensationsCommitted,
+        "record_count":len(s.state.Records),
+        "reads":s.reads.Load(),
+    }
 }
 
 type putArgs struct {
 	RecordID string `json:"record_id"`
 	Value    string `json:"value"`
 	OperationToken string `json:"operation_token,omitempty"`
+	FenceEpoch uint64 `json:"fence_epoch,omitempty"`
 	Fault    string `json:"fault,omitempty"`
 }
 type getArgs struct {
 	RecordID string `json:"record_id"`
+}
+type revokeArgs struct {
+    RecordID string `json:"record_id"`
+    FenceEpoch uint64 `json:"fence_epoch,omitempty"`
+    Fault string `json:"fault,omitempty"`
+}
+type fenceArgs struct {
+    FenceEpoch uint64 `json:"fence_epoch"`
 }
 
 func decodeArgs(value any, out any) error {
@@ -241,16 +352,16 @@ func rejected(reason string) *sdk.CallToolResult {
 	}
 }
 
-func recordResult(instance, id, value, token string) *sdk.CallToolResult {
-	record:=map[string]any{"record_id":id,"value":value,"instance":instance}
-	if token!="" {record["operation_token"]=token}
-	return &sdk.CallToolResult{
-		StructuredContent: map[string]any{
-			"found": true,
-			"record": record,
-		},
-		Content: []sdk.Content{&sdk.TextContent{Text: "test record available"}},
-	}
+func recordResult(instance,id,value,token string,compensated,replay bool) *sdk.CallToolResult {
+    record:=map[string]any{"record_id":id,"value":value,"instance":instance,
+        "compensated":compensated}
+    if token!="" {record["operation_token"]=token}
+    body:=map[string]any{"found":true,"record":record}
+    if replay {body["idempotent_replay"]=true}
+    return &sdk.CallToolResult{
+        StructuredContent:body,
+        Content:[]sdk.Content{&sdk.TextContent{Text:"test record available"}},
+    }
 }
 
 func (s *Server) mcpServer() *sdk.Server {
@@ -263,6 +374,7 @@ func (s *Server) mcpServer() *sdk.Server {
 				"record_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 48},
 				"value": map[string]any{"type": "string", "maxLength": 256},
 				"operation_token": map[string]any{"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "fence_epoch": map[string]any{"type":"integer","minimum":0},
 				"fault": map[string]any{"type": "string", "enum": []any{"", "drop_after_commit", "error_after_commit"}},
 			},
 			"required": []string{"record_id", "value"},
@@ -275,15 +387,13 @@ func (s *Server) mcpServer() *sdk.Server {
 			(a.Fault != "" && a.Fault != "drop_after_commit" && a.Fault != "error_after_commit") {
 			return rejected("invalid bounded test write"), nil
 		}
-		if _, err := s.put(a.RecordID, a.Value,a.OperationToken); err != nil {
-			return rejected("fixture write rejected"), nil
-		}
-		if a.Fault=="error_after_commit" {
-			// Intentionally return an MCP application error *after* the
-			// operation token and record are durably committed.
+		replay, err := s.put(a.RecordID, a.Value,a.OperationToken,a.FenceEpoch)
+        if err != nil { return rejected("fixture write rejected: "+err.Error()),nil }
+		if a.Fault=="error_after_commit" && !replay {
+			// Intentionally return MCP isError AFTER the record was fsynced.
 			return rejected("test-only post-commit application error"),nil
 		}
-		return recordResult(s.instance, a.RecordID, a.Value,a.OperationToken), nil
+		return recordResult(s.instance,a.RecordID,a.Value,a.OperationToken,false,replay),nil
 	})
 	m.AddTool(&sdk.Tool{
 		Name: "get_record", Description: "Read a fixture record without modifying the state",
@@ -299,15 +409,59 @@ func (s *Server) mcpServer() *sdk.Server {
 		if err := decodeArgs(req.Params.Arguments, &a); err != nil || !validID(a.RecordID) {
 			return rejected("invalid test read"), nil
 		}
-		if v,token,ok := s.lookup(a.RecordID); ok {
-			return recordResult(s.instance, a.RecordID, v,token), nil
-		}
+		if v,token,compensated,ok := s.lookup(a.RecordID);ok {
+            return recordResult(s.instance,a.RecordID,v,token,compensated,false),nil
+        }
 		// Not found NEVER attests that a remote write did not happen.
 		return &sdk.CallToolResult{
 			StructuredContent: map[string]any{"found": false, "instance": s.instance},
 			Content: []sdk.Content{&sdk.TextContent{Text: "test record not found"}},
 		}, nil
 	})
+	m.AddTool(&sdk.Tool{
+        Name:"advance_fence", Description:"TEST-ONLY provider generation promotion; strictly monotone",
+        InputSchema:map[string]any{"type":"object","additionalProperties":false,
+            "properties":map[string]any{"fence_epoch":map[string]any{"type":"integer","minimum":1}},
+            "required":[]string{"fence_epoch"}},
+    },func(_ context.Context,req *sdk.CallToolRequest)(*sdk.CallToolResult,error){
+        var a fenceArgs
+        if err:=decodeArgs(req.Params.Arguments,&a);err!=nil || a.FenceEpoch==0 {
+            return rejected("invalid provider fence"),nil
+        }
+        if err:=s.advanceFence(a.FenceEpoch);err!=nil {return rejected("stale fence promotion"),nil}
+        return &sdk.CallToolResult{
+            StructuredContent:map[string]any{"fence_epoch":a.FenceEpoch,"instance":s.instance},
+            Content:[]sdk.Content{&sdk.TextContent{Text:"fixture fence advanced"}},
+        },nil
+    })
+    m.AddTool(&sdk.Tool{
+        Name:"revoke_record",Description:"TEST-ONLY durable compensating tombstone; record history remains",
+        InputSchema:map[string]any{"type":"object","additionalProperties":false,
+            "properties":map[string]any{
+                "record_id":map[string]any{"type":"string","minLength":1,"maxLength":48},
+                "fence_epoch":map[string]any{"type":"integer","minimum":0},
+                "fault":map[string]any{"type":"string",
+                    "enum":[]any{"","drop_after_commit","error_after_commit"}},
+            },"required":[]string{"record_id"}},
+    },func(_ context.Context,req *sdk.CallToolRequest)(*sdk.CallToolResult,error){
+        var a revokeArgs
+        if err:=decodeArgs(req.Params.Arguments,&a);err!=nil ||
+            !validID(a.RecordID) ||
+            (a.Fault!="" && a.Fault!="drop_after_commit" && a.Fault!="error_after_commit") {
+            return rejected("invalid test compensation"),nil
+        }
+        if err:=s.revoke(a.RecordID,a.FenceEpoch);err!=nil {
+            return rejected("fixture compensation rejected: "+err.Error()),nil
+        }
+        if a.Fault=="error_after_commit" {
+            return rejected("test-only post-compensation application error"),nil
+        }
+        return &sdk.CallToolResult{
+            StructuredContent:map[string]any{"record_id":a.RecordID,
+                "instance":s.instance,"compensated":true},
+            Content:[]sdk.Content{&sdk.TextContent{Text:"fixture tombstone committed"}},
+        },nil
+    })
 	m.AddTool(&sdk.Tool{
 		Name: "stats", Description: "Read fixture write-attempt and commit counters",
 		InputSchema: map[string]any{"type": "object", "additionalProperties": false},
@@ -391,8 +545,9 @@ func (s *Server) Handler() http.Handler {
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		var frame faultEnvelope
 		_ = json.Unmarshal(body, &frame)
-		drop := frame.Method == "tools/call" && frame.Params.Name == "put_record" &&
-			frame.Params.Arguments.Fault == "drop_after_commit"
+		drop := frame.Method == "tools/call" &&
+            (frame.Params.Name=="put_record" || frame.Params.Name=="revoke_record") &&
+            frame.Params.Arguments.Fault=="drop_after_commit"
 		if !drop {
 			sdkHandler.ServeHTTP(w, r)
 			return
@@ -400,8 +555,10 @@ func (s *Server) Handler() http.Handler {
 		captured := httptest.NewRecorder()
 		sdkHandler.ServeHTTP(captured, r)
 		// Do not drop a schema-invalid or uncommitted write response.
-		if captured.Code == http.StatusOK && !bytes.Contains(captured.Body.Bytes(), []byte("\"isError\":true")) &&
-			s.has(frame.Params.Arguments.RecordID) {
+		committed := s.has(frame.Params.Arguments.RecordID)
+        if frame.Params.Name=="revoke_record" {committed=s.hasCompensated(frame.Params.Arguments.RecordID)}
+        if captured.Code==http.StatusOK &&
+            !bytes.Contains(captured.Body.Bytes(),[]byte("\"isError\":true")) && committed {
 			if hijacker, ok := w.(http.Hijacker); ok {
 				if conn, _, err := hijacker.Hijack(); err == nil {
 					_ = conn.Close()
