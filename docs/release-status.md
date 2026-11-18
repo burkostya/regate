@@ -1382,3 +1382,19 @@
   with its contract-bound operation token, and never re-dispatch the write.
 - This expands the tested uncertainty boundary but is not a third-party
   provider idempotency/fencing attestation. Issues #7/#9/#10 remain open.
+
+#### Bounded formal MCP write provenance (#7/#9)
+
+- The TLC model `MCPWriteProvenance.tla` exhaustively explores a single
+  effect against either an empty provider record or a prior unrelated
+  record with the same external ID and payload but a different write token.
+  It covers durable admission, commit before/after a lost or isError
+  response, contract drift and restoration, positive/negative readback,
+  and independent operator resolution.
+- CI checks no automatic redispatch, no false `confirmed` on MCP error,
+  no `resolved_readback` for a prior record or drifted contract and
+  no remote read with changed HCL. Go unit and real two-process stand
+  provide concrete examples of the same scenarios.
+- Bounded TLC is a safety abstraction, **not** runtime equivalence,
+  a proof of provider behavior, provider-enforced idempotency or a
+  production release certificate. #7/#9/#10 remain open.
