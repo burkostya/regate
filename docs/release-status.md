@@ -1438,3 +1438,22 @@
   transaction, proof of exactly-once delivery, or permission to retry
   `unknown` writes. External provider attestation and release acceptance
   remain open in #7/#9/#10.
+
+#### Real two-vendor typed read-only composition (#7/#9/#10)
+
+- The anonymous Microsoft Learn and DeepWiki providers can now participate
+  in **one** published `/mcp/combined` virtual tool, rather than only two
+  separately proxied surfaces. Its typed DAG dispatches explicit MCP reads
+  to both independently operated public endpoints, synchronizes at a full
+  `all` join, checks nonempty actual MCP `content` ports, and returns
+  bounded structured block counts without exposing vendor document bodies.
+- A deterministic compiler test checks the example HCL and refuses the
+  unsafe weakened `any` join (which cannot guarantee both downstream data
+  dependencies) or a non-array MCP `content` port. The opt-in live,
+  no-auth CI test sends only fixed public queries, confirms both provider
+  branches executed exactly once in one Regate run and checks that no write
+  effects were admitted to SQLite.
+- Real cross-vendor **read-only** DAG composition is covered; independent
+  **writable** provider contracts, durable native idempotency/fencing,
+  compensation, chaos/security/load and production release checks remain
+  unproven. Issues #7, #9 and #10 stay open.
