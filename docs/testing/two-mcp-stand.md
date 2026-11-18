@@ -183,7 +183,12 @@ The second test verifies, for **both** real fixture processes:
 - Lost post-commit MCP responses, `unknown` journal effects, exact
   provider-token readback and explicit `resolved_applied` verification.
 - No unauthorized, cross-provider or duplicate inverse; durable tombstones
-  and unchanged immutable original effects.
+  and unchanged immutable original effects. Drifted active readback HCL or a
+  caller-picked write token cannot authorize any inverse network call.
+- A second inverse on **each** provider commits before reporting either MCP
+  `isError` (alpha) or a lost TCP reply (beta). Regate keeps that inverse
+  `unknown` without replay, a fresh provider read confirms the tombstone,
+  and only then does an explicit audited operator decision mark it applied.
 - Provider-native idempotent replay, altered-value/token collision rejection,
   fencing after epoch promotion, and persistence of tombstones, high-watermark
   epochs and counters after killing and restarting each provider.
