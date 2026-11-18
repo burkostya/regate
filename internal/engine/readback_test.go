@@ -222,3 +222,43 @@ func TestMCPReadbackRequiresOriginalOperationToken(t *testing.T) {
         })
     }
 }
+
+func TestReadbackOperationTokenBindsOriginalContract(t *testing.T) {
+    original:=readbackConfig("http://127.0.0.1:12001/mcp")
+    rule:=original.Readbacks["crm_check"]
+    rule.WriteTokenArgument="operation_token"
+    rule.ResultTokenPointer="/structuredContent/record/operation_token"
+    u:=original.Upstreams["crm"]
+    id:=storage.EffectID("run","write","crm.create")
+    expected,err:=ReadbackOperationToken(id,rule,u)
+    if err!=nil || len(expected)!=64 {t.Fatalf("cannot derive token: %q %v",expected,err)}
+    duplicate,err:=ReadbackOperationToken(id,rule,u)
+    if err!=nil || duplicate!=expected {t.Fatalf("token is not deterministic: %q %v",duplicate,err)}
+
+    changes:=[]struct{
+        name string
+        rule config.Readback
+        upstream config.Upstream
+        effectID string
+    }{
+        {"different-effect",rule,u,storage.EffectID("other","write","crm.create")},
+    }
+    next:=rule;next.ReadTool="find-v2"
+    changes=append(changes,struct{name string;rule config.Readback;upstream config.Upstream;effectID string}{"changed-read-tool",next,u,id})
+    next=rule;next.ResultPointer="/structuredContent/other"
+    changes=append(changes,struct{name string;rule config.Readback;upstream config.Upstream;effectID string}{"changed-result-pointer",next,u,id})
+    next=rule;next.Name="renamed-rule"
+    changes=append(changes,struct{name string;rule config.Readback;upstream config.Upstream;effectID string}{"renamed-adapter",next,u,id})
+    changedUpstream:=u;changedUpstream.URL="http://127.0.0.1:12002/mcp"
+    changes=append(changes,struct{name string;rule config.Readback;upstream config.Upstream;effectID string}{"changed-endpoint",rule,changedUpstream,id})
+    changedUpstream=u;changedUpstream.TimeoutMS++
+    changes=append(changes,struct{name string;rule config.Readback;upstream config.Upstream;effectID string}{"changed-timeout",rule,changedUpstream,id})
+    for _,tc:=range changes {
+        t.Run(tc.name,func(t *testing.T){
+            actual,err:=ReadbackOperationToken(tc.effectID,tc.rule,tc.upstream)
+            if err!=nil || actual==expected {
+                t.Fatalf("changed contract shared original proof identity: %q %v",actual,err)
+            }
+        })
+    }
+}
