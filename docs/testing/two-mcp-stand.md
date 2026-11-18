@@ -135,3 +135,63 @@ pure payload equality alone is insufficient. This controlled fixture is
 not independently audited provider behavior, cryptographic provider
 attestation, cross-process fencing or proof against a malicious/updatable
 vendor server.
+
+
+## Extended local durable provider contracts (PR #107)
+
+Both **alpha and beta** expose the same additional *fixture-only* tools
+directly on their loopback `/mcp` endpoints. They are intentionally **not**
+added to the ordinary Regate public alpha/beta catalogs; `revoke_record` is
+invoked only by authenticated, operator-approved
+`/api/effect-compensate` or management MCP.
+
+| Provider tool | Inputs | Durable invariant |
+| --- | --- | --- |
+| `put_record` | Existing fields plus optional `fence_epoch` | A second request with the *same nonempty provider-stored operation token*, exact ID, value and active epoch is acknowledged without a second commit; changed intent/reused token is rejected |
+| `advance_fence` | `fence_epoch` (positive integer) | Epoch must strictly increase; fsynced epoch survives process restart; earlier generations are rejected on writes |
+| `revoke_record` | `record_id`, optional `fence_epoch` and test fault | One compensating tombstone per original immutable token-bound record; original value, ID and operation token remain available for audit; duplicate inverse is rejected |
+| `stats` | Empty | Adds `idempotent_replays`, `fence_epoch`, `fenced_rejections`, `compensations_received` and `compensations_committed` |
+
+The standalone `advance_fence` helper is deliberately untrusted and
+unauthenticated: it is allowed **only on the disposable loopback provider**.
+A production implementation must authenticate the authority that promotes
+epochs and bind effect calls to verified lease generations. A fixture can
+prove a stale `fence_epoch` is rejected *after* observing a higher one; it
+cannot make untrusted clients unable to choose an arbitrary higher number.
+
+A compensation is not the same as deleting the record or reversing arbitrary
+business effects. Both `alpha_undo` and `beta_undo` HCL contracts map a
+previous `resolved_applied` write to a single `revoke_record` call against
+the **same provider endpoint**. The effect journal records a new, separate
+inverse with the operator approval, original source ID and the exact original
+intent digest. The provider preserves a tombstone and original evidence
+atomically; no duplicate inverse is dispatched.
+
+**Important token binding:** the journal hashes the *wire* arguments after
+Regate injects `operation_token`. During compensation the gateway
+reconstructs the token using the still-active readback/upstream contract and
+effect ID. The recomputed wire digest must match before any inverse call.
+This prevents HCL contract drift or a caller-supplied token from approving
+an inverse for a different write. Earlier tokenless compensations still use
+their original arguments.
+
+The race acceptance now runs **both**
+`TestTwoProcessMCPStand` and
+`TestTwoProcessMCPDurableProviderContracts`.
+The second test verifies, for **both** real fixture processes:
+
+- Lost post-commit MCP responses, `unknown` journal effects, exact
+  provider-token readback and explicit `resolved_applied` verification.
+- No unauthorized, cross-provider or duplicate inverse; durable tombstones
+  and unchanged immutable original effects.
+- Provider-native idempotent replay, altered-value/token collision rejection,
+  fencing after epoch promotion, and persistence of tombstones, high-watermark
+  epochs and counters after killing and restarting each provider.
+- No automatic re-dispatch of `confirmed` or `unknown` Regate effect IDs.
+
+**This replaces the external durable sandbox as the current *local
+engineering acceptance*, not as third-party provider attestation.** Real
+independent durable writable MCP provider verification is deferred to
+[issue #106](https://github.com/burkostya/regate/issues/106). Never claim
+that two local processes with one fixture implementation establish a
+production exactly-once guarantee or verify independent vendor behavior.
