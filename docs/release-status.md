@@ -1291,3 +1291,27 @@
 - This does not implement replayable events, cross-instance notification
   fanout, per-principal quotas, independently validated upstream capability
   semantics or production load/chaos acceptance; #9/#10 remain open.
+
+#### MCP write post-admission failures become reconcilable (#7/#9)
+
+- The second execution-lease check, queued-task cancellation and grant
+  revocation now share one post-journal guard. Any failure after an MCP write
+  attempt is durably admitted transitions `dispatching` to conservative
+  `unknown`, including **lease loss before network dispatch**.
+- The stable effect ID still forbids replay; a canceled journal can be
+  reconciled by a verified readback or deliberate operator decision without
+  requiring a process restart. Canceled-context Go regression tests check
+  the state transition, fingerprints, no replay and operator resolution.
+- This does **not** establish remote execution absence or provider-enforced
+  fencing/idempotency; those remain full release gates (#7/#9/#10).
+
+#### HCL editor async draft-creation race (#8/#9)
+
+- HCL actions and text editing are disabled while a management operation is
+  pending. Previously, an in-flight New draft request could overwrite text
+  entered before the draft arrived; the editor now waits for completion.
+- Chromium E2E explicitly waits for the draft marker and editable state
+  before testing that a deliberately cleared HCL source is sent unchanged.
+  This closes a timing-dependent authoring integrity race without relaxing
+  the empty-source assertion. General browser/accessibility and production
+  acceptance remain tracked in #9/#10.

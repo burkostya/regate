@@ -1220,24 +1220,17 @@ func (r *Runtime) mcpCall(ctx context.Context,cfg *config.Config,u config.Upstre
         attempt,err=r.Store.BeginEffectBound(runID,node,u.Name+"."+tool,storage.TargetDigest("mcp",u.URL),args)
         if err!=nil{return nil,err}
     }
-    if r.Store!=nil {
-        if err=r.Store.RequireExecutionLeader(ctx);err!=nil{return nil,err}
-    }
-    if err=r.CheckQueuedTaskExecution(ctx);err!=nil {
-        if effect!="read" {
-            if e:=r.Store.CompleteEffect(attempt.ID,"unknown","queued task cancelled before dispatch");e!=nil {
-                return nil,e
-            }
+    if effect!="read" {
+        // Any post-admission denial, including an execution lease lost after
+        // the SQLite write barrier, must leave the effect reconcilable. The
+        // attempt identity still forbids a second network dispatch.
+        if err=r.checkMCPPostAdmission(ctx,attempt);err!=nil{return nil,err}
+    } else {
+        if r.Store!=nil {
+            if err=r.Store.RequireExecutionLeader(ctx);err!=nil{return nil,err}
         }
-        return nil,err
-    }
-    if err=r.CheckGrantExecution(ctx);err!=nil {
-        if effect!="read" {
-            if e:=r.Store.CompleteEffect(attempt.ID,"unknown","delegated grant revoked before dispatch");e!=nil {
-                return nil,e
-            }
-        }
-        return nil,err
+        if err=r.CheckQueuedTaskExecution(ctx);err!=nil{return nil,err}
+        if err=r.CheckGrantExecution(ctx);err!=nil{return nil,err}
     }
     var raw map[string]any
     var e error
@@ -1261,6 +1254,22 @@ func (r *Runtime) mcpCall(ctx context.Context,cfg *config.Config,u config.Upstre
     }
     return raw,e
 }
+// checkMCPPostAdmission seals every denied write after durable admission.
+// Even when the request was not sent, the conservative UNKNOWN result is
+// preferable to an unresolvable dispatching journal or a speculative retry.
+// It is intentionally callable by the race/regression test.
+func (r *Runtime) checkMCPPostAdmission(ctx context.Context, attempt storage.Effect) error {
+    if r.Store==nil {return fmt.Errorf("durable MCP effect journal unavailable")}
+    err:=r.Store.RequireExecutionLeader(ctx)
+    if err==nil {err=r.CheckQueuedTaskExecution(ctx)}
+    if err==nil {err=r.CheckGrantExecution(ctx)}
+    if err==nil {return nil}
+    if completeErr:=r.Store.CompleteEffect(attempt.ID,"unknown",expr.RedactDiagnostic(err.Error()));completeErr!=nil {
+        return fmt.Errorf("MCP write outcome not durable after pre-dispatch refusal: %w",completeErr)
+    }
+    return err
+}
+
 func (r *Runtime) runHook(ctx context.Context, h config.Hook, cfg *config.Config, value any, dry bool) (any, error) {
 	if dry {
 		return value, nil
