@@ -23,6 +23,9 @@ jobs:
       - name: Exhaustive bounded effect lifecycle safety
         working-directory: docs/formal
         run: java -XX:+UseParallelGC -jar /tmp/tla2tools.jar -workers 1 -deadlock -config EffectLifecycle.cfg EffectLifecycle.tla
+      - name: Exhaustive MCP effect receipt and contract-bound readback safety
+        working-directory: docs/formal
+        run: java -XX:+UseParallelGC -jar /tmp/tla2tools.jar -workers 1 -deadlock -config MCPWriteProvenance.cfg MCPWriteProvenance.tla
       - name: Exhaustive bounded parallel continuation safety
         working-directory: docs/formal
         run: java -XX:+UseParallelGC -jar /tmp/tla2tools.jar -workers 1 -deadlock -config ParallelSuspensions.cfg ParallelSuspensions.tla
