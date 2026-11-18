@@ -374,6 +374,43 @@ func TestTwoProcessMCPStand(t *testing.T) {
 		t.Fatalf("readback caused a duplicate write: %v", received)
 	}
 
+	// A syntactically valid MCP isError=true may arrive AFTER the provider
+	// persisted a write. This is an uncertain application outcome, not a
+	// confirmation or an automatic replay permission.
+	appIntent:=map[string]any{
+		"record_id":"error_after_commit","value":"durably_committed_before_error",
+		"fault":"error_after_commit",
+	}
+	if result:=standCall(t,base,"alpha","alpha_put",appIntent);result["isError"]!=true {
+		t.Fatalf("post-commit MCP application error was swallowed: %#v",result)
+	}
+	var appUnknown storage.Effect
+	var appUnknownCount int
+	for _,effect:=range svc.Store.Effects() {
+		if effect.Operation=="alpha.put_record" && effect.Status=="unknown" {
+			appUnknown=effect
+			appUnknownCount++
+		}
+	}
+	if appUnknownCount!=1 || appUnknown.TargetDigest!=storage.TargetDigest("mcp",alpha.url) {
+		t.Fatalf("application error was not classified UNKNOWN: %+v count=%d",appUnknown,appUnknownCount)
+	}
+	appRead:=standContent(t,standCall(t,base,"alpha","alpha_get",
+		map[string]any{"record_id":"error_after_commit"}))
+	assertRecord(t,appRead,"alpha","error_after_commit","durably_committed_before_error")
+	appToken,err:=engine.ReadbackOperationToken(appUnknown.ID,
+		activeCfg.Readbacks["alpha_record"],activeCfg.Upstreams["alpha"])
+	if err!=nil || appRead["record"].(map[string]any)["operation_token"]!=appToken {
+		t.Fatalf("application error record lacks exact committed token: %+v %v",appRead,err)
+	}
+	appResolution:=decode(t,jsonPost(t,base+"/api/effect-readback","two-mcp-stand-admin",
+		map[string]any{"effect_id":appUnknown.ID,"adapter":"alpha_record","intent":appIntent}))
+	if appResolution["status"]!="resolved_applied" {
+		t.Fatalf("post-error write not reconciled by safe readback: %#v",appResolution)
+	}
+	assertStandCount(t,standStats(t,base,"alpha"),"writes_received",3)
+	assertStandCount(t,standStats(t,base,"alpha"),"writes_committed",3)
+
 	// Negative evidence: even identical record ID AND payload are not proof
 	// of this journaled write. The prior record has a different operation
 	// token. The synthetic collision is NEVER dispatched to alpha.
@@ -405,7 +442,7 @@ func TestTwoProcessMCPStand(t *testing.T) {
 	if err != nil || collisionSaved.Status != "unknown" {
 		t.Fatalf("identity-only false positive changed effect state: %+v %v", collisionSaved, err)
 	}
-	assertStandCount(t, standStats(t, base, "alpha"), "writes_received", 2)
+	assertStandCount(t, standStats(t, base, "alpha"), "writes_received", 3)
 
 	// Abruptly terminate alpha (not the gateway or beta) and launch another
 	// OS process from the SAME dedicated directory. Query the official MCP
@@ -433,8 +470,8 @@ func TestTwoProcessMCPStand(t *testing.T) {
 		t.Fatal(err)
 	}
 	actualStats, ok := stats["structuredContent"].(map[string]any)
-	if !ok || actualStats["writes_received"] != float64(2) ||
-		actualStats["writes_committed"] != float64(2) {
+	if !ok || actualStats["writes_received"] != float64(3) ||
+		actualStats["writes_committed"] != float64(3) {
 		t.Fatalf("provider restart lost commit or attempt history: %#v", stats)
 	}
 	assertStandCount(t, standStats(t, base, "beta"), "writes_received", 2)
