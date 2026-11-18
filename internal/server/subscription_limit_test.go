@@ -168,7 +168,7 @@ func TestSubscriptionSDKRealEventDeliveryAndCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	active, _ := svc.Current()
-	source := strings.Replace(active.Source, `tool "get_customer_direct"», `tool "updated_direct"», 1)
+	source := strings.Replace(active.Source, `tool "get_customer_direct"`, `tool "updated_direct"`, 1)
 	if source == active.Source {
 		t.Fatal("fixture cannot modify tool")
 	}
