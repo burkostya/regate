@@ -274,9 +274,13 @@ func TestTwoProcessMCPStand(t *testing.T) {
 	}
 	assertRecord(t, standContent(t, standCall(t, base, "workflow", "copy",
 		map[string]any{"record_id": "seed_alpha"})), "beta", "seed_alpha", "synthetic_alpha")
+	alphaReadsBeforeDenial := standStats(t, base, "alpha")["reads"]
 	if fail := standCall(t, base, "workflow", "copy",
-		map[string]any{"record_id": "DENY_secret"}); fail["isError"] != true {
+		map[string]any{"record_id": "DENY-seed_alpha"}); fail["isError"] != true {
 		t.Fatalf("Decision denial did not fail closed: %#v", fail)
+	}
+	if reads := standStats(t, base, "alpha")["reads"]; reads != alphaReadsBeforeDenial {
+		t.Fatalf("denied Decision reached protected MCP read: before %v after %v", alphaReadsBeforeDenial, reads)
 	}
 	if fail := standCall(t, base, "workflow", "copy",
 		map[string]any{"record_id": "not_found"}); fail["isError"] != true {
