@@ -125,9 +125,9 @@ func TestTwoProcessMCPDurableProviderContracts(t *testing.T) {
             drifted:=*liveCfg
             drifted.Readbacks=make(map[string]config.Readback,len(liveCfg.Readbacks))
             for key,definition:=range liveCfg.Readbacks {drifted.Readbacks[key]=definition}
-            changed:=drifted.Readbacks[name+"_record"]
-            changed.ReadTool="stats"
-            drifted.Readbacks[name+"_record"]=changed
+            driftedAdapter:=drifted.Readbacks[name+"_record"]
+            driftedAdapter.ReadTool="stats"
+            drifted.Readbacks[name+"_record"]=driftedAdapter
             if _,err:=svc.Engine.CompensateMCP(ctx,&drifted,source.ID,
                 name+"_undo",lost,"test-operator","drifted adapter must fail");
                 !errors.Is(err,storage.ErrInvalidEvidence) {
