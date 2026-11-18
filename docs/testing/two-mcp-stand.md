@@ -30,7 +30,9 @@ The acceptance exercises the following:
 4. Durable Regate effect state `unknown`, exactly one remote write attempt,
    refusal to reconcile using a changed intent or wrong endpoint,
    and successful **positive-only** readback via authenticated management REST
-5. Killing alpha, restarting it from the same state directory and reading
+5. A valid MCP `isError=true` returned **after** a fsynced write: Regate
+   records `unknown` and verified readback resolves it without redispatch
+6. Killing alpha, restarting it from the same state directory and reading
    back its committed record and write counters (beta is unaffected)
 
 CI executes the stand separately and as part of `go test -race ./...`.
@@ -72,8 +74,9 @@ Both fixtures expose tools:
 | `stats` | empty object | Read received writes, committed writes, record and read counters |
 
 Record IDs are limited to 48 safe ASCII characters; values to 256 UTF-8
-bytes. There are at most 128 records per process. The special fault value
-`drop_after_commit` is accepted only on a `put_record` request.
+bytes. There are at most 128 records per process. Both test-only fault values `drop_after_commit` and `error_after_commit`
+are accepted only on a `put_record` request. The second returns an ordinary
+MCP `isError=true` JSON envelope after the commit, not a broken transport.
 
 The published Regate surfaces are `/mcp/alpha`, `/mcp/beta` and
 `/mcp/workflow`. The last exposes the `copy` pipeline that reads a
@@ -94,7 +97,9 @@ curl -sS http://127.0.0.1:9200/mcp/alpha \
 ```
 
 To simulate a lost response, use another unique record ID and include
-`"fault":"drop_after_commit"`. The client must see an error but a read
+`"fault":"drop_after_commit"`. For an ordinary post-commit MCP tool error,
+use `"fault":"error_after_commit"`; the record is still written and must
+be reconciled despite the application-level error reply. The client must see an error but a read
 must find the committed record. Inspect the protected `/api/effects`
 endpoint and reconcile by `/api/effect-readback` using adapter
 `alpha_record` and the **exact original arguments**. The automated test
