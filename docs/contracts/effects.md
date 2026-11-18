@@ -89,8 +89,12 @@ The administrator supplies the **original write arguments**. Their canonical
 SHA-256 must match the effect's stored `intent_digest` before any external
 read is made. One JSON Pointer extracts a stable identity from these arguments;
 the declared read tool is called with that identity, and a second pointer
-extracts the returned identity. Only a positive exact identity match resolves
-the effect as `resolved_applied` with a digest of observed MCP evidence.
+extracts the returned identity. By default an exact identity match is
+required; a readback contract may also declare the **paired**
+`match_intent_pointer` and `match_result_pointer` for an additional
+exact semantic payload match. Missing, malformed or mismatched values
+refuse resolution. All declared comparisons must pass before returning
+`resolved_applied` with a digest of observed MCP evidence.
 Missing results, a different identity, unsupported payloads, tool errors or
 eventually consistent not-found results all retain `unknown`: no
 `resolved_absent` inference is made.

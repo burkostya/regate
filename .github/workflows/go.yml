@@ -16,4 +16,6 @@ jobs:
         run: git diff --exit-code -- go.mod go.sum
       - run: go vet ./...
       - run: go test -race ./...
-      - run: go build ./cmd/regate ./cmd/regate-demo
+      - run: go build ./cmd/regate ./cmd/regate-demo ./cmd/regate-test-mcp
+      - name: Independent two-process MCP acceptance stand
+        run: go test -race ./internal/server -run TestTwoProcessMCPStand -count=1 -v

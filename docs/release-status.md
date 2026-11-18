@@ -1315,3 +1315,35 @@
   This closes a timing-dependent authoring integrity race without relaxing
   the empty-source assertion. General browser/accessibility and production
   acceptance remain tracked in #9/#10.
+
+#### Two independent MCP process test stand (#7/#9/#10)
+
+- A separately executable, loopback-only official Go SDK MCP server
+  (`cmd/regate-test-mcp`) persists bounded synthetic immutable records
+  with fsynced atomic files and independent write-attempt counters.
+- Two OS processes (alpha and beta) use distinct ports, identities and state
+  directories. HCL publishes separately curated tools/resources/prompts,
+  endpoint-bound readback adapters and a mandatory Decision-gated pipeline
+  that reads alpha and writes beta.
+- The Go subprocess integration suite checks isolation, safe read/write,
+  denied/missing-data suppression, post-commit TCP response loss, durable
+  unknown outcome, positive readback through authenticated management REST,
+  refusal of wrong endpoint/modified intent, no blind write retry and
+  persistence after killing/restarting alpha. It runs as a dedicated race
+  detector CI gate in addition to the full Go suite.
+- This verifies independent local SDK processes, **not** unrelated external
+  provider implementations, provider fencing/idempotency or production
+  load/security/PII acceptance. Keep #7/#9/#10 open pending those proofs.
+
+#### Fail-closed payload matching in test-provider reconciliation (#7/#9)
+
+- A readback adapter may opt into two additional strict JSON pointers:
+  `match_intent_pointer` and `match_result_pointer`. The compiler
+  rejects missing halves or invalid selectors; the verifier requires both
+  the original record ID and the declared payload value to match.
+- The two-process MCP stand uses this contract for immutable records and
+  deliberately tests an undelivered write intent colliding with an existing
+  record ID but a different value. It must remain `unknown` rather than
+  treating identity-only evidence as an applied write.
+- This is a conservative extra equality check, not a proof of external
+  provider consistency, provenance, idempotence or fencing.

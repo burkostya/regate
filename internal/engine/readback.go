@@ -53,6 +53,20 @@ func (v *MCPReadback) ReadBack(ctx context.Context,effect storage.Effect)(storag
     if !ok || !reflect.DeepEqual(expected,actual) {
         return storage.ReadbackObservation{},storage.ErrInvalidEvidence
     }
+    // A provider may already have a different record with the same ID.
+    // Identity alone does not establish that the unknown write's payload
+    // was applied. Opted-in semantic comparison refuses such false proof.
+    if (v.Definition.MatchIntentPointer=="") != (v.Definition.MatchResultPointer=="") {
+        return storage.ReadbackObservation{},storage.ErrInvalidEvidence
+    }
+    if v.Definition.MatchIntentPointer!="" {
+        wanted,found:=jsonPointer(v.Intent,v.Definition.MatchIntentPointer)
+        if !found {return storage.ReadbackObservation{},storage.ErrInvalidEvidence}
+        observed,found:=jsonPointer(response,v.Definition.MatchResultPointer)
+        if !found || !reflect.DeepEqual(wanted,observed) {
+            return storage.ReadbackObservation{},storage.ErrInvalidEvidence
+        }
+    }
     raw,err:=json.Marshal(response)
     if err!=nil{return storage.ReadbackObservation{},storage.ErrInvalidEvidence}
     evidence:=sha256.Sum256(raw)
