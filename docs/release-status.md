@@ -1275,3 +1275,17 @@
   attestation or a proof of Go/provider correctness. Issue #7 and the broader
   #9/#10 acceptance remain open pending verified adapters, failure scenarios
   and model-linked end-to-end evidence.
+
+#### Bounded SSE subscription admission and lifespan (#9)
+
+- Accept at most 64 simultaneous stateless MCP `subscriptions/listen`
+  streams per Regate instance; reject excess before SSE acknowledgment with
+  a retryable 503. Admission and deregistration are mutex-serialized.
+- Each stream has a 30-minute lifetime and a per-notification 10-second
+  write deadline; canceled clients free capacity. Existing 16-item event
+  channels remain bounded.
+- Tests cover the exact capacity boundary, event isolation, slot reuse,
+  rejection before any successful stream framing, and cancel cleanup.
+- This does not implement replayable events, cross-instance subscription
+  fanout, per-principal quotas or production load/chaos acceptance; #9/#10
+  remain open.
