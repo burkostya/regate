@@ -2,6 +2,7 @@ package server
 
 import (
     "context"
+    "encoding/json"
     "net/http/httptest"
     "os"
     "strings"
@@ -92,6 +93,50 @@ func TestPublicAnonymousMCPProviders(t *testing.T) {
             t.Logf("%s: anonymous HTTP MCP discovery + curated Regate tools/call succeeded",provider.name)
         })
     }
+    t.Run("one-parallel-typed-tool-uses-both-providers",func(t *testing.T) {
+        // In contrast with the separate curated proxies above, this makes a
+        // SINGLE incoming MCP tools/call that traverses a two-provider DAG.
+        // Never publish raw third-party content; only read-only block counts.
+        readCtx,cancel:=context.WithTimeout(context.Background(),90*time.Second)
+        defer cancel()
+        gateway:=mcp.NewConn(proxy.URL+"/mcp/combined","",90*time.Second)
+        published,err:=gateway.ListTools(readCtx)
+        if err!=nil {t.Fatalf("combined catalog: %v",err)}
+        if len(published)!=1 || published[0]["name"]!="public_docs_check" {
+            t.Fatalf("combined surface contains unrelated tools: %v",published)
+        }
+        reply,err:=gateway.CallTool(readCtx,"public_docs_check",map[string]any{
+            "query":"How do public Microsoft Learn MCP tools work?",
+            "repoName":"modelcontextprotocol/servers",
+        })
+        if err!=nil || reply==nil || reply["isError"]==true {
+            t.Fatalf("live two-provider DAG did not complete: %v (MCP application error=%t)",err,reply!=nil && reply["isError"]==true)
+        }
+        structured,ok:=reply["structuredContent"].(map[string]any)
+        if !ok {t.Fatal("combined tool did not return structured output")}
+        raw,err:=json.Marshal(structured)
+        if err!=nil {t.Fatal(err)}
+        var counts struct {
+            Microsoft int `json:"microsoft_blocks"`
+            DeepWiki int `json:"deepwiki_blocks"`
+        }
+        if err:=json.Unmarshal(raw,&counts);err!=nil {t.Fatalf("invalid composed output contract: %v",err)}
+        if counts.Microsoft<=0 || counts.DeepWiki<=0 {
+            t.Fatalf("one or both provider outputs missing: counts=%+v",counts)
+        }
+        seen:=map[string]int{}
+        for _,tr:=range svc.Store.Traces() {
+            if tr.Surface=="combined" && tr.Tool=="public_docs_check" &&
+                tr.Status=="success" && (tr.Node=="docs" || tr.Node=="wiki") {
+                seen[tr.Node]++
+            }
+        }
+        if seen["docs"]!=1 || seen["wiki"]!=1 {
+            t.Fatalf("composed DAG did not execute each independent read exactly once: %v",seen)
+        }
+        // Do not print any returned search/wiki documents.
+        t.Log("one read-only Regate DAG completed two real independent provider calls with a typed all-join")
+    })
     if effects:=svc.Store.Effects();len(effects)!=0 {
         t.Fatalf("read-only external acceptance unexpectedly journaled %d writes",len(effects))
     }
