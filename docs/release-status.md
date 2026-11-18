@@ -1457,3 +1457,27 @@
   **writable** provider contracts, durable native idempotency/fencing,
   compensation, chaos/security/load and production release checks remain
   unproven. Issues #7, #9 and #10 stay open.
+
+#### Independent public simulated MCP write/error provider (#7/#9)
+
+- A **third** external, independently operated anonymous Streamable HTTP
+  provider (Sondahub, `https://api.sondahub.com/mcp`) is now covered by an
+  opt-in/weekly acceptance fixture. The vendor documents that all write
+  operations are **simulations**, backed only by an optional client-carried
+  session token. This is safe synthetic testing, not third-party persistent
+  write attestation.
+- The fixture executes `create_record` with compile-time literal arguments
+  for a harmless category, verifies the vendor's simulation-note marker and
+  a `confirmed` SQLite effect with immutable target/intent fingerprints.
+  A second intentionally invalid synthetic write elicits a real MCP
+  `isError=true`; Regate conservatively records `unknown` and blocks
+  re-admission of the same effect ID. Extra caller arguments cannot change
+  either synthetic record or reach the provider.
+- The routine offline Go test compiles the fixture and asserts that its
+  independent target, write-effect classification, input boundaries and
+  synthetic arguments are pinned. Live tests use a separate explicit
+  environment flag, egress allowlist and GitHub Actions workflow.
+- Because this provider stores no shared durable writes, it cannot validate
+  external crash recovery, positive write readback, native idempotency
+  tokens/fencing or compensation. The full release gates in #7/#9/#10
+  remain **open**.
