@@ -1304,3 +1304,14 @@
   the state transition, fingerprints, no replay and operator resolution.
 - This does **not** establish remote execution absence or provider-enforced
   fencing/idempotency; those remain full release gates (#7/#9/#10).
+
+#### HCL editor async draft-creation race (#8/#9)
+
+- HCL actions and text editing are disabled while a management operation is
+  pending. Previously, an in-flight New draft request could overwrite text
+  entered before the draft arrived; the editor now waits for completion.
+- Chromium E2E explicitly waits for the draft marker and editable state
+  before testing that a deliberately cleared HCL source is sent unchanged.
+  This closes a timing-dependent authoring integrity race without relaxing
+  the empty-source assertion. General browser/accessibility and production
+  acceptance remain tracked in #9/#10.
