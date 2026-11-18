@@ -214,3 +214,17 @@ equivalents) and nesting deeper than 128 are rejected before executing
 an administrative operation. This parser is independent from the
 official SDK's MCP transport and intentionally does not alter the
 HCL source bytes carried in a valid `source` string.
+
+### Safe two-process MCP acceptance stand
+
+Two independent loopback HTTP MCP providers (alpha and beta) use the
+official Go SDK and separate durable synthetic record stores. The
+integration test covers read/write isolation, a policy-gated cross-provider
+pipeline, lost responses after committed writes, and positive readback.
+
+```sh
+make test-mcp-stand
+```
+
+For manual startup and recovery scenarios, see
+[the two-server stand](docs/testing/two-mcp-stand.md).
