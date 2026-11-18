@@ -5,6 +5,7 @@ import (
     "errors"
     "net/http"
     "net/http/httptest"
+    "strings"
     "sync/atomic"
     "testing"
     "time"
@@ -139,5 +140,73 @@ func TestJSONPointerNoCodeExecution(t *testing.T) {
     }
     for _,pointer:=range []string{"/k~1v/~0name/-1","/k~1v/~0name/01","/k~1v/~0name/3","not-a-pointer"} {
         if _,ok:=jsonPointer(source,pointer);ok {t.Fatalf("unsafe selector accepted: %s",pointer)}
+    }
+}
+
+func TestMCPReadbackRequiresOriginalOperationToken(t *testing.T) {
+    operation:="crm.create"
+    identity:=storage.EffectID("token-run","create",operation)
+    for _,tc:=range []struct{
+        name string
+        providerToken string
+        tamperIntent bool
+        wantSuccess bool
+        wantReads int64
+    }{
+        {"committed-token",identity,false,true,1},
+        {"prior-record-identical-payload",strings.Repeat("0",64),false,false,1},
+        {"provider-does-not-return-token","",false,false,1},
+        {"caller-forges-reserved-token",identity,true,false,0},
+    } {
+        t.Run(tc.name,func(t *testing.T) {
+            reads:=new(atomic.Int64)
+            sdkServer:=sdk.NewServer(&sdk.Implementation{Name:"token-test",Version:"1"},nil)
+            sdkServer.AddTool(&sdk.Tool{Name:"find",InputSchema:map[string]any{"type":"object"}},
+                func(_ context.Context,_ *sdk.CallToolRequest)(*sdk.CallToolResult,error) {
+                    reads.Add(1)
+                    record:=map[string]any{"external_id":"C123"}
+                    if tc.providerToken!="" {record["operation_token"]=tc.providerToken}
+                    return &sdk.CallToolResult{StructuredContent:map[string]any{"record":record},
+                        Content:[]sdk.Content{&sdk.TextContent{Text:"fixture read"}}},nil
+                })
+            upstream:=httptest.NewServer(sdk.NewStreamableHTTPHandler(func(*http.Request)*sdk.Server{return sdkServer},
+                &sdk.StreamableHTTPOptions{Stateless:true,JSONResponse:true}))
+            defer upstream.Close()
+            store:=effectTestStore(t)
+            cfg:=readbackConfig(upstream.URL)
+            rule:=cfg.Readbacks["crm_check"]
+            rule.WriteTokenArgument="operation_token"
+            rule.ResultTokenPointer="/structuredContent/record/operation_token"
+            cfg.Readbacks["crm_check"]=rule
+            original:=map[string]any{"external_id":"C123"}
+            wire,err:=attachWriteToken(original,"operation_token",identity)
+            if err!=nil {t.Fatal(err)}
+            if _,has:=original["operation_token"];has {t.Fatal("mutated caller original intent")}
+            attempt,err:=store.BeginEffectBound("token-run","create",operation,
+                storage.TargetDigest("mcp",upstream.URL),wire)
+            if err!=nil {t.Fatal(err)}
+            if err:=store.CompleteEffect(attempt.ID,"unknown","ambiguous outcome");err!=nil {t.Fatal(err)}
+            if tc.tamperIntent {
+                original["operation_token"]=identity
+            }
+            resolved,err:=New(store).ReconcileMCP(context.Background(),cfg,attempt.ID,
+                "crm_check",original)
+            if tc.wantSuccess {
+                if err!=nil || resolved.Status!="resolved_applied" {
+                    t.Fatalf("matching operation not resolved: %+v %v",resolved,err)
+                }
+            } else {
+                if !errors.Is(err,storage.ErrInvalidEvidence) {
+                    t.Fatalf("untrusted readback accepted: %+v %v",resolved,err)
+                }
+                saved,err:=store.EffectGet(attempt.ID)
+                if err!=nil || saved.Status!="unknown" {
+                    t.Fatalf("readback changed uncertain effect: %+v %v",saved,err)
+                }
+            }
+            if got:=reads.Load();got!=tc.wantReads {
+                t.Fatalf("external reads=%d want=%d",got,tc.wantReads)
+            }
+        })
     }
 }
