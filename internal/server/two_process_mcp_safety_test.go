@@ -91,6 +91,20 @@ func TestTwoProcessMCPDurableProviderContracts(t *testing.T) {
             if token,ok:=originalToken.(string);!ok || len(token)!=64 {
                 t.Fatalf("provider did not fsync injected operation identity: %v",originalToken)
             }
+            // Regate never retries UNKNOWN writes automatically. For the
+            // provider-native contract, explicitly replay the identical
+            // operation token after the lost network response: the provider
+            // must return its prior result without a second commit.
+            direct:=mcp.NewConn(providers[name].url,"",5*time.Second)
+            nativeReplay,err:=direct.CallTool(ctx,"put_record",map[string]any{
+                "record_id":"inverse_"+name,"value":"synthetic_"+name,
+                "operation_token":originalToken,
+            })
+            if err!=nil || nativeReplay["isError"]==true ||
+                nativeReplay["structuredContent"].(map[string]any)["idempotent_replay"]!=true {
+                t.Fatalf("provider repeated a lost-response write: %#v %v",nativeReplay,err)
+            }
+            assertStandCount(t,standStats(t,base,name),"writes_committed",1)
             wrongIntent:=map[string]any{"record_id":"inverse_"+name,
                 "value":"tampered","fault":"drop_after_commit"}
             rejected:=jsonPost(t,base+"/api/effect-readback","two-mcp-safety-admin",
@@ -171,7 +185,6 @@ func TestTwoProcessMCPDurableProviderContracts(t *testing.T) {
             if repeated.StatusCode!=http.StatusBadRequest {
                 t.Fatalf("Regate admitted duplicate inverse: HTTP %d",repeated.StatusCode)
             }
-            direct:=mcp.NewConn(providers[name].url,"",5*time.Second)
             duplicate,err:=direct.CallTool(ctx,"revoke_record",
                 map[string]any{"record_id":"inverse_"+name})
             if err!=nil || duplicate["isError"]!=true {
@@ -312,7 +325,7 @@ func TestTwoProcessMCPDurableProviderContracts(t *testing.T) {
             }
             stats=standStats(t,base,name)
             assertStandCount(t,stats,"writes_committed",3)
-            assertStandCount(t,stats,"idempotent_replays",1)
+            assertStandCount(t,stats,"idempotent_replays",2)
             assertStandCount(t,stats,"fenced_rejections",1)
             assertStandCount(t,stats,"fence_epoch",epoch)
 
@@ -342,7 +355,7 @@ func TestTwoProcessMCPDurableProviderContracts(t *testing.T) {
             recovered:=standContent(t,persistedStats)
             assertStandCount(t,recovered,"writes_committed",3)
             assertStandCount(t,recovered,"compensations_committed",2)
-            assertStandCount(t,recovered,"idempotent_replays",1)
+            assertStandCount(t,recovered,"idempotent_replays",2)
             assertStandCount(t,recovered,"fence_epoch",epoch)
             afterRestart,err:=restarted.CallTool(ctx,"put_record",
                 map[string]any{"record_id":"stale_after_restart_"+name,
