@@ -1250,6 +1250,12 @@ func (r *Runtime) mcpCall(ctx context.Context,cfg *config.Config,u config.Upstre
         if e!=nil {
             state="unknown"
             reason=expr.RedactDiagnostic(e.Error())
+        } else if outcomeErr:=validateMCPToolOutcome(raw);outcomeErr!=nil {
+            // A provider can commit a write and subsequently return an MCP
+            // application error. Only a valid non-error tool result confirms
+            // the outcome; the envelope itself stays transparent to callers.
+            state="unknown"
+            reason=expr.RedactDiagnostic(outcomeErr.Error())
         }
         if err:=r.Store.CompleteEffect(attempt.ID,state,reason);err!=nil {
             // Never return success when the remote action completed but

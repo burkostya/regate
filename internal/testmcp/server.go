@@ -263,7 +263,7 @@ func (s *Server) mcpServer() *sdk.Server {
 				"record_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 48},
 				"value": map[string]any{"type": "string", "maxLength": 256},
 				"operation_token": map[string]any{"type": "string", "pattern": "^[0-9a-f]{64}$"},
-				"fault": map[string]any{"type": "string", "enum": []any{"", "drop_after_commit"}},
+				"fault": map[string]any{"type": "string", "enum": []any{"", "drop_after_commit", "error_after_commit"}},
 			},
 			"required": []string{"record_id", "value"},
 		},
@@ -272,11 +272,16 @@ func (s *Server) mcpServer() *sdk.Server {
 		if err := decodeArgs(req.Params.Arguments, &a); err != nil ||
 			!validID(a.RecordID) || len(a.Value) > 256 || !utf8.ValidString(a.Value) ||
 			!validOperationToken(a.OperationToken) ||
-			(a.Fault != "" && a.Fault != "drop_after_commit") {
+			(a.Fault != "" && a.Fault != "drop_after_commit" && a.Fault != "error_after_commit") {
 			return rejected("invalid bounded test write"), nil
 		}
 		if _, err := s.put(a.RecordID, a.Value,a.OperationToken); err != nil {
 			return rejected("fixture write rejected"), nil
+		}
+		if a.Fault=="error_after_commit" {
+			// Intentionally return an MCP application error *after* the
+			// operation token and record are durably committed.
+			return rejected("test-only post-commit application error"),nil
 		}
 		return recordResult(s.instance, a.RecordID, a.Value,a.OperationToken), nil
 	})

@@ -18,9 +18,12 @@ persisted in plaintext inside the effect journal.
   `unknown`, or has already been explicitly resolved.
 - A different argument digest for the same logical attempt is a conflict,
   not an opportunity to reissue the write with a new request.
-- After a confirmed response, `CompleteEffect` records `confirmed`.
-  A lost response records `unknown`; startup also maps interrupted
-  `dispatching` to `unknown`. Neither case ever retries automatically.
+- Only a valid, non-error MCP tool result records `confirmed`. An MCP
+  `isError=true` application reply (even HTTP 200), a malformed tool error
+  flag, a missing result or a lost transport response records `unknown`:
+  the provider may have committed the write before reporting failure.
+  Startup also maps interrupted `dispatching` to `unknown`. None of
+  these uncertain outcomes ever retries automatically.
 - A missing/failed journal write stops before dispatch; failure to persist a
   completion is never reported as confirmed success.
 
@@ -59,6 +62,12 @@ is no Jira-specific assumption: the adapter may use MCP, HTTP or a verified
 resource-specific API. It must return the same `effect_id`, `intent_digest`
 and `operation`, plus a concrete resource, a method, a verifier identifier,
 a digest of the read response and a verdict.
+
+An MCP application-level error after a write belongs to this same
+reconciliation flow: receiving a standard tool error envelope does not
+prove that the provider did not commit. Transparent proxy callers still
+receive the original MCP tool-error envelope; the journal independently
+records `unknown`.
 
 A positive authoritative match can resolve as `resolved_applied`. A negative
 read-back may resolve as `resolved_absent` **only if the adapter explicitly

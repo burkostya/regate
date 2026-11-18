@@ -6,8 +6,9 @@ import "fmt"
 // transparent MCP proxy surfaces. MCP tools/call may succeed at transport
 // level while the tool itself reports isError=true; such a result must not
 // satisfy a data contract, authorize a Decision, or activate a write node.
-// A confirmed external write may still have occurred; the effect journal
-// remains authoritative and must not be erased or automatically replayed.
+// An external write may have committed even when the tool reports an error.
+// For writes, the journal remains UNKNOWN until a verified readback or
+// deliberate operator decision, and it must never be automatically replayed.
 func validateMCPToolOutcome(raw map[string]any) error {
 	if raw == nil { return fmt.Errorf("upstream MCP tool response missing") }
 	if flag, exists := raw["isError"]; exists {
