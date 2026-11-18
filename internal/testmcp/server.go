@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -30,6 +31,9 @@ const maxWireBytes = 4 << 20
 type diskState struct {
 	Instance       string            `json:"instance"`
 	Records        map[string]string `json:"records"`
+	// Operation tokens are persisted atomically with values. They cannot
+	// be set by a subsequent read or a separate management operation.
+	OperationTokens map[string]string `json:"operation_tokens,omitempty"`
 	WritesReceived int64             `json:"writes_received"`
 	WritesCommitted int64            `json:"writes_committed"`
 }
@@ -63,6 +67,13 @@ func validID(v string) bool {
 	return true
 }
 
+func validOperationToken(token string) bool {
+	if token=="" {return true}
+	if len(token)!=64 || strings.ToLower(token)!=token {return false}
+	_,err:=hex.DecodeString(token)
+	return err==nil
+}
+
 func New(instance, dir string) (*Server, error) {
 	if !validID(instance) || dir == "" {
 		return nil, errors.New("fixture requires a safe instance name and dedicated state directory")
@@ -71,7 +82,8 @@ func New(instance, dir string) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{instance: instance, path: filepath.Join(dir, "records.json")}
-	s.state = diskState{Instance: instance, Records: map[string]string{}}
+	s.state = diskState{Instance: instance, Records: map[string]string{},
+		OperationTokens: map[string]string{}}
 	body, err := os.ReadFile(s.path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
@@ -94,6 +106,11 @@ func New(instance, dir string) (*Server, error) {
 	for id, value := range restored.Records {
 		if !validID(id) || len(value) > 256 || !utf8.ValidString(value) {
 			return nil, errors.New("invalid persisted test MCP record")
+		}
+	}
+	for id,token:=range restored.OperationTokens {
+		if _,exists:=restored.Records[id];!exists || token=="" || !validOperationToken(token) {
+			return nil,errors.New("invalid persisted test MCP operation token")
 		}
 	}
 	s.state = restored
@@ -140,7 +157,7 @@ func (s *Server) persist(next diskState) error {
 	return d.Sync()
 }
 
-func (s *Server) put(id, value string) (bool, error) {
+func (s *Server) put(id, value, token string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := s.state
@@ -148,6 +165,8 @@ func (s *Server) put(id, value string) (bool, error) {
 	for k, v := range s.state.Records {
 		next.Records[k] = v
 	}
+	next.OperationTokens=make(map[string]string,len(s.state.OperationTokens)+1)
+	for k,v:=range s.state.OperationTokens {next.OperationTokens[k]=v}
 	next.WritesReceived++
 	_, found := next.Records[id]
 	if !found && len(next.Records) >= maxRecordCount {
@@ -155,6 +174,7 @@ func (s *Server) put(id, value string) (bool, error) {
 	}
 	if !found {
 		next.Records[id] = value
+		if token!="" {next.OperationTokens[id]=token}
 		next.WritesCommitted++
 	}
 	if err := s.persist(next); err != nil {
@@ -167,12 +187,12 @@ func (s *Server) put(id, value string) (bool, error) {
 	return true, nil
 }
 
-func (s *Server) lookup(id string) (string, bool) {
+func (s *Server) lookup(id string) (string, string, bool) {
 	s.reads.Add(1)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	v, ok := s.state.Records[id]
-	return v, ok
+	return v,s.state.OperationTokens[id],ok
 }
 
 func (s *Server) has(id string) bool {
@@ -197,6 +217,7 @@ func (s *Server) stats() map[string]any {
 type putArgs struct {
 	RecordID string `json:"record_id"`
 	Value    string `json:"value"`
+	OperationToken string `json:"operation_token,omitempty"`
 	Fault    string `json:"fault,omitempty"`
 }
 type getArgs struct {
@@ -220,13 +241,13 @@ func rejected(reason string) *sdk.CallToolResult {
 	}
 }
 
-func recordResult(instance, id, value string) *sdk.CallToolResult {
+func recordResult(instance, id, value, token string) *sdk.CallToolResult {
+	record:=map[string]any{"record_id":id,"value":value,"instance":instance}
+	if token!="" {record["operation_token"]=token}
 	return &sdk.CallToolResult{
 		StructuredContent: map[string]any{
 			"found": true,
-			"record": map[string]any{
-				"record_id": id, "value": value, "instance": instance,
-			},
+			"record": record,
 		},
 		Content: []sdk.Content{&sdk.TextContent{Text: "test record available"}},
 	}
@@ -241,6 +262,7 @@ func (s *Server) mcpServer() *sdk.Server {
 			"properties": map[string]any{
 				"record_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 48},
 				"value": map[string]any{"type": "string", "maxLength": 256},
+				"operation_token": map[string]any{"type": "string", "pattern": "^[0-9a-f]{64}$"},
 				"fault": map[string]any{"type": "string", "enum": []any{"", "drop_after_commit"}},
 			},
 			"required": []string{"record_id", "value"},
@@ -249,13 +271,14 @@ func (s *Server) mcpServer() *sdk.Server {
 		var a putArgs
 		if err := decodeArgs(req.Params.Arguments, &a); err != nil ||
 			!validID(a.RecordID) || len(a.Value) > 256 || !utf8.ValidString(a.Value) ||
+			!validOperationToken(a.OperationToken) ||
 			(a.Fault != "" && a.Fault != "drop_after_commit") {
 			return rejected("invalid bounded test write"), nil
 		}
-		if _, err := s.put(a.RecordID, a.Value); err != nil {
+		if _, err := s.put(a.RecordID, a.Value,a.OperationToken); err != nil {
 			return rejected("fixture write rejected"), nil
 		}
-		return recordResult(s.instance, a.RecordID, a.Value), nil
+		return recordResult(s.instance, a.RecordID, a.Value,a.OperationToken), nil
 	})
 	m.AddTool(&sdk.Tool{
 		Name: "get_record", Description: "Read a fixture record without modifying the state",
@@ -271,8 +294,8 @@ func (s *Server) mcpServer() *sdk.Server {
 		if err := decodeArgs(req.Params.Arguments, &a); err != nil || !validID(a.RecordID) {
 			return rejected("invalid test read"), nil
 		}
-		if v, ok := s.lookup(a.RecordID); ok {
-			return recordResult(s.instance, a.RecordID, v), nil
+		if v,token,ok := s.lookup(a.RecordID); ok {
+			return recordResult(s.instance, a.RecordID, v,token), nil
 		}
 		// Not found NEVER attests that a remote write did not happen.
 		return &sdk.CallToolResult{

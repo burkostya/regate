@@ -35,6 +35,9 @@ readback "alpha_record" {
   result_pointer  = "/structuredContent/record/record_id"
   match_intent_pointer = "/value"
   match_result_pointer = "/structuredContent/record/value"
+  # The provider stores this Regate-issued per-effect token with the value.
+  write_token_argument = "operation_token"
+  result_token_pointer = "/structuredContent/record/operation_token"
   safe_read       = true
 }
 readback "beta_record" {
@@ -46,6 +49,9 @@ readback "beta_record" {
   result_pointer  = "/structuredContent/record/record_id"
   match_intent_pointer = "/value"
   match_result_pointer = "/structuredContent/record/value"
+  # The provider stores this Regate-issued per-effect token with the value.
+  write_token_argument = "operation_token"
+  result_token_pointer = "/structuredContent/record/operation_token"
   safe_read       = true
 }
 

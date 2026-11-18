@@ -67,7 +67,7 @@ Both fixtures expose tools:
 
 | MCP tool | Arguments | Effect |
 | --- | --- | --- |
-| `put_record` | `record_id`, `value`, optional `fault` | Create immutable test record (never overwrite) |
+| `put_record` | `record_id`, `value`, optional `fault`; Regate injects `operation_token` | Create immutable test record (never overwrite) |
 | `get_record` | `record_id` | Read record; not found is not authoritative absence |
 | `stats` | empty object | Read received writes, committed writes, record and read counters |
 
@@ -112,12 +112,19 @@ certification or production load/chaos acceptance (#7/#9/#10).
 
 ### Content matching for safe positive readback
 
-The stand's HCL readback adapters match both an immutable record ID and the
-exact original test `value` against the observed provider record. The optional
-`match_intent_pointer` and `match_result_pointer` pair is validated at
-compile time and checked after the usual endpoint/intent-digest/identity
-barriers. The negative test inserts a synthetic undelivered journal attempt
-whose ID already exists with a **different payload**, then proves that
-readback cannot falsely resolve it as applied. Equality is not equivalent
-to provider consistency/fencing attestation and cannot prove a write when
-some other actor may have produced an identical record.
+The stand's HCL readback adapters match the immutable record ID and the
+original `value` **and** the provider-persisted `operation_token`. Regate
+derives the token from the durable effect ID, rejects caller-supplied tokens,
+and injects it into each actual write; the fixture fsyncs the token in the
+same atomic file replacement as the record, including when its response is
+deliberately lost. Reconciliation reconstructs the wire request from the
+original operator input and journal ID and requires the returned token to
+match. The process-restart test verifies token durability.
+
+A negative test creates an **undispatched** journal entry targeting an
+existing record whose ID **and payload are identical**, but whose operation
+ID differs. Readback fails and the journal remains `unknown`, proving that
+pure payload equality alone is insufficient. This controlled fixture is
+not independently audited provider behavior, cryptographic provider
+attestation, cross-process fencing or proof against a malicious/updatable
+vendor server.

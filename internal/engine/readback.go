@@ -41,6 +41,12 @@ func (v *MCPReadback) ReadBack(ctx context.Context,effect storage.Effect)(storag
     if !ok || !readbackIdentity(expected) {
         return storage.ReadbackObservation{},storage.ErrInvalidEvidence
     }
+    if (v.Definition.WriteTokenArgument=="")!=(v.Definition.ResultTokenPointer=="") {
+        return storage.ReadbackObservation{},storage.ErrInvalidEvidence
+    }
+    if v.Definition.WriteTokenArgument!="" && v.Intent[v.Definition.WriteTokenArgument]!=effect.ID {
+        return storage.ReadbackObservation{},storage.ErrInvalidEvidence
+    }
     response,err:=v.Conn.CallTool(ctx,v.Definition.ReadTool,
         map[string]any{v.Definition.ReadArgument:expected})
     if err!=nil{return storage.ReadbackObservation{},err}
@@ -64,6 +70,14 @@ func (v *MCPReadback) ReadBack(ctx context.Context,effect storage.Effect)(storag
         if !found {return storage.ReadbackObservation{},storage.ErrInvalidEvidence}
         observed,found:=jsonPointer(response,v.Definition.MatchResultPointer)
         if !found || !reflect.DeepEqual(wanted,observed) {
+            return storage.ReadbackObservation{},storage.ErrInvalidEvidence
+        }
+    }
+    // Identity and payload can both predate this operation. A durable
+    // provider token must identify this particular journaled write.
+    if v.Definition.WriteTokenArgument!="" {
+        received,found:=jsonPointer(response,v.Definition.ResultTokenPointer)
+        if !found || received!=effect.ID {
             return storage.ReadbackObservation{},storage.ErrInvalidEvidence
         }
     }
@@ -99,6 +113,10 @@ func (r *Runtime) ReconcileMCP(ctx context.Context,cfg *config.Config,
         effect.TargetDigest!=storage.TargetDigest("mcp",u.URL) {
         return storage.Effect{},storage.ErrInvalidEvidence
     }
+    // Restore the exact wire intent from the original client arguments and
+    // the journal's stable, non-client-supplied operation identity.
+    intent,err=attachWriteToken(intent,rule.WriteTokenArgument,effect.ID)
+    if err!=nil{return storage.Effect{},storage.ErrInvalidEvidence}
     digest,err:=storage.DigestIntent(intent)
     if err!=nil || digest!=effect.IntentDigest {return storage.Effect{},storage.ErrInvalidEvidence}
     if err=checkOutbound(u.URL);err!=nil{return storage.Effect{},err}
@@ -106,6 +124,45 @@ func (r *Runtime) ReconcileMCP(ctx context.Context,cfg *config.Config,
     if err!=nil{return storage.Effect{},err}
     verifier:=&MCPReadback{Definition:rule,Upstream:u,Conn:conn,Intent:intent}
     return r.Store.ResolveWithReadback(ctx,effectID,verifier)
+}
+
+// writeTokenArgument selects exactly one HCL-declared provider token contract
+// for the write, even when an unvalidated Config object is passed by Go code.
+func writeTokenArgument(cfg *config.Config,operation string)(string,error) {
+    argument:=""
+    for _,rule:=range cfg.Readbacks {
+        if rule.WriteOperation!=operation || rule.WriteTokenArgument=="" {continue}
+        if argument!="" || rule.ResultTokenPointer=="" {
+            return "",storage.ErrInvalidEvidence
+        }
+        argument=rule.WriteTokenArgument
+    }
+    return argument,nil
+}
+
+// attachWriteToken never mutates caller arguments and refuses any caller
+// attempt to supply the reserved provider-bound operation identity.
+func attachWriteToken(original map[string]any,argument,token string)(map[string]any,error) {
+    if argument=="" {return original,nil}
+    if !validWriteTokenArgument(argument) || token=="" {
+        return nil,storage.ErrInvalidEvidence
+    }
+    if _,exists:=original[argument];exists {return nil,storage.ErrInvalidEvidence}
+    out:=make(map[string]any,len(original)+1)
+    for key,value:=range original {out[key]=value}
+    out[argument]=token
+    return out,nil
+}
+
+func validWriteTokenArgument(name string) bool {
+    if name=="" {return false}
+    for i:=0;i<len(name);i++ {
+        c:=name[i]
+        if c=='_' || c>='a' && c<='z' || c>='A' && c<='Z' {continue}
+        if i>0 && c>='0' && c<='9' {continue}
+        return false
+    }
+    return true
 }
 
 func readbackIdentity(value any)bool {

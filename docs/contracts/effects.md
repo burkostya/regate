@@ -85,9 +85,12 @@ carries a `target_digest` identifying the actual upstream URL (SHA-256,
 without persisting the raw URL). The readback adapter may run only if the
 stored target and `upstream.tool` operation match the configured target.
 
-The administrator supplies the **original write arguments**. Their canonical
-SHA-256 must match the effect's stored `intent_digest` before any external
-read is made. One JSON Pointer extracts a stable identity from these arguments;
+The administrator supplies the **original client write arguments**. Their
+canonical SHA-256 must match the effect's stored `intent_digest` before any
+external read is made. When a per-effect write token is configured, Regate
+reconstructs the transmitted arguments by injecting that reserved token from
+the stored effect ID before computing this digest. The caller must not supply
+or override the token. One JSON Pointer extracts a stable identity from these arguments;
 the declared read tool is called with that identity, and a second pointer
 extracts the returned identity. By default an exact identity match is
 required; a readback contract may also declare the **paired**
@@ -98,6 +101,28 @@ refuse resolution. All declared comparisons must pass before returning
 Missing results, a different identity, unsupported payloads, tool errors or
 eventually consistent not-found results all retain `unknown`: no
 `resolved_absent` inference is made.
+
+### Optional provider-persisted operation identity
+
+An HCL `readback` can set **both** `write_token_argument` and
+`result_token_pointer`. On any matching MCP write, Regate computes the
+existing stable journal effect ID before admission, rejects a caller-provided
+reserved field, injects this ID as the named top-level write argument, and
+journals the exact enriched request digest. Its configured provider tool
+must accept this extra argument. On reconciliation, the read-only tool
+must return the **same operation ID** at the configured JSON Pointer,
+in addition to identity and any optional payload matches. The
+readback will refuse identical-ID, identical-payload historical records
+carrying a different operation ID, and will keep the effect `unknown`.
+
+This is only valid for a **verified provider** that atomically persists the
+operation ID with the write, cannot let a different actor forge an applied
+receipt, enforces the required uniqueness/immutability and exposes
+sufficiently consistent reads. The fixture can demonstrate those properties
+under its controlled code. An arbitrary MCP provider, a user-created token,
+a merely matching string or the Go SDK itself cannot establish such
+attestation. No automatic retry, unconfirmed absence, general idempotency
+or external fencing guarantee follows from this optional token mapping.
 
 `safe_read = true` is an **operator assertion** about the declared tool's
 behavior, not a protocol-generated proof. Only a resource-specific adapter

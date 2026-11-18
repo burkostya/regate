@@ -80,6 +80,10 @@ type Readback struct {
     // Both pointers must be present; this does not attest provider consistency.
     MatchIntentPointer string `json:"match_intent_pointer,omitempty"`
     MatchResultPointer string `json:"match_result_pointer,omitempty"`
+    // For providers that durably store a Regate-issued write identity.
+    // Both fields must be configured; callers cannot choose this token.
+    WriteTokenArgument string `json:"write_token_argument,omitempty"`
+    ResultTokenPointer string `json:"result_token_pointer,omitempty"`
     SafeRead bool `json:"safe_read"`
 }
 // Compensation is an operator-approved, effectful inverse MCP call. Mapping
@@ -243,6 +247,8 @@ func Decode(src string) (*Config, error) {
                 ResultPointer:b.String("result_pointer"),
                 MatchIntentPointer:b.String("match_intent_pointer"),
                 MatchResultPointer:b.String("match_result_pointer"),
+                WriteTokenArgument:b.String("write_token_argument"),
+                ResultTokenPointer:b.String("result_token_pointer"),
                 SafeRead:b.Bool("safe_read",false)}
 		case "compensation":
             c.Compensations[name]=Compensation{
@@ -390,7 +396,13 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("hook %s: unknown contract", name)
 		}
 	}
+    readbackWrites:=map[string]Readback{}
     for name,rb:=range c.Readbacks {
+        if prior,exists:=readbackWrites[rb.WriteOperation];exists &&
+            (prior.WriteTokenArgument!="" || rb.WriteTokenArgument!="") {
+            return fmt.Errorf("readback %s: operation %s has conflicting token contracts",name,rb.WriteOperation)
+        }
+        readbackWrites[rb.WriteOperation]=rb
         if rb.Upstream=="" || rb.ReadTool=="" || rb.ReadArgument=="" ||
             rb.WriteOperation=="" || !rb.SafeRead {
             return fmt.Errorf("readback %s: incomplete positive-only read-safe contract",name)
@@ -416,6 +428,14 @@ func (c *Config) Validate() error {
             (!validReadbackPointer(rb.MatchIntentPointer) ||
                 !validReadbackPointer(rb.MatchResultPointer)) {
             return fmt.Errorf("readback %s: invalid semantic match JSON pointer",name)
+        }
+        if (rb.WriteTokenArgument=="") != (rb.ResultTokenPointer=="") {
+            return fmt.Errorf("readback %s: write_token_argument and result_token_pointer must be specified together",name)
+        }
+        if rb.WriteTokenArgument!="" &&
+            (!validReadbackTokenArgument(rb.WriteTokenArgument) ||
+                !validReadbackPointer(rb.ResultTokenPointer)) {
+            return fmt.Errorf("readback %s: invalid write token contract",name)
         }
     }
     for name,inverse:=range c.Compensations {
@@ -802,6 +822,18 @@ func (c *Config) Validate() error {
 	})
 	return nil
 }
+// The injected write token is a top-level provider argument, not an expression.
+func validReadbackTokenArgument(name string) bool {
+    if name=="" {return false}
+    for i:=0;i<len(name);i++ {
+        c:=name[i]
+        if c=='_' || c>='a' && c<='z' || c>='A' && c<='Z' {continue}
+        if i>0 && c>='0' && c<='9' {continue}
+        return false
+    }
+    return true
+}
+
 // Positive-only readback selectors follow RFC 6901 JSON Pointer syntax;
 // empty segments and invalid escape sequences are disallowed for clarity.
 func validReadbackPointer(pointer string)bool {

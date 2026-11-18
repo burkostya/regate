@@ -16,7 +16,7 @@ var blockAttributes = map[string]map[string]string{
 	"upstream":    {"url": "string", "auth_env": "string", "timeout_ms": "positive-int", "trust_level": "string", "oauth_exchange": "string", "oauth_audience": "string", "oauth_scopes": "string-list"},
 	"hook":        {"transport": "string", "url": "string", "upstream": "string", "tool": "string", "auth_env": "string", "contract": "string", "on_error": "string", "timeout_ms": "positive-int", "trust_level": "string", "oauth_exchange": "string", "oauth_audience": "string", "oauth_scopes": "string-list"},
 	"policy":      {"decision_hook": "string", "scope": "string"},
-    "readback":    {"write_operation":"string","upstream":"string","read_tool":"string","intent_pointer":"string","read_argument":"string","result_pointer":"string","match_intent_pointer":"string","match_result_pointer":"string","safe_read":"bool"},
+    "readback":    {"write_operation":"string","upstream":"string","read_tool":"string","intent_pointer":"string","read_argument":"string","result_pointer":"string","match_intent_pointer":"string","match_result_pointer":"string","write_token_argument":"string","result_token_pointer":"string","safe_read":"bool"},
     "compensation":{"for_operation":"string","upstream":"string","tool":"string","intent_pointer":"string","argument":"string","enabled":"bool"},
 	"pipeline":    {"entry": "string", "timeout_ms": "positive-int", "concurrency": "positive-int"},
 	"surface":     {"path": "string", "oauth": "string", "required_scopes": "string-list"},

@@ -268,6 +268,12 @@ func TestTwoProcessMCPStand(t *testing.T) {
 
 	assertRecord(t, standContent(t, standCall(t, base, "alpha", "alpha_get",
 		map[string]any{"record_id": "seed_alpha"})), "alpha", "seed_alpha", "synthetic_alpha")
+	// A caller must not override the gateway's reserved write-identity field.
+	if result:=standCall(t,base,"alpha","alpha_put",map[string]any{
+		"record_id":"caller_token","value":"test","operation_token":strings.Repeat("a",64),
+	});result["isError"]!=true {
+		t.Fatalf("caller-selected write token was accepted: %#v",result)
+	}
 	if content := standContent(t, standCall(t, base, "beta", "beta_get",
 		map[string]any{"record_id": "seed_alpha"})); content["found"] != false {
 		t.Fatalf("beta read alpha's private state: %v", content)
@@ -310,8 +316,12 @@ func TestTwoProcessMCPStand(t *testing.T) {
 		unknown.TargetDigest != storage.TargetDigest("mcp", alpha.url) {
 		t.Fatalf("lost write not bound as a unique UNKNOWN effect: %+v (%d)", unknown, seen)
 	}
-	assertRecord(t, standContent(t, standCall(t, base, "alpha", "alpha_get",
-		map[string]any{"record_id": "lost_response"})), "alpha", "lost_response", "durable_synthetic_data")
+	lostRead:=standContent(t, standCall(t, base, "alpha", "alpha_get",
+		map[string]any{"record_id": "lost_response"}))
+	assertRecord(t, lostRead, "alpha", "lost_response", "durable_synthetic_data")
+	if record:=lostRead["record"].(map[string]any);record["operation_token"]!=unknown.ID {
+		t.Fatalf("provider did not persist exact Regate operation token: %#v",record)
+	}
 	assertStandCount(t, standStats(t, base, "alpha"), "writes_received", 2)
 	assertStandCount(t, standStats(t, base, "alpha"), "writes_committed", 2)
 
@@ -359,14 +369,18 @@ func TestTwoProcessMCPStand(t *testing.T) {
 		t.Fatalf("readback caused a duplicate write: %v", received)
 	}
 
-	// Negative evidence: an independent existing provider record with the
-	// same ID but a DIFFERENT value cannot prove that an unknown write with
-	// this ID applied. This journal attempt is synthetic and NEVER dispatched.
+	// Negative evidence: even identical record ID AND payload are not proof
+	// of this journaled write. The prior record has a different operation
+	// token. The synthetic collision is NEVER dispatched to alpha.
 	collisionIntent := map[string]any{
-		"record_id": "seed_alpha", "value": "a_different_value",
+		"record_id": "seed_alpha", "value": "synthetic_alpha",
+	}
+	collisionToken:=storage.EffectID("collision-no-dispatch","write","alpha.put_record")
+	collisionWire:=map[string]any{
+		"record_id":"seed_alpha","value":"synthetic_alpha","operation_token":collisionToken,
 	}
 	collision, err := svc.Store.BeginEffectBound("collision-no-dispatch", "write",
-		"alpha.put_record", storage.TargetDigest("mcp", alpha.url), collisionIntent)
+		"alpha.put_record", storage.TargetDigest("mcp", alpha.url), collisionWire)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -377,7 +391,7 @@ func TestTwoProcessMCPStand(t *testing.T) {
 		map[string]any{"effect_id": collision.ID, "adapter": "alpha_record", "intent": collisionIntent})
 	_ = mismatch.Body.Close()
 	if mismatch.StatusCode != http.StatusBadRequest {
-		t.Fatalf("identity collision incorrectly proved an unrelated payload: HTTP %d", mismatch.StatusCode)
+		t.Fatalf("identical id/payload falsely proved another operation: HTTP %d", mismatch.StatusCode)
 	}
 	collisionSaved, err := svc.Store.EffectGet(collision.ID)
 	if err != nil || collisionSaved.Status != "unknown" {
@@ -401,7 +415,11 @@ func TestTwoProcessMCPStand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read after provider restart: %v", err)
 	}
-	assertRecord(t, standContent(t, raw), "alpha", "lost_response", "durable_synthetic_data")
+	restartedRecord:=standContent(t,raw)
+	assertRecord(t, restartedRecord, "alpha", "lost_response", "durable_synthetic_data")
+	if record:=restartedRecord["record"].(map[string]any);record["operation_token"]!=unknown.ID {
+		t.Fatalf("provider restart lost write provenance: %#v",record)
+	}
 	stats, err := conn.CallTool(ctx, "stats", map[string]any{})
 	if err != nil {
 		t.Fatal(err)

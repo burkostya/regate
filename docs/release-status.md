@@ -1347,3 +1347,21 @@
   treating identity-only evidence as an applied write.
 - This is a conservative extra equality check, not a proof of external
   provider consistency, provenance, idempotence or fencing.
+
+#### Provider-stored per-operation identity for MCP readback (#7/#9)
+
+- Optional paired `write_token_argument`/`result_token_pointer` contracts
+  inject Regate's stable journal effect ID into a declared MCP write
+  **before** journal admission/network dispatch; original client arguments
+  cannot spoof the reserved field. The exact enriched intent is hashed.
+- Positive readback reconstructs this wire intent and checks both record
+  identity/payload and provider-returned operation ID before resolving.
+  A second operation with the **same record ID and same payload** remains
+  `unknown` if its never-dispatched token differs from the provider record.
+- The independent two-process stand fsyncs the token atomically with the
+  immutable fixture record, tests caller overrides, lost responses,
+  equal-payload collision, and token persistence after provider restart.
+- These assertions are conditional on an honest provider that enforces
+  durable unforgeable write provenance and read consistency. They do not
+  prove third-party/provider-native idempotency or cross-instance fencing,
+  and do not close #7/#9/#10 or certify the full release.
