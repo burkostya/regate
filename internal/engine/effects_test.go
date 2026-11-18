@@ -101,3 +101,38 @@ func TestEffectfulMCPCallLostResponseNeverRetries(t *testing.T){
     }
     if count.Load()!=1 {t.Fatalf("repeated uncertain external effect: %d",count.Load())}
 }
+
+func TestMCPPostAdmissionLeaderOrContextLossIsReconcilableWithoutReplay(t *testing.T) {
+    store:=effectTestStore(t)
+    const runID="lease-loss-run"
+    const node="write"
+    const operation="crm.create"
+    const endpoint="http://127.0.0.1:9876/mcp"
+    original:=map[string]any{"id":"C123"}
+    target:=storage.TargetDigest("mcp",endpoint)
+    attempt,err:=store.BeginEffectBound(runID,node,operation,target,original)
+    if err!=nil {t.Fatal(err)}
+    ctx,cancel:=context.WithCancel(context.Background())
+    cancel() // Fence the attempt after journaling but before remote dispatch.
+    err=New(store).checkMCPPostAdmission(ctx,attempt)
+    if !errors.Is(err,context.Canceled) {
+        t.Fatalf("canceled post-admission barrier returned %v",err)
+    }
+    saved,err:=store.EffectGet(attempt.ID)
+    if err!=nil {t.Fatal(err)}
+    if saved.Status!="unknown" || saved.IntentDigest=="" || saved.TargetDigest!=target {
+        t.Fatalf("refusal left an unreconcilable effect: %+v",saved)
+    }
+    if _,err=store.BeginEffectBound(runID,node,operation,target,original);
+        !errors.Is(err,storage.ErrEffectAlreadyAttempted) {
+        t.Fatalf("refused effect became replayable: %v",err)
+    }
+    // An operator can assess the UNKNOWN outcome without restarting the
+    // gateway; the intent and endpoint fingerprints remain stable.
+    resolved,err:=store.ResolveByOperator(attempt.ID,"test-operator","absent",
+        "original MCP dispatch was canceled at the lease barrier")
+    if err!=nil {t.Fatal(err)}
+    if resolved.Status!="resolved_absent" {
+        t.Fatalf("unexpected operator resolution: %+v",resolved)
+    }
+}
