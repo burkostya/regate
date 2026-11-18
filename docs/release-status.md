@@ -1398,3 +1398,21 @@
 - Bounded TLC is a safety abstraction, **not** runtime equivalence,
   a proof of provider behavior, provider-enforced idempotency or a
   production release certificate. #7/#9/#10 remain open.
+
+#### Independent anonymous third-party MCP interoperability (issue #9)
+
+- An opt-in live-network CI scenario connects to **Microsoft Learn**
+  (`https://learn.microsoft.com/api/mcp`) and **DeepWiki**
+  (`https://mcp.deepwiki.com/mcp`). Both are third-party-managed,
+  publicly documented, unauthenticated Streamable HTTP endpoints.
+- Each is exposed as a separate read-only, curated Regate MCP surface;
+  the official SDK checks anonymous upstream `tools/list`, outgoing
+  public-documentation `tools/call`, incoming Regate discovery, and
+  absence of write-journal effects.
+- The separate `External anonymous MCP interoperability` workflow runs
+  on relevant pull requests, weekly and by manual dispatch. This is a
+  live external service health/compatibility check and may fail when vendors
+  change tools, enforce limits, or experience outages. It is not a test of
+  provider-native write idempotency, durable reconciliation, or full v1.
+- The existing independent two-OS-process local MCP stand remains required
+  for safe, repeatable write/fault/restart acceptance.
