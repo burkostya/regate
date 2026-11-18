@@ -453,7 +453,11 @@ func (s *Server) mcpServer() *sdk.Server {
         if err:=s.revoke(a.RecordID,a.FenceEpoch);err!=nil {
             return rejected("fixture compensation rejected: "+err.Error()),nil
         }
-        if a.Fault=="error_after_commit" {
+        if a.Fault=="error_after_commit" ||
+            strings.HasPrefix(a.RecordID,"inverse_error_") {
+            // A fixed synthetic ID triggers an MCP error AFTER the inverse
+            // tombstone is fsynced. Regate's compensation HCL passes only
+            // record_id, so this exercises its real journal uncertainty path.
             return rejected("test-only post-compensation application error"),nil
         }
         return &sdk.CallToolResult{
@@ -547,7 +551,9 @@ func (s *Server) Handler() http.Handler {
 		_ = json.Unmarshal(body, &frame)
 		drop := frame.Method == "tools/call" &&
             (frame.Params.Name=="put_record" || frame.Params.Name=="revoke_record") &&
-            frame.Params.Arguments.Fault=="drop_after_commit"
+            (frame.Params.Arguments.Fault=="drop_after_commit" ||
+              frame.Params.Name=="revoke_record" &&
+              strings.HasPrefix(frame.Params.Arguments.RecordID,"inverse_drop_"))
 		if !drop {
 			sdkHandler.ServeHTTP(w, r)
 			return
