@@ -1,0 +1,37 @@
+name: External simulated MCP write acceptance
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Vendor-operated public sandbox, deliberately separate from the
+    # routine real read-only provider checks and never a release attestation.
+    - cron: '17 7 * * 5'
+  pull_request:
+    paths:
+      - '.github/workflows/public-simulated-mcp-write.yml'
+      - 'examples/public-simulated-write-mcp.hcl'
+      - 'internal/server/public_simulated_write_mcp_test.go'
+      - 'internal/mcp/**'
+      - 'internal/engine/**'
+      - 'internal/storage/effects.go'
+      - 'internal/netguard/**'
+      - 'go.mod'
+      - 'go.sum'
+
+permissions:
+  contents: read
+
+jobs:
+  simulated-write:
+    name: Third-party disposable MCP write and isError journal
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      REGATE_TEST_PUBLIC_MCP_WRITES: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Verify vendor sandbox write, error uncertainty, and no replay
+        run: go test -race ./internal/server -run '^TestPublicSimulatedMCPWriteAndError$' -count=1 -timeout 3m -v
