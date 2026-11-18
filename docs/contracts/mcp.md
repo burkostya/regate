@@ -70,3 +70,16 @@ The independent 8 MiB upstream response budget remains in force.
 
 This is a per-request limit, not a global throughput quota, a complete SSE
 stream-volume policy, or a comprehensive data-classification guarantee.
+
+## Bounded subscriptions/listen lifetime and admission (#9)
+
+The stateless inbound SSE subscription bus admits at most **64 concurrent
+listeners per Regate process**, with the admission check and registration under
+one mutex. The 65th connection receives HTTP 503 with `Retry-After: 5`
+**before** an SSE acknowledgment or event queue is allocated. Cancellation
+releases its slot. Each stream expires after 30 minutes, so clients must
+reconnect and refresh the catalog; notification queues remain bounded to 16
+items per listener, and HTTP writes have a 10-second deadline.
+
+This is local capacity protection, not multi-instance fairness, replayable SSE,
+per-principal quotas, provider change subscriptions or general DDoS defense.

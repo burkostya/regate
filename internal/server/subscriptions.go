@@ -5,10 +5,18 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 )
 
 // subscriptionStream represents an HTTP response awaiting a subset of
 // MCP notifications. It is intentionally local to one gateway process.
+// Prevent an unbounded number of long-lived authenticated SSE handlers from
+// pinning goroutines, sockets and event queues. Stateless listeners are
+// deliberately evicted after a fixed period and must reconnect and refresh.
+const maxSubscriptionStreams = 64
+const maxSubscriptionLifetime = 30 * time.Minute
+const subscriptionWriteTimeout = 10 * time.Second
+
 type subscriptionStream struct {
 	events        chan string
 	notifications map[string]bool
@@ -19,13 +27,17 @@ type subscriptionBus struct {
 	listeners map[*subscriptionStream]struct{}
 }
 
-func (b *subscriptionBus) add(s *subscriptionStream) {
+func (b *subscriptionBus) add(s *subscriptionStream) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if len(b.listeners) >= maxSubscriptionStreams {
+		return false
+	}
 	if b.listeners == nil {
 		b.listeners = make(map[*subscriptionStream]struct{})
 	}
 	b.listeners[s] = struct{}{}
+	return true
 }
 func (b *subscriptionBus) remove(s *subscriptionStream) {
 	b.mu.Lock()
@@ -58,6 +70,9 @@ func (b *subscriptionBus) emit(name string) {
 }
 
 func sendSSE(w http.ResponseWriter, v any) error {
+	// A slow or non-reading peer must not retain a handler indefinitely.
+	// Some test writers do not support deadlines; real net/http writers do.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(subscriptionWriteTimeout))
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -88,8 +103,14 @@ func (s *Service) listen(w http.ResponseWriter, r *http.Request, id json.RawMess
 		}
 	}
 	listener := &subscriptionStream{events: make(chan string, 16), notifications: notify}
-	s.subscriptions.add(listener)
+	if !s.subscriptions.add(listener) {
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, "subscription capacity reached", http.StatusServiceUnavailable)
+		return
+	}
 	defer s.subscriptions.remove(listener)
+	ctx, cancel := context.WithTimeout(r.Context(), maxSubscriptionLifetime)
+	defer cancel()
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache, no-store")
@@ -102,7 +123,7 @@ func (s *Service) listen(w http.ResponseWriter, r *http.Request, id json.RawMess
 	}
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case method := <-listener.events:
 			notif := map[string]any{"jsonrpc": "2.0", "method": method, "params": map[string]any{"_meta": meta}}
