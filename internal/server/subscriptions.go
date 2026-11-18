@@ -37,6 +37,9 @@ func (b *subscriptionBus) add(s *subscriptionStream) bool {
 	if b.listeners == nil {
 		b.listeners = make(map[*subscriptionStream]struct{})
 	}
+	if s.events == nil {
+		s.events = make(chan string, 16)
+	}
 	b.listeners[s] = struct{}{}
 	return true
 }
@@ -103,7 +106,7 @@ func (s *Service) listen(w http.ResponseWriter, r *http.Request, id json.RawMess
 			notify[method] = true
 		}
 	}
-	listener := &subscriptionStream{events: make(chan string, 16), notifications: notify}
+	listener := &subscriptionStream{notifications: notify}
 	if !s.subscriptions.add(listener) {
 		w.Header().Set("Retry-After", "5")
 		http.Error(w, "subscription capacity reached", http.StatusServiceUnavailable)
