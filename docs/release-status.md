@@ -1481,3 +1481,25 @@
   external crash recovery, positive write readback, native idempotency
   tokens/fencing or compensation. The full release gates in #7/#9/#10
   remain **open**.
+
+
+#### User-approved alpha/beta durable-provider acceptance substitute (#7/#9, PR #107)
+
+- The existing **two separate loopback MCP processes** now model native
+  operation-token idempotence, per-provider monotone epoch fencing and
+  operator-approved compensating tombstones. Each provider fsyncs isolated
+  state and preserves idempotence/epoch/tombstone counters after kill/restart.
+- Regate can now compensate token-injected MCP effects: the approved
+  `originalIntent` is reconstructed as the **exact contract-bound wire
+  intent** before digest validation. HCL/upstream drift, wrong endpoint,
+  changed payload and caller-picked tokens cannot authorize an inverse.
+- End-to-end tests use both alpha and beta via public MCP calls plus
+  authenticated management readback/compensation, and test independent
+  provider-level replay, stale fencing and restart persistence using the
+  official MCP SDK. The dedicated race gate covers both scenarios.
+- By explicit user decision, durable writes on an independently operated
+  **real** MCP provider are deferred to #106. These local results are
+  sufficient for the current engineering acceptance of the fixture-specific
+  semantics but are **not** vendor attestation or full release readiness.
+  Live-provider release conformance, broader #9 chaos/load/security/PII
+  review and #10 holistic production acceptance remain separate.
