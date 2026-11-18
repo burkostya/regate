@@ -90,6 +90,19 @@ func continuationRequest(paths [][]string, first bool) map[string]any {
 	}}
 }
 
+// continuationRecoveryRequest is not an elicitation for another answer:
+ // the final reply has already been committed, and recovering must use that
+ // immutable value. The caller must explicitly request recovery.
+func continuationRecoveryRequest() map[string]any {
+	return map[string]any{"resume":map[string]any{
+		"method":"elicitation/create",
+		"params":map[string]any{"mode":"form",
+			"message":"The final answer was already durably accepted. Verify external effect outcomes, then request recovery without sending another answer.",
+			"requestedSchema":map[string]any{"type":"object","additionalProperties":false}},
+		"recovery":true,
+	}}
+}
+
 func parseContinuationPath(response map[string]any)([]string,error) {
 	raw,found:=response["path"]
 	if !found {return nil,nil}
@@ -270,13 +283,26 @@ func (s *Service) TaskUpdateWithContext(ctx context.Context,id, owner string, in
 	var checkpoint engine.Checkpoint
 	if err:=s.Store.GetSuspended(t.RunID,&checkpoint);err!=nil {return nil,err}
 	waiting:=engine.PendingSuspensionPaths(&checkpoint)
-	if len(path)==0 && len(waiting)!=1 {
-		return nil,fmt.Errorf("explicit suspension path required")
-	}
-	if len(path)>0 {
-		valid:=false
-		for _,candidate:=range waiting {if slices.Equal(path,candidate) {valid=true;break}}
-		if !valid {return nil,fmt.Errorf("unknown or already answered suspension path")}
+	if len(waiting)==0 {
+		// Once all leaves are answered, clients cannot overwrite an accepted
+		// value. Recovery is a separate explicit intent, with no new content.
+		_,hasContent:=response["content"]
+		if response["recover"]!=true || len(path)!=0 || hasContent {
+			return nil,fmt.Errorf("recovery requires recover=true and no new continuation input")
+		}
+		value=nil
+	} else {
+		if response["recover"]==true {
+			return nil,fmt.Errorf("recovery forbidden while a suspension awaits input")
+		}
+		if len(path)==0 && len(waiting)!=1 {
+			return nil,fmt.Errorf("explicit suspension path required")
+		}
+		if len(path)>0 {
+			valid:=false
+			for _,candidate:=range waiting {if slices.Equal(path,candidate) {valid=true;break}}
+			if !valid {return nil,fmt.Errorf("unknown or already answered suspension path")}
+		}
 	}
 	source, e := s.Store.Source(t.Revision)
 	if e != nil {
@@ -360,12 +386,20 @@ func (s *Service) TaskUpdateWithContext(ctx context.Context,id, owner string, in
 			if err != nil {
 				pendingErr = s.Store.GetSuspended(t.RunID, &pending)
 			}
-			if err != nil && pendingErr == nil && len(engine.PendingSuspensionPaths(&pending)) > 0 {
+			if err != nil && pendingErr == nil {
 				updated.Status = "input_required"
-				updated.StatusMessage = "Continuation rejected; checkpoint retained. Check external effects before retrying."
-				updated.InputRequests = continuationRequest(engine.PendingSuspensionPaths(&pending),false)
 				updated.Result = nil
 				updated.Error = nil
+				paths := engine.PendingSuspensionPaths(&pending)
+				if len(paths) > 0 {
+					updated.StatusMessage = "Continuation rejected; checkpoint retained. Check external effects before retrying."
+					updated.InputRequests = continuationRequest(paths,false)
+				} else {
+					// A final answer was durably stored before downstream work
+					// failed. Never solicit or accept a replacement answer.
+					updated.StatusMessage = "Accepted answer retained; verify external effects before recovery."
+					updated.InputRequests = continuationRecoveryRequest()
+				}
 			} else {
 				updated.Status = "completed"
 				updated.StatusMessage = "Execution completed"
