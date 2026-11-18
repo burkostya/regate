@@ -28,9 +28,12 @@ func TestSubscriptionAdmissionIsAtomicAndBounded(t *testing.T) {
 			t.Fatalf("unexpected refusal at listener %d", i)
 		}
 	}
-	extra := &subscriptionStream{events: make(chan string, 16)}
+	extra := &subscriptionStream{}
 	if bus.add(extra) || subscriptionCount(&bus) != maxSubscriptionStreams {
 		t.Fatal("over-limit listener was registered")
+	}
+	if extra.events != nil {
+		t.Fatal("rejected listener allocated an event queue")
 	}
 	bus.emit("notifications/tools/list_changed")
 	for i, listener := range listeners {
