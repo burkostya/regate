@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/burkostya/regate/internal/engine"
 	"github.com/burkostya/regate/internal/mcp"
 	"github.com/burkostya/regate/internal/storage"
 	"github.com/burkostya/regate/internal/testmcp"
@@ -229,6 +230,7 @@ func TestTwoProcessMCPStand(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer svc.Store.Close()
+	activeCfg,_:=svc.Current()
 	api := httptest.NewServer(svc.Handler())
 	defer api.Close()
 	base := api.URL
@@ -319,8 +321,11 @@ func TestTwoProcessMCPStand(t *testing.T) {
 	lostRead:=standContent(t, standCall(t, base, "alpha", "alpha_get",
 		map[string]any{"record_id": "lost_response"}))
 	assertRecord(t, lostRead, "alpha", "lost_response", "durable_synthetic_data")
-	if record:=lostRead["record"].(map[string]any);record["operation_token"]!=unknown.ID {
-		t.Fatalf("provider did not persist exact Regate operation token: %#v",record)
+	lostToken,err:=engine.ReadbackOperationToken(unknown.ID,
+		activeCfg.Readbacks["alpha_record"],activeCfg.Upstreams["alpha"])
+	if err!=nil || lostToken==unknown.ID {t.Fatalf("invalid contract-bound token: %q %v",lostToken,err)}
+	if record:=lostRead["record"].(map[string]any);record["operation_token"]!=lostToken {
+		t.Fatalf("provider did not persist contract-bound token: %#v",record)
 	}
 	assertStandCount(t, standStats(t, base, "alpha"), "writes_received", 2)
 	assertStandCount(t, standStats(t, base, "alpha"), "writes_committed", 2)
@@ -375,7 +380,10 @@ func TestTwoProcessMCPStand(t *testing.T) {
 	collisionIntent := map[string]any{
 		"record_id": "seed_alpha", "value": "synthetic_alpha",
 	}
-	collisionToken:=storage.EffectID("collision-no-dispatch","write","alpha.put_record")
+	collisionToken,err:=engine.ReadbackOperationToken(
+		storage.EffectID("collision-no-dispatch","write","alpha.put_record"),
+		activeCfg.Readbacks["alpha_record"],activeCfg.Upstreams["alpha"])
+	if err!=nil {t.Fatal(err)}
 	collisionWire:=map[string]any{
 		"record_id":"seed_alpha","value":"synthetic_alpha","operation_token":collisionToken,
 	}
@@ -417,8 +425,8 @@ func TestTwoProcessMCPStand(t *testing.T) {
 	}
 	restartedRecord:=standContent(t,raw)
 	assertRecord(t, restartedRecord, "alpha", "lost_response", "durable_synthetic_data")
-	if record:=restartedRecord["record"].(map[string]any);record["operation_token"]!=unknown.ID {
-		t.Fatalf("provider restart lost write provenance: %#v",record)
+	if record:=restartedRecord["record"].(map[string]any);record["operation_token"]!=lostToken {
+		t.Fatalf("provider restart lost contract-bound write provenance: %#v",record)
 	}
 	stats, err := conn.CallTool(ctx, "stats", map[string]any{})
 	if err != nil {
