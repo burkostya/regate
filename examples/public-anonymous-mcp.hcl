@@ -98,11 +98,26 @@ pipeline "public_documentation_probe" {
       }
     }
   }
-  edge { from = "request" to = "docs" }
-  edge { from = "request" to = "wiki" }
-  edge { from = "docs" to = "both" }
-  edge { from = "wiki" to = "both" }
-  edge { from = "both" to = "result" }
+  edge {
+    from = "request"
+    to   = "docs"
+  }
+  edge {
+    from = "request"
+    to   = "wiki"
+  }
+  edge {
+    from = "docs"
+    to   = "both"
+  }
+  edge {
+    from = "wiki"
+    to   = "both"
+  }
+  edge {
+    from = "both"
+    to   = "result"
+  }
 }
 
 surface "combined" {
