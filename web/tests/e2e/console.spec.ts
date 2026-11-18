@@ -348,6 +348,10 @@ test('diff never creates a draft over unsaved HCL, and cleared HCL is not replac
 
   page.once('dialog', dialog => dialog.accept());
   await page.getByRole('button', { name: 'New draft' }).click();
+  // Wait for the async draft creation to finish before editing: the active
+  // preview can already contain text while the create request is in flight.
+  await expect(page.locator('label[for="hcl-source"]')).toContainText('· Draft ');
+  await expect(page.locator('#hcl-source')).toBeEnabled();
   await expect(page.locator('#hcl-source')).not.toHaveValue('');
   await page.locator('#hcl-source').fill('');
   const update = page.waitForRequest(r => r.url().endsWith('/api/draft-update') && r.method() === 'POST');
