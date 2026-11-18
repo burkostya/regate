@@ -1,0 +1,35 @@
+name: External anonymous MCP interoperability
+
+on:
+  workflow_dispatch:
+  schedule:
+    # An independent-provider acceptance signal, not a gating requirement
+    # for every local change; vendor outages/rate limits are not Regate bugs.
+    - cron: '23 6 * * 3'
+  pull_request:
+    paths:
+      - '.github/workflows/public-anonymous-mcp.yml'
+      - 'examples/public-anonymous-mcp.hcl'
+      - 'internal/server/public_anonymous_mcp_test.go'
+      - 'internal/mcp/**'
+      - 'internal/netguard/**'
+      - 'go.mod'
+      - 'go.sum'
+
+permissions:
+  contents: read
+
+jobs:
+  public-mcp:
+    name: Two external unauthenticated read-only MCP providers
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      REGATE_TEST_PUBLIC_MCP: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Verify two vendor HTTP MCP endpoints via real Regate surfaces
+        run: go test -race ./internal/server -run '^TestPublicAnonymousMCPProviders$' -count=1 -timeout 4m -v
