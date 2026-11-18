@@ -88,8 +88,10 @@ stored target and `upstream.tool` operation match the configured target.
 The administrator supplies the **original client write arguments**. Their
 canonical SHA-256 must match the effect's stored `intent_digest` before any
 external read is made. When a per-effect write token is configured, Regate
-reconstructs the transmitted arguments by injecting that reserved token from
-the stored effect ID before computing this digest. The caller must not supply
+reconstructs the transmitted arguments by deriving a deterministic token
+from the stored effect ID **and the original readback/upstream contract**
+before computing the request digest. A changed adapter yields a different
+expected token and refuses reconciliation before any remote read. The caller must not supply
 or override the token. One JSON Pointer extracts a stable identity from these arguments;
 the declared read tool is called with that identity, and a second pointer
 extracts the returned identity. By default an exact identity match is
@@ -105,20 +107,22 @@ eventually consistent not-found results all retain `unknown`: no
 ### Optional provider-persisted operation identity
 
 An HCL `readback` can set **both** `write_token_argument` and
-`result_token_pointer`. On any matching MCP write, Regate computes the
-existing stable journal effect ID before admission, rejects a caller-provided
-reserved field, injects this ID as the named top-level write argument, and
+`result_token_pointer`. On any matching MCP write, Regate derives a
+SHA-256 operation token from the stable journal effect ID and the effective
+readback/upstream contract (including the endpoint), rejects a caller-provided
+reserved field, injects the token as the named top-level write argument, and
 journals the exact enriched request digest. Its configured provider tool
 must accept this extra argument. On reconciliation, the read-only tool
-must return the **same operation ID** at the configured JSON Pointer,
+must return the **same contract-bound operation token** at the configured JSON Pointer,
 in addition to identity and any optional payload matches. The
 readback will refuse identical-ID, identical-payload historical records
 carrying a different operation ID, and will keep the effect `unknown`.
 
 This is only valid for a **verified provider** that atomically persists the
-operation ID with the write, cannot let a different actor forge an applied
+token with the write, prevents unrelated actors from manufacturing a matching
 receipt, enforces the required uniqueness/immutability and exposes
-sufficiently consistent reads. The fixture can demonstrate those properties
+sufficiently consistent reads. The token is a deterministic digest, **not a
+secret, a provider signature, or a cryptographic proof of write execution**. The fixture can demonstrate those properties
 under its controlled code. An arbitrary MCP provider, a user-created token,
 a merely matching string or the Go SDK itself cannot establish such
 attestation. No automatic retry, unconfirmed absence, general idempotency
@@ -128,10 +132,13 @@ or external fencing guarantee follows from this optional token mapping.
 behavior, not a protocol-generated proof. Only a resource-specific adapter
 with verified identity/consistency semantics should be trusted in production.
 A malicious MCP server that invents a matching identity can defeat this
-positive-only evidence check. The current management call uses the active HCL
-revision; changing the endpoint blocks reconciliation of old effects rather
-than silently checking a new server. Revision-pinned adapter attestation is
-outstanding work.
+positive-only evidence check. The current management call uses the active HCL revision; for token-bound
+writes, changing **any declared readback/upstream field** changes the
+expected token and fails the stored intent-digest comparison before any
+provider read. Thus old effects conservatively remain `unknown` if their
+original contract is no longer active. The original readback configuration
+is not yet selectable by immutable revision; revision-pinned adapter
+attestation is outstanding work.
 
 ## Operator-approved compensating effects
 
