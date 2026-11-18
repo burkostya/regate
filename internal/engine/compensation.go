@@ -29,9 +29,18 @@ func (r *Runtime) CompensateMCP(ctx context.Context,cfg *config.Config,
         source.Operation!=rule.ForOperation || source.Compensates!="" {
         return storage.Effect{},storage.ErrInvalidEvidence
     }
-    digest,err:=storage.DigestIntent(originalIntent)
+    // Effect admission stores the ACTUAL wire intent. A readback adapter
+    // may have injected a contract-bound provider operation token which is
+    // deliberately absent from the caller's original arguments. Reconstruct
+    // exactly that immutable intent, just as ReconcileMCP does. A changed
+    // HCL/upstream contract must fail before invoking an inverse.
+    tokenArg,token,err:=writeTokenArgument(cfg,source.Operation,upstream,source.ID)
+    if err!=nil {return storage.Effect{},storage.ErrInvalidEvidence}
+    wireIntent,err:=attachWriteToken(originalIntent,tokenArg,token)
+    if err!=nil {return storage.Effect{},storage.ErrInvalidEvidence}
+    digest,err:=storage.DigestIntent(wireIntent)
     if err!=nil || source.IntentDigest!=digest {return storage.Effect{},storage.ErrInvalidEvidence}
-    identity,ok:=jsonPointer(originalIntent,rule.IntentPointer)
+    identity,ok:=jsonPointer(wireIntent,rule.IntentPointer)
     if !ok || !readbackIdentity(identity) {
         return storage.Effect{},storage.ErrInvalidEvidence
     }
@@ -40,7 +49,7 @@ func (r *Runtime) CompensateMCP(ctx context.Context,cfg *config.Config,
     if err!=nil{return storage.Effect{},err}
     args:=map[string]any{rule.Argument:identity}
     attempt,err:=r.Store.BeginCompensation(originalID,rule.ForOperation,
-        target,upstream.Name+"."+rule.Tool,originalIntent,args,actor,reason)
+        target,upstream.Name+"."+rule.Tool,wireIntent,args,actor,reason)
     if err!=nil{return storage.Effect{},err}
     complete:=func(state string,cause error)(storage.Effect,error) {
         explanation:=""

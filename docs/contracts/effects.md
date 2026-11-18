@@ -216,3 +216,21 @@ original evidence in the authorized source system, not assume an
 arbitrary upstream error string is safe or complete proof.
 This redactor does not attest a provider's state or authorize
 reconciliation by itself.
+
+
+### Compensation of provider-token-bound writes (PR #107)
+
+When a readback adapter injects a provider operation token, the journal
+contains the digest of the **enriched wire intent**, not the untrusted input
+object supplied by the operator. A later explicitly approved inverse
+reconstructs that token using the original immutable effect ID and the
+*current matching* readback/upstream contract, checks the digest against
+the original journal, and refuses changed contracts before external I/O.
+A successful readback `resolved_applied` source is required first.
+Unchanged legacy tokenless inverse contracts retain their existing behavior.
+
+This allows the local alpha/beta write/readback/compensation acceptance stand
+to exercise the same contract-bound token across **both** actual provider
+processes. Their simulated local native idempotency and epoch fencing are
+bounded fixture guarantees only. A generic MCP provider does **not** inherit
+these guarantees; see deferred real-provider attestation issue #106.

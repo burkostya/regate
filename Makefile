@@ -6,7 +6,7 @@ test:
 	go test ./...
 
 test-mcp-stand:
-	go test -race ./internal/server -run TestTwoProcessMCPStand -count=1 -v
+	go test -race ./internal/server -run TestTwoProcessMCP -count=1 -v
 
 fmt:
 	gofmt -w ./cmd ./internal
