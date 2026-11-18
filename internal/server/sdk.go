@@ -201,6 +201,25 @@ func (m *inboundMCP) handle(s *Service, w http.ResponseWriter, r *http.Request, 
         r.Header = r.Header.Clone()
         r.Header.Set("Accept", "application/json, text/event-stream")
     }
+    // The official SDK owns the 2026-07-28 subscription stream, including
+    // acknowledgments, notification filtering and the live SSE connection.
+    // Reserve capacity *before* invoking it, rather than limiting the
+    // obsolete compatibility dispatcher (which does not receive these calls).
+    if r.Method == http.MethodPost && version == "2026-07-28" {
+        var call request
+        if json.Unmarshal(body, &call) == nil && call.Method == "subscriptions/listen" {
+            if !s.subscriptions.acquire() {
+                w.Header().Set("Retry-After", "5")
+                http.Error(w, "subscription capacity reached", http.StatusServiceUnavailable)
+                return
+            }
+            defer s.subscriptions.release()
+            ctx, cancel := context.WithTimeout(r.Context(), maxSubscriptionLifetime)
+            defer cancel()
+            r = r.WithContext(ctx)
+            w = &subscriptionDeadlineWriter{ResponseWriter: w}
+        }
+    }
     ep.handler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), sdkOwnerKey{}, bearer(r))))
 }
 

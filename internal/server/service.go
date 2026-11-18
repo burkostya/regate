@@ -24,7 +24,7 @@ type Service struct {
 	tasksMu       sync.Mutex
     queueOnce sync.Once
     queueWake chan struct{}
-	subscriptions subscriptionBus
+	subscriptions subscriptionLimiter
 	inbound       *inboundMCP
 }
 type catalogEntry struct {
@@ -121,9 +121,6 @@ func (s *Service) ActivateIfDigest(id, expectedDigest string) (storage.Revision,
     s.catalog = map[string]catalogEntry{}
     s.mu.Unlock()
     if cfg.MaxQueuedTasks>0 {s.startQueueDispatcher()}
-	s.subscriptions.emit("notifications/tools/list_changed")
-	s.subscriptions.emit("notifications/resources/list_changed")
-	s.subscriptions.emit("notifications/prompts/list_changed")
 	return rev, nil
 }
 func (s *Service) Rollback(target string) (storage.Revision, error) {
@@ -153,9 +150,6 @@ func (s *Service) Rollback(target string) (storage.Revision, error) {
     s.catalog = map[string]catalogEntry{}
     s.mu.Unlock()
     if cfg.MaxQueuedTasks>0 {s.startQueueDispatcher()}
-	s.subscriptions.emit("notifications/tools/list_changed")
-	s.subscriptions.emit("notifications/resources/list_changed")
-	s.subscriptions.emit("notifications/prompts/list_changed")
 	return rev, nil
 }
 func (s *Service) Discover(ctx context.Context, name string, refresh bool) (catalogEntry, error) {
