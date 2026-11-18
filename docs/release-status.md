@@ -1367,3 +1367,18 @@
   itself is NOT a provider signature or execution attestation). They do not
   prove third-party/provider-native idempotency or cross-instance fencing,
   and do not close #7/#9/#10 or certify the full release.
+
+#### MCP application errors after writes remain UNKNOWN (#7/#9)
+
+- A valid MCP HTTP response with `isError=true` can arrive **after**
+  the external provider committed. Effectful MCP writes now leave
+  `dispatching` as `unknown` for an application error, malformed
+  error flag, missing tool result or network failure; only a valid non-error
+  tool result records `confirmed`. Transparent MCP proxy error envelopes
+  remain unchanged; downstream policies and data outputs still fail closed.
+- The independently persisted two-process MCP stand deliberately fsyncs an
+  operation and then returns `isError=true`. The gateway must record
+  `unknown`, reconcile through authenticated positive-only readback
+  with its contract-bound operation token, and never re-dispatch the write.
+- This expands the tested uncertainty boundary but is not a third-party
+  provider idempotency/fencing attestation. Issues #7/#9/#10 remain open.
