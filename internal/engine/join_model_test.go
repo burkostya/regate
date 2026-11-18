@@ -37,11 +37,21 @@ func threeBranchJoinFixture(mode string, quorum int) string {
   }
 `, modeLine)
 	for _, branch := range []string{"a", "b", "c"} {
-		fmt.Fprintf(&src, `  edge { from = "start" to = %q }
-  edge { from = %q to = "merge" when = "true" }
+		fmt.Fprintf(&src, `  edge {
+    from = "start"
+    to = %q
+  }
+  edge {
+    from = %q
+    to = "merge"
+    when = "true"
+  }
 `, branch, branch)
 	}
-	src.WriteString(`  edge { from = "merge" to = "end" }
+	src.WriteString(`  edge {
+    from = "merge"
+    to = "end"
+  }
 }
 surface "three" {
   path = "/mcp/three"
