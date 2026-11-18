@@ -1259,3 +1259,19 @@
   contract: multi-provider production attestation, browser compatibility and
   accessibility audits, credential/operational hardening, load/security tests
   and holistic policy/effect verification remain in #9 and #10.
+
+#### Join semantics: finite model and three-branch runtime truth table (#7)
+
+- The join control barrier now has an explicit TLC state-machine abstraction
+  covering all/any/quorum thresholds for two and three distinct predecessors.
+  It checks complete settlement, required policy authorization, suppression
+  of writes on denial, publication only after confirmed outcomes and no blind
+  replay of unknown writes.
+- The compiler guarantee threshold is exhaustively checked across source and
+  winning branch subsets in the finite model. A matching Go runtime truth table
+  tests every three-branch guard result across all/any/quorum and repeated
+  concurrent scheduling, including suppressed publication on skipped joins.
+- These are bounded and synthetic tests, **not** an external provider
+  attestation or a proof of Go/provider correctness. Issue #7 and the broader
+  #9/#10 acceptance remain open pending verified adapters, failure scenarios
+  and model-linked end-to-end evidence.

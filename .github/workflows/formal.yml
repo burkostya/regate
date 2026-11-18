@@ -29,3 +29,9 @@ jobs:
       - name: Three-branch competing continuation interleavings
         working-directory: docs/formal
         run: java -XX:+UseParallelGC -jar /tmp/tla2tools.jar -workers 1 -deadlock -config ParallelSuspensions3.cfg ParallelSuspensions.tla
+      - name: Join safety all/any/quorum (2 and 3 control predecessors)
+        working-directory: docs/formal
+        run: |
+          for case in JoinSafetyAny2 JoinSafetyAll2 JoinSafetyAny3 JoinSafetyQuorum3 JoinSafetyAll3; do
+            java -XX:+UseParallelGC -jar /tmp/tla2tools.jar -workers 1 -deadlock -config "$case.cfg" JoinSafety.tla
+          done

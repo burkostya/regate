@@ -2,10 +2,15 @@
 
 GitHub CI runs the pinned TLA+ TLC 1.8.0 model checker (SHA-256
 `7e53aa636dac8a3cb0533f343115c0548e03fc0ce5edc7739becf58d3d0fb84f`)
-against two **finite** safety models (with two- and three-branch configurations):
+against three **finite** safety models (with two- and three-branch configurations):
 
 - `EffectLifecycle.tla` with `EffectLifecycle.cfg`: effect admission,
   uncertain outcomes, and the no-blind-write-retry invariant.
+- `JoinSafety.tla` with five `JoinSafety*.cfg` configurations: explicit
+  two/three-predecessor all/any/quorum settlement barriers, independent
+  authorization, no ambiguous write retry, and the static guaranteed-source
+  threshold rule. Go runtime truth tables in
+  `internal/engine/join_model_test.go` exercise matching branch outcomes.
 - `ParallelSuspensions.tla` with `ParallelSuspensions.cfg`: two independent
   effectful branches, serialized targeted continuation, invalid replies,
   worker crash during a claimed answer, and publication only after every
@@ -18,6 +23,9 @@ cd docs/formal
 java -XX:+UseParallelGC -jar /path/to/tla2tools.jar -workers 1 -deadlock -config EffectLifecycle.cfg EffectLifecycle.tla
 java -XX:+UseParallelGC -jar /path/to/tla2tools.jar -workers 1 -deadlock -config ParallelSuspensions.cfg ParallelSuspensions.tla
 java -XX:+UseParallelGC -jar /path/to/tla2tools.jar -workers 1 -deadlock -config ParallelSuspensions3.cfg ParallelSuspensions.tla
+for c in JoinSafetyAny2 JoinSafetyAll2 JoinSafetyAny3 JoinSafetyQuorum3 JoinSafetyAll3; do
+  java -XX:+UseParallelGC -jar /path/to/tla2tools.jar -workers 1 -deadlock -config "$c.cfg" JoinSafety.tla
+done
 ```
 
 The `-deadlock` switch suppresses terminal-state warnings for intentionally
