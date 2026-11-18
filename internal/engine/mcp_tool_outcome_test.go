@@ -144,6 +144,10 @@ func TestMCPApplicationErrorsAreNotReplayPermissions(t *testing.T) {
 	raw,err:=r.mcpCall(ctx,cfg,u,"fail",map[string]any{"id":"C903"},"error-run","write","write")
 	if err!=nil || raw["isError"]!=true {t.Fatalf("unexpected error envelope: %#v %v",raw,err)}
 	if err:=validateMCPToolOutcome(raw);err==nil {t.Fatal("isError accepted by caller")}
+	attempt,err:=store.EffectGet(storage.EffectID("error-run","write","crm.fail"))
+	if err!=nil || attempt.Status!="unknown" {
+		t.Fatalf("application-error write is not conservatively UNKNOWN: %+v %v",attempt,err)
+	}
 	_,err=r.mcpCall(ctx,cfg,u,"fail",map[string]any{"id":"C903"},"error-run","write","write")
 	if !errors.Is(err,storage.ErrEffectAlreadyAttempted) || failed.Load()!=1 {
 		t.Fatalf("errored write blindly replayed: %v calls=%d",err,failed.Load())
