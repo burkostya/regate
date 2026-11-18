@@ -70,3 +70,23 @@ The independent 8 MiB upstream response budget remains in force.
 
 This is a per-request limit, not a global throughput quota, a complete SSE
 stream-volume policy, or a comprehensive data-classification guarantee.
+
+## Bounded SDK subscriptions/listen lifetime and admission (#9)
+
+The official Go MCP SDK handles 2026-07-28 `subscriptions/listen` streams.
+Regate limits these **actual authenticated SDK requests** before dispatch:
+at most **64 concurrent listeners per process**, with an atomic capacity
+reservation. A 65th receives HTTP 503 and `Retry-After: 5` **before**
+the SDK creates an SSE session or acknowledges it. Cancellation releases
+the slot. A listener has a 30-minute maximum lifetime, and the SDK's outgoing
+SSE writes are guarded by a 10-second write deadline.
+
+The SDK continues to own protocol parsing, subscription filters,
+acknowledgment ordering and notifications; no alternate custom SSE
+implementation or competing notification bus is used. HTTP tests exercise
+the actual SDK stream, overflow rejection and notification delivery after
+activation.
+
+This is local capacity protection, **not** per-principal/global fairness,
+cross-process notification fanout, replayable SSE, resource update watchers
+or comprehensive load/chaos acceptance.

@@ -1275,3 +1275,19 @@
   attestation or a proof of Go/provider correctness. Issue #7 and the broader
   #9/#10 acceptance remain open pending verified adapters, failure scenarios
   and model-linked end-to-end evidence.
+
+#### Bounded actual SDK SSE subscription admission and lifespan (#9)
+
+- The official 2026-07-28 SDK owns `subscriptions/listen` end-to-end;
+  unlike the former unused compatibility handler, the admission guard
+  now caps **actual authenticated** SDK streams at 64 per process and
+  rejects additional requests with retryable HTTP 503 **before** SDK dispatch.
+- Each SSE request has a 30-minute maximum lifetime. A ResponseWriter wrapper
+  applies 10-second write deadlines to individual SDK event writes/flushes
+  without reimplementing protocol framing or notification filtering.
+- Real HTTP tests verify SDK acknowledgment, capacity boundary, cancellation,
+  and SDK list-change notification after activation. The limiter is atomic
+  and permits a new listener as soon as one disconnects.
+- This does not implement replayable events, cross-instance notification
+  fanout, per-principal quotas, independently validated upstream capability
+  semantics or production load/chaos acceptance; #9/#10 remain open.

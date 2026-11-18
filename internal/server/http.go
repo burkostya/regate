@@ -278,10 +278,6 @@ func (s *Service) mcp(w http.ResponseWriter, r *http.Request, surface string, ad
 			}
 		}
 	}
-	if latest && q.Method == "subscriptions/listen" {
-		s.listen(w, r, q.ID, q.Params)
-		return
-	}
 	if latest && strings.HasPrefix(q.Method, "tasks/") {
 		var result map[string]any
 		var e error
