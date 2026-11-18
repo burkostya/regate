@@ -44,8 +44,12 @@ func (v *MCPReadback) ReadBack(ctx context.Context,effect storage.Effect)(storag
     if (v.Definition.WriteTokenArgument=="")!=(v.Definition.ResultTokenPointer=="") {
         return storage.ReadbackObservation{},storage.ErrInvalidEvidence
     }
-    if v.Definition.WriteTokenArgument!="" && v.Intent[v.Definition.WriteTokenArgument]!=effect.ID {
-        return storage.ReadbackObservation{},storage.ErrInvalidEvidence
+    expectedToken:=""
+    if v.Definition.WriteTokenArgument!="" {
+        expectedToken,err=ReadbackOperationToken(effect.ID,v.Definition,v.Upstream)
+        if err!=nil || v.Intent[v.Definition.WriteTokenArgument]!=expectedToken {
+            return storage.ReadbackObservation{},storage.ErrInvalidEvidence
+        }
     }
     response,err:=v.Conn.CallTool(ctx,v.Definition.ReadTool,
         map[string]any{v.Definition.ReadArgument:expected})
@@ -77,7 +81,7 @@ func (v *MCPReadback) ReadBack(ctx context.Context,effect storage.Effect)(storag
     // provider token must identify this particular journaled write.
     if v.Definition.WriteTokenArgument!="" {
         received,found:=jsonPointer(response,v.Definition.ResultTokenPointer)
-        if !found || received!=effect.ID {
+        if !found || received!=expectedToken {
             return storage.ReadbackObservation{},storage.ErrInvalidEvidence
         }
     }
@@ -113,9 +117,14 @@ func (r *Runtime) ReconcileMCP(ctx context.Context,cfg *config.Config,
         effect.TargetDigest!=storage.TargetDigest("mcp",u.URL) {
         return storage.Effect{},storage.ErrInvalidEvidence
     }
-    // Restore the exact wire intent from the original client arguments and
-    // the journal's stable, non-client-supplied operation identity.
-    intent,err=attachWriteToken(intent,rule.WriteTokenArgument,effect.ID)
+    // Reconstruct the original wire intent. A revised HCL adapter changes
+    // the derived token, making its canonical digest mismatch before I/O.
+    writeToken:=""
+    if rule.WriteTokenArgument!="" {
+        writeToken,err=ReadbackOperationToken(effect.ID,rule,u)
+        if err!=nil{return storage.Effect{},storage.ErrInvalidEvidence}
+    }
+    intent,err=attachWriteToken(intent,rule.WriteTokenArgument,writeToken)
     if err!=nil{return storage.Effect{},storage.ErrInvalidEvidence}
     digest,err:=storage.DigestIntent(intent)
     if err!=nil || digest!=effect.IntentDigest {return storage.Effect{},storage.ErrInvalidEvidence}
@@ -126,18 +135,40 @@ func (r *Runtime) ReconcileMCP(ctx context.Context,cfg *config.Config,
     return r.Store.ResolveWithReadback(ctx,effectID,verifier)
 }
 
-// writeTokenArgument selects exactly one HCL-declared provider token contract
-// for the write, even when an unvalidated Config object is passed by Go code.
-func writeTokenArgument(cfg *config.Config,operation string)(string,error) {
-    argument:=""
+// ReadbackOperationToken derives a provider-visible token from both the
+// durable effect identity and the exact adapter/upstream trust contract.
+// A changed current HCL rule cannot reinterpret an earlier UNKNOWN write.
+func ReadbackOperationToken(effectID string,rule config.Readback,u config.Upstream)(string,error) {
+    if effectID=="" || rule.WriteTokenArgument=="" || rule.ResultTokenPointer=="" ||
+        rule.WriteOperation=="" || rule.Upstream!=u.Name || u.URL=="" {
+        return "",storage.ErrInvalidEvidence
+    }
+    binding:=struct{
+        Domain string `json:"domain"`
+        EffectID string `json:"effect_id"`
+        Readback config.Readback `json:"readback"`
+        Upstream config.Upstream `json:"upstream"`
+    }{"regate/mcp/readback-token/v2",effectID,rule,u}
+    raw,err:=json.Marshal(binding)
+    if err!=nil{return "",storage.ErrInvalidEvidence}
+    hash:=sha256.Sum256(raw)
+    return hex.EncodeToString(hash[:]),nil
+}
+
+// writeTokenArgument chooses the single bound adapter at dispatch time.
+func writeTokenArgument(cfg *config.Config,operation string,u config.Upstream,
+    effectID string)(string,string,error) {
+    var chosen *config.Readback
     for _,rule:=range cfg.Readbacks {
         if rule.WriteOperation!=operation || rule.WriteTokenArgument=="" {continue}
-        if argument!="" || rule.ResultTokenPointer=="" {
-            return "",storage.ErrInvalidEvidence
-        }
-        argument=rule.WriteTokenArgument
+        if chosen!=nil {return "","",storage.ErrInvalidEvidence}
+        next:=rule
+        chosen=&next
     }
-    return argument,nil
+    if chosen==nil {return "","",nil}
+    token,err:=ReadbackOperationToken(effectID,*chosen,u)
+    if err!=nil{return "","",err}
+    return chosen.WriteTokenArgument,token,nil
 }
 
 // attachWriteToken never mutates caller arguments and refuses any caller

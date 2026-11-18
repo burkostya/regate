@@ -1214,9 +1214,9 @@ func (r *Runtime) mcpCall(ctx context.Context,cfg *config.Config,u config.Upstre
     var attempt storage.Effect
     if effect!="read" {
         operation:=u.Name+"."+tool
-        tokenArg,tokenErr:=writeTokenArgument(cfg,operation)
+        tokenArg,token,tokenErr:=writeTokenArgument(cfg,operation,u,storage.EffectID(runID,node,operation))
         if tokenErr!=nil{return nil,tokenErr}
-        args,tokenErr=attachWriteToken(args,tokenArg,storage.EffectID(runID,node,operation))
+        args,tokenErr=attachWriteToken(args,tokenArg,token)
         if tokenErr!=nil{return nil,tokenErr}
         if r.Store==nil {return nil,fmt.Errorf("durable effect journal required before external write")}
         // The same logical run/node/operation has a stable journal identity.
