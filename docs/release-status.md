@@ -1351,9 +1351,10 @@
 #### Provider-stored per-operation identity for MCP readback (#7/#9)
 
 - Optional paired `write_token_argument`/`result_token_pointer` contracts
-  inject Regate's stable journal effect ID into a declared MCP write
-  **before** journal admission/network dispatch; original client arguments
-  cannot spoof the reserved field. The exact enriched intent is hashed.
+  derive a deterministic token from the journal effect ID and the declared
+  readback/upstream contract, and inject it into an MCP write **before**
+  journal admission/network dispatch; original client arguments cannot spoof
+  the reserved field. The exact enriched intent is hashed.
 - Positive readback reconstructs this wire intent and checks both record
   identity/payload and provider-returned operation ID before resolving.
   A second operation with the **same record ID and same payload** remains
@@ -1362,6 +1363,7 @@
   immutable fixture record, tests caller overrides, lost responses,
   equal-payload collision, and token persistence after provider restart.
 - These assertions are conditional on an honest provider that enforces
-  durable unforgeable write provenance and read consistency. They do not
+  durable, non-forgeable write provenance and read consistency (the hash
+  itself is NOT a provider signature or execution attestation). They do not
   prove third-party/provider-native idempotency or cross-instance fencing,
   and do not close #7/#9/#10 or certify the full release.
