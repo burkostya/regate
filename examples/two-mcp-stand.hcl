@@ -33,6 +33,8 @@ readback "alpha_record" {
   intent_pointer  = "/record_id"
   read_argument   = "record_id"
   result_pointer  = "/structuredContent/record/record_id"
+  match_intent_pointer = "/value"
+  match_result_pointer = "/structuredContent/record/value"
   safe_read       = true
 }
 readback "beta_record" {
@@ -42,6 +44,8 @@ readback "beta_record" {
   intent_pointer  = "/record_id"
   read_argument   = "record_id"
   result_pointer  = "/structuredContent/record/record_id"
+  match_intent_pointer = "/value"
+  match_result_pointer = "/structuredContent/record/value"
   safe_read       = true
 }
 

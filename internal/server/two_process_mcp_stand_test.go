@@ -359,6 +359,32 @@ func TestTwoProcessMCPStand(t *testing.T) {
 		t.Fatalf("readback caused a duplicate write: %v", received)
 	}
 
+	// Negative evidence: an independent existing provider record with the
+	// same ID but a DIFFERENT value cannot prove that an unknown write with
+	// this ID applied. This journal attempt is synthetic and NEVER dispatched.
+	collisionIntent := map[string]any{
+		"record_id": "seed_alpha", "value": "a_different_value",
+	}
+	collision, err := svc.Store.BeginEffectBound("collision-no-dispatch", "write",
+		"alpha.put_record", storage.TargetDigest("mcp", alpha.url), collisionIntent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Store.CompleteEffect(collision.ID, "unknown", "test-only lost-before-dispatch"); err != nil {
+		t.Fatal(err)
+	}
+	mismatch := jsonPost(t, base+"/api/effect-readback", "two-mcp-stand-admin",
+		map[string]any{"effect_id": collision.ID, "adapter": "alpha_record", "intent": collisionIntent})
+	_ = mismatch.Body.Close()
+	if mismatch.StatusCode != http.StatusBadRequest {
+		t.Fatalf("identity collision incorrectly proved an unrelated payload: HTTP %d", mismatch.StatusCode)
+	}
+	collisionSaved, err := svc.Store.EffectGet(collision.ID)
+	if err != nil || collisionSaved.Status != "unknown" {
+		t.Fatalf("identity-only false positive changed effect state: %+v %v", collisionSaved, err)
+	}
+	assertStandCount(t, standStats(t, base, "alpha"), "writes_received", 2)
+
 	// Abruptly terminate alpha (not the gateway or beta) and launch another
 	// OS process from the SAME dedicated directory. Query the official MCP
 	// SDK directly; no Regate URL rewrite or fresh write is permitted.

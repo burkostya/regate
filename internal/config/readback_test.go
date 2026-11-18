@@ -47,3 +47,27 @@ func TestReadbackRejectsUnsafeOrUnboundDeclarations(t *testing.T) {
         })
     }
 }
+
+func TestReadbackOptionalSemanticMatchContract(t *testing.T) {
+    attr := "  match_intent_pointer = \"/value\"\n  match_result_pointer = \"/structuredContent/record/value\"\n"
+    valid := strings.Replace(validReadbackHCL, "  safe_read = true\n", attr+"  safe_read = true\n", 1)
+    cfg,err:=Decode(example(t)+"\n"+valid)
+    if err!=nil {t.Fatalf("valid semantic match rejected: %v",err)}
+    got:=cfg.Readbacks["crm_check"]
+    if got.MatchIntentPointer!="/value" || got.MatchResultPointer!="/structuredContent/record/value" {
+        t.Fatalf("semantic match was not compiled: %#v",got)
+    }
+    cases:=[]struct{name,source string}{
+        {"missing-result-pointer",strings.Replace(valid, "  match_result_pointer = \"/structuredContent/record/value\"\n", "",1)},
+        {"missing-intent-pointer",strings.Replace(valid, "  match_intent_pointer = \"/value\"\n", "",1)},
+        {"invalid-intent-escape",strings.Replace(valid, "match_intent_pointer = \"/value\"", "match_intent_pointer = \"/bad~3pointer\"",1)},
+        {"invalid-result-escape",strings.Replace(valid, "match_result_pointer = \"/structuredContent/record/value\"", "match_result_pointer = \"/bad~2pointer\"",1)},
+    }
+    for _,tc:=range cases {
+        t.Run(tc.name,func(t *testing.T) {
+            if _,err:=Decode(example(t)+"\n"+tc.source);err==nil {
+                t.Fatalf("unsafe readback pair accepted: %s",tc.source)
+            }
+        })
+    }
+}

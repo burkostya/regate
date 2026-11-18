@@ -76,6 +76,10 @@ type Readback struct {
     IntentPointer string `json:"intent_pointer"`
     ReadArgument string `json:"read_argument"`
     ResultPointer string `json:"result_pointer"`
+    // Optional exact semantic match in addition to immutable record identity.
+    // Both pointers must be present; this does not attest provider consistency.
+    MatchIntentPointer string `json:"match_intent_pointer,omitempty"`
+    MatchResultPointer string `json:"match_result_pointer,omitempty"`
     SafeRead bool `json:"safe_read"`
 }
 // Compensation is an operator-approved, effectful inverse MCP call. Mapping
@@ -236,7 +240,10 @@ func Decode(src string) (*Config, error) {
             c.Readbacks[name]=Readback{Name:name,WriteOperation:b.String("write_operation"),
                 Upstream:b.String("upstream"),ReadTool:b.String("read_tool"),
                 IntentPointer:b.String("intent_pointer"),ReadArgument:b.String("read_argument"),
-                ResultPointer:b.String("result_pointer"),SafeRead:b.Bool("safe_read",false)}
+                ResultPointer:b.String("result_pointer"),
+                MatchIntentPointer:b.String("match_intent_pointer"),
+                MatchResultPointer:b.String("match_result_pointer"),
+                SafeRead:b.Bool("safe_read",false)}
 		case "compensation":
             c.Compensations[name]=Compensation{
                 Name:name,ForOperation:b.String("for_operation"),
@@ -401,6 +408,14 @@ func (c *Config) Validate() error {
         }
         if !validReadbackPointer(rb.IntentPointer) || !validReadbackPointer(rb.ResultPointer) {
             return fmt.Errorf("readback %s: invalid JSON pointer",name)
+        }
+        if (rb.MatchIntentPointer=="") != (rb.MatchResultPointer=="") {
+            return fmt.Errorf("readback %s: match_intent_pointer and match_result_pointer must be specified together",name)
+        }
+        if rb.MatchIntentPointer!="" &&
+            (!validReadbackPointer(rb.MatchIntentPointer) ||
+                !validReadbackPointer(rb.MatchResultPointer)) {
+            return fmt.Errorf("readback %s: invalid semantic match JSON pointer",name)
         }
     }
     for name,inverse:=range c.Compensations {

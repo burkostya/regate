@@ -109,3 +109,15 @@ on a public network would be unsafe.
 This is NOT real third-party MCP-provider attestation, proof of arbitrary
 mutable-resource consistency, cross-process global fencing, OAuth/PII
 certification or production load/chaos acceptance (#7/#9/#10).
+
+### Content matching for safe positive readback
+
+The stand's HCL readback adapters match both an immutable record ID and the
+exact original test `value` against the observed provider record. The optional
+`match_intent_pointer` and `match_result_pointer` pair is validated at
+compile time and checked after the usual endpoint/intent-digest/identity
+barriers. The negative test inserts a synthetic undelivered journal attempt
+whose ID already exists with a **different payload**, then proves that
+readback cannot falsely resolve it as applied. Equality is not equivalent
+to provider consistency/fencing attestation and cannot prove a write when
+some other actor may have produced an identical record.

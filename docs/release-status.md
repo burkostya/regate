@@ -1334,3 +1334,16 @@
 - This verifies independent local SDK processes, **not** unrelated external
   provider implementations, provider fencing/idempotency or production
   load/security/PII acceptance. Keep #7/#9/#10 open pending those proofs.
+
+#### Fail-closed payload matching in test-provider reconciliation (#7/#9)
+
+- A readback adapter may opt into two additional strict JSON pointers:
+  `match_intent_pointer` and `match_result_pointer`. The compiler
+  rejects missing halves or invalid selectors; the verifier requires both
+  the original record ID and the declared payload value to match.
+- The two-process MCP stand uses this contract for immutable records and
+  deliberately tests an undelivered write intent colliding with an existing
+  record ID but a different value. It must remain `unknown` rather than
+  treating identity-only evidence as an applied write.
+- This is a conservative extra equality check, not a proof of external
+  provider consistency, provenance, idempotence or fencing.
