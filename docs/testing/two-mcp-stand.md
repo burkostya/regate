@@ -114,12 +114,14 @@ certification or production load/chaos acceptance (#7/#9/#10).
 
 The stand's HCL readback adapters match the immutable record ID and the
 original `value` **and** the provider-persisted `operation_token`. Regate
-derives the token from the durable effect ID, rejects caller-supplied tokens,
-and injects it into each actual write; the fixture fsyncs the token in the
+derives the token from the durable effect ID **and the active HCL
+readback/upstream contract**, rejects caller-supplied tokens, and injects it
+into each actual write; the fixture fsyncs the token in the
 same atomic file replacement as the record, including when its response is
 deliberately lost. Reconciliation reconstructs the wire request from the
-original operator input and journal ID and requires the returned token to
-match. The process-restart test verifies token durability.
+original operator input, journal ID and matching original contract and
+requires the returned token to match. A changed active adapter fails before
+any remote read, leaving the effect unknown. The process-restart test verifies token durability.
 
 A negative test creates an **undispatched** journal entry targeting an
 existing record whose ID **and payload are identical**, but whose operation
