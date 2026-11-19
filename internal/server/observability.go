@@ -41,6 +41,8 @@ type httpObservability struct {
     counts map[requestMetricKey]requestMetric
     publicSlots chan struct{}
     adminSlots chan struct{}
+    publicRate *peerRateLimiter
+    adminRate *peerRateLimiter
     exporter *otlpTraceExporter
 }
 
@@ -55,6 +57,11 @@ func newHTTPObservability() (*httpObservability, error) {
         publicSlots:make(chan struct{},128),
         adminSlots:make(chan struct{},16),
     }
+    var err error
+    o.publicRate,err=rateLimiterFromEnv("PUBLIC",300,600)
+    if err!=nil {return nil,err}
+    o.adminRate,err=rateLimiterFromEnv("ADMIN",100,200)
+    if err!=nil {return nil,err}
     endpoint:=strings.TrimSpace(os.Getenv("REGATE_OTLP_TRACES_URL"))
     if endpoint!="" {
         u,err:=url.Parse(endpoint)
@@ -135,6 +142,14 @@ func (o *httpObservability) wrap(next http.Handler) http.Handler {
         writer:=&statusObserver{ResponseWriter:w}
         slots:=o.publicSlots
         if route=="admin_api" || route=="admin_mcp" {slots=o.adminSlots}
+        limiter:=o.publicRate
+        if route=="admin_api" || route=="admin_mcp" {limiter=o.adminRate}
+        if !limiter.allow(r.RemoteAddr) {
+            w.Header().Set("Retry-After","1")
+            http.Error(writer,"peer request budget exceeded",http.StatusTooManyRequests)
+            o.observe(route,method,writer.status,started)
+            return
+        }
         select {
         case slots<-struct{}{}:
             defer func(){ <-slots }()
