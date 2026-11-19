@@ -38,6 +38,35 @@ The acceptance exercises the following:
 CI executes the stand separately and as part of `go test -race ./...`.
 The same provider is available as an ordinary CLI for manual reproduction.
 
+## Composed v1 scenario on the same providers
+
+Run `make test-v1-acceptance` from the repository root. The Go test provisions
+alpha and beta on separate loopback ports with disposable state. It loads
+[`examples/v1-acceptance.hcl`](../../examples/v1-acceptance.hcl) in the Regate
+HTTP service and starts local JWKS, HTTP redaction and SDK MCP agent handlers.
+
+Both cases use a short-lived test bearer and one published MCP tool
+(`publish_summary`). The same typed graph requests a Decision API approval,
+reads synthetic notes from alpha, scrubs them, calls the MCP agent and joins
+its summary with a separate label branch before writing to beta. The test
+checks the exact redacted record in beta, the active revision in the run's
+trace, and the absence of the synthetic email and bearer in responses and
+management diagnostics.
+
+- **Confirmed:** The caller receives the record ID and the journal records
+  a confirmed beta write.
+- **Lost reply:** Beta commits before dropping the reply. MCP reports a tool
+  error and the effect remains `unknown` after reopening the gateway HTTP
+  service on the same SQLite state. Authenticated, token-bound readback marks
+  it `resolved_applied` and adds an audit entry without another beta write.
+
+The verbose output records the run, revision, effect and beta write counter.
+The full Go race suite also runs these cases. Remaining #10 scenarios include
+scope and policy denials on this graph, OAuth task recovery, the management
+MCP and browser authoring cycle, upstream schema changes, revision changes
+during live calls and production acceptance. Independent writable provider
+attestation remains in [#106](https://github.com/burkostya/regate/issues/106).
+
 ## Running the three processes by hand
 
 Use three terminal windows and a single disposable state root. Set the

@@ -1,4 +1,4 @@
-.PHONY: test test-mcp-stand run fmt vet web-dev web-build check
+.PHONY: test test-mcp-stand test-v1-acceptance run fmt vet web-dev web-build check
 run:
 	go run ./cmd/regate -config ./examples/regate.hcl -state ./.state
 
@@ -7,6 +7,9 @@ test:
 
 test-mcp-stand:
 	go test -race ./internal/server -run TestTwoProcessMCP -count=1 -v
+
+test-v1-acceptance:
+	go test -race ./internal/server -run '^TestV1Acceptance$$' -count=1 -v
 
 fmt:
 	gofmt -w ./cmd ./internal
