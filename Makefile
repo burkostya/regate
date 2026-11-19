@@ -1,4 +1,4 @@
-.PHONY: test test-mcp-stand test-v1-acceptance test-v1-browser run fmt vet web-dev web-build check
+.PHONY: test test-mcp-stand test-v1-acceptance test-v1-browser test-v1-full run fmt vet web-dev web-build check
 run:
 	go run ./cmd/regate -config ./examples/regate.hcl -state ./.state
 
@@ -14,6 +14,9 @@ test-v1-acceptance:
 test-v1-browser:
 	cd web && npm run build
 	REGATE_V1_ACCEPTANCE_BROWSER=1 go test -race ./internal/server -run '^TestV1Acceptance$$/^browser$$' -count=1 -v
+
+test-v1-full:
+	bash scripts/test-v1-full.sh
 
 fmt:
 	gofmt -w ./cmd ./internal

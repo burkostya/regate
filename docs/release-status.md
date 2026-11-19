@@ -54,11 +54,11 @@
 - Tasks survive restart, subscription notifications work, concurrency/authorization invariants pass formal and load tests.
 - Standard MCP conformance, browser integration, race/security and production acceptance suites all pass.
 
-The first shared local #10 scenario is runnable with
-`make test-v1-acceptance`. It covers the OAuth-protected typed Decision,
-redaction and agent graph through a confirmed beta write and through a lost
-reply followed by durable readback. See the
-[stand and remaining scenarios](testing/two-mcp-stand.md#composed-v1-scenario-on-the-same-providers).
+The shared local #10 scenario is runnable with `make test-v1-full`. It covers
+confirmed and uncertain writes, policy and privacy refusals, task recovery,
+revision isolation and subscription delivery, management and Chromium
+authoring, and rejection of an incompatible agent response. See the
+[stand, evidence and remaining release gates](testing/two-mcp-stand.md#composed-v1-scenario-on-the-same-providers).
 
 #### Compiler milestone: port schemas and source-safe graph edits
 

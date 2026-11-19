@@ -40,8 +40,11 @@ The same provider is available as an ordinary CLI for manual reproduction.
 
 ## Composed v1 scenario on the same providers
 
-Run `make test-v1-acceptance` from the repository root. The Go test provisions
-alpha and beta on separate loopback ports with disposable state. It loads
+Install the web dependencies and Playwright Chromium (see
+[the browser setup](../../README.md#browser-end-to-end-acceptance-test)),
+then run `make test-v1-full` from the repository root. It builds the
+production console and runs the complete local scenario from scratch. The Go
+test provisions alpha and beta on separate loopback ports with disposable state and loads
 [`examples/v1-acceptance.hcl`](../../examples/v1-acceptance.hcl) in the Regate
 HTTP service and starts local JWKS, HTTP redaction and SDK MCP agent handlers.
 
@@ -57,7 +60,8 @@ management diagnostics.
   a confirmed beta write.
 - **Lost reply:** Beta commits before dropping the reply. MCP reports a tool
   error and the effect remains `unknown` after reopening the gateway HTTP
-  service on the same SQLite state. Authenticated, token-bound readback marks
+  service on the same SQLite state and after rejected readback with a
+  mismatched intent. Authenticated, token-bound readback marks
   it `resolved_applied` and adds an audit entry without another beta write.
 - **Refusals:** A valid bearer without the tool scope dispatches no effects.
   A denied policy reaches Decision only, and a failed scrubber reaches alpha
@@ -74,18 +78,28 @@ management diagnostics.
   opaque HCL attribute and activation refuses it. The Chromium scenario
   performs the authoring cycle from the graph and HCL editors. It also checks
   that a stale graph projection cannot overwrite a draft with opaque HCL.
+- **Revision and subscription:** A live call waits in the agent while a new
+  label is activated. An existing OAuth subscription receives
+  `tools/list_changed`. The waiting call writes under the original revision;
+  a subsequent call uses the new label and revision.
+- **Schema drift:** After a deliberate agent output schema change, explicit
+  catalog refresh returns the new descriptor. The agent transport succeeds
+  but the typed node rejects the incompatible result before any beta write.
+  A fresh call succeeds once the fixture restores its contract.
 
-For Chromium, install the web dependencies and Playwright Chromium (see
-[the browser setup](../../README.md#browser-end-to-end-acceptance-test)),
-then run `make test-v1-browser`. It builds the production console and starts
-it on a new loopback port with a new disposable gateway. Set
-`REGATE_E2E_CHROMIUM_EXECUTABLE` to use an installed Chromium executable.
+The combined run writes `.state/v1-acceptance/latest.log` with the commit SHA,
+worktree status, case results and synthetic run, task, revision and effect IDs.
+Use `make test-v1-acceptance` for only the Go cases, or
+`make test-v1-browser` for only Chromium. The full Go race suite and the web
+browser job exercise their respective cases. Set
+`REGATE_E2E_CHROMIUM_EXECUTABLE` to use an installed Chromium executable;
+set `CC` if the host's compiler is named differently.
 
-The verbose output records the run, revision, effect and beta write counter.
-The full Go race suite runs the Go cases, and the web browser job runs the
-Chromium case. Remaining #10 scenarios include upstream schema changes,
-revision changes during live calls and production acceptance. Independent
-writable provider attestation remains in
+The stand verifies explicit discovery and runtime contract rejection.
+Automatic detection and quarantine of incompatible upstream schemas before
+dispatch, and production acceptance, remain in
+[#10](https://github.com/burkostya/regate/issues/10). Independent writable
+provider attestation remains in
 [#106](https://github.com/burkostya/regate/issues/106).
 
 ## Running the three processes by hand

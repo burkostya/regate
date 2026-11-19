@@ -80,18 +80,9 @@ func TestV1Acceptance(t *testing.T) {
 
 	alphaConn := mcp.NewConn(alpha.url, "", 5*time.Second)
 	betaConn := mcp.NewConn(beta.url, "", 5*time.Second)
-	providerCall := func(t *testing.T, conn *mcp.Conn, tool string, args map[string]any) map[string]any {
-		t.Helper()
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		result, err := conn.CallTool(ctx, tool, args)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return standContent(t, result)
-	}
+	providerCall := acceptanceProviderCall
 
-	for i, tc := range []struct {
+	for _, tc := range []struct {
 		name, status string
 		loseReply    bool
 	}{
@@ -101,6 +92,9 @@ func TestV1Acceptance(t *testing.T) {
 		if !t.Run(tc.name, func(t *testing.T) {
 			providerCall(t, alphaConn, "put_record", map[string]any{"record_id": tc.name, "value": acceptanceNotes})
 			base, rev, stop := startGateway(t)
+			before := providerCall(t, betaConn, "stats", nil)
+			agentCalls := calls.agent.Load()
+			totalWrites := int(before["writes_received"].(float64)) + 1
 
 			result := acceptancePublish(t, base, token, tc.name, tc.loseReply)
 			if (result["isError"] == true) != tc.loseReply {
@@ -115,42 +109,42 @@ func TestV1Acceptance(t *testing.T) {
 			value := "Summary for " + tc.name + ": " + acceptanceRedacted
 			record := providerCall(t, betaConn, "get_record", map[string]any{"record_id": tc.name})
 			assertRecord(t, record, "beta", tc.name, value)
-			if got := calls.agent.Load(); got != int64(i+1) {
-				t.Fatalf("agent accepted %d scrubbed calls, want %d", got, i+1)
+			if got := calls.agent.Load() - agentCalls; got != 1 {
+				t.Fatalf("agent accepted %d scrubbed calls, want one", got)
 			}
 			assertBetaWrites := func() {
 				stats := providerCall(t, betaConn, "stats", map[string]any{})
-				assertStandCount(t, stats, "writes_received", float64(i+1))
-				assertStandCount(t, stats, "writes_committed", float64(i+1))
+				assertStandCount(t, stats, "writes_received", float64(totalWrites))
+				assertStandCount(t, stats, "writes_committed", before["writes_committed"].(float64)+1)
 			}
 			assertBetaWrites()
 
-			effect := acceptanceBetaEffect(t, base, adminToken, token, beta.url, i+1)
+			effect := acceptanceBetaEffect(t, base, adminToken, token, beta.url, totalWrites)
 			if effect.Status != tc.status {
 				t.Fatalf("beta effect status=%q, want %q", effect.Status, tc.status)
 			}
-			var traces []storage.Trace
-			acceptanceAdminGet(t, base+"/api/traces?run_id="+effect.RunID, adminToken, token, &traces)
-			found := false
-			for _, trace := range traces {
-				if trace.RunID != effect.RunID || trace.Revision != rev {
-					t.Fatal("run trace was not bound to the active revision")
-				}
-				found = found || trace.Node == "join" && trace.Status == "success"
-			}
-			if !found {
-				t.Fatal("the typed join did not leave a successful trace")
-			}
-			t.Logf("revision=%s run=%s effect=%s status=%s beta_write_attempts=%d", rev, effect.RunID, effect.ID, effect.Status, i+1)
+			assertAcceptanceTraceRevision(t, base, adminToken, token, effect.RunID, rev, "join")
+			t.Logf("revision=%s run=%s effect=%s status=%s beta_write_attempts=%d", rev, effect.RunID, effect.ID, effect.Status, totalWrites)
 			if !tc.loseReply {
 				return
 			}
 
 			stop()
 			reopened, reopenedRev, _ := startGateway(t)
-			saved := acceptanceBetaEffect(t, reopened, adminToken, token, beta.url, i+1)
+			saved := acceptanceBetaEffect(t, reopened, adminToken, token, beta.url, totalWrites)
 			if reopenedRev != rev || saved.ID != effect.ID || saved.Status != "unknown" || saved.IntentDigest != effect.IntentDigest {
 				t.Fatal("gateway reopen changed the active revision or unresolved effect")
+			}
+			invalid := jsonPost(t, reopened+"/api/effect-readback", adminToken, map[string]any{
+				"effect_id": effect.ID, "adapter": "beta_record",
+				"intent": map[string]any{"record_id": tc.name, "value": "mismatched summary", "fault": "drop_after_commit"},
+			})
+			invalid.Body.Close()
+			if invalid.StatusCode != http.StatusBadRequest {
+				t.Fatalf("readback accepted a different intent: HTTP %d", invalid.StatusCode)
+			}
+			if unresolved := acceptanceBetaEffect(t, reopened, adminToken, token, beta.url, totalWrites); unresolved.Status != "unknown" {
+				t.Fatal("readback without matching evidence changed the unknown outcome")
 			}
 			intent := map[string]any{"record_id": tc.name, "value": value, "fault": "drop_after_commit"}
 			resolved := decode(t, jsonPost(t, reopened+"/api/effect-readback", adminToken, map[string]any{
@@ -159,7 +153,7 @@ func TestV1Acceptance(t *testing.T) {
 			if resolved["status"] != "resolved_applied" {
 				t.Fatal("positive readback did not resolve the committed write")
 			}
-			final := acceptanceBetaEffect(t, reopened, adminToken, token, beta.url, i+1)
+			final := acceptanceBetaEffect(t, reopened, adminToken, token, beta.url, totalWrites)
 			if final.ID != effect.ID || final.Status != "resolved_applied" || final.Resolution == nil ||
 				final.Resolution.Kind != "readback" || final.Resolution.Verifier != "hcl.readback:beta_record" {
 				t.Fatal("resolved effect is missing verified readback provenance")
@@ -170,7 +164,7 @@ func TestV1Acceptance(t *testing.T) {
 				t.Fatal("successful readback is missing from the management audit")
 			}
 			assertBetaWrites()
-			t.Logf("effect=%s status=%s beta_write_attempts=%d", final.ID, final.Status, i+1)
+			t.Logf("effect=%s status=%s beta_write_attempts=%d", final.ID, final.Status, totalWrites)
 		}) {
 			return
 		}
@@ -287,17 +281,8 @@ func TestV1Acceptance(t *testing.T) {
 		waitAcceptanceTask(t, base, fresh, taskID, "input_required")
 		assertStandCount(t, providerCall(t, betaConn, "stats", nil), "writes_received", betaWrites)
 
-		draft := acceptanceAdminTool(t, base, adminToken, "regate_draft_create", nil)
-		edit := acceptanceAdminTool(t, base, adminToken, "regate_attribute_patch", map[string]any{
-			"draft_id": draft["id"], "expected_source_digest": draft["source_digest"],
-			"path": "pipeline/publish_summary/node/label", "attribute": "value",
-			"expression": `"literal:New summary for "`,
-		})
-		revision := acceptanceAdminTool(t, base, adminToken, "regate_activate", map[string]any{
-			"draft_id": edit["id"], "expected_source_digest": edit["source_digest"],
-		})
-		activeRev, _ := revision["id"].(string)
-		if activeRev == "" || activeRev == originalRev {
+		activeRev := activateAcceptanceLabel(t, base, adminToken, `"literal:New summary for "`)
+		if activeRev == originalRev {
 			t.Fatal("activation did not produce a different revision")
 		}
 		t.Cleanup(func() {
@@ -333,6 +318,27 @@ func TestV1Acceptance(t *testing.T) {
 		base, _, _ := startGateway(t)
 		testAcceptanceBrowser(t, base, adminToken)
 	})
+
+	t.Run("live_revision_and_subscription", func(t *testing.T) {
+		base, rev, _ := startGateway(t)
+		testAcceptanceLiveRevision(t, base, adminToken, token, rev, beta.url, calls, alphaConn, betaConn)
+	})
+
+	t.Run("schema_drift", func(t *testing.T) {
+		base, rev, _ := startGateway(t)
+		testAcceptanceSchemaDrift(t, base, adminToken, token, rev, calls, alphaConn, betaConn)
+	})
+}
+
+func acceptanceProviderCall(t *testing.T, conn *mcp.Conn, tool string, args map[string]any) map[string]any {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := conn.CallTool(ctx, tool, args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return standContent(t, result)
 }
 
 func acceptancePublish(t *testing.T, base, token, recordID string, loseReply bool) map[string]any {
@@ -409,6 +415,8 @@ func assertAcceptanceTraceRevision(t *testing.T, base, adminToken, token, run, r
 
 type acceptanceCalls struct {
 	scrubber, agent atomic.Int64
+	pause           atomic.Pointer[acceptanceAgentPause]
+	setDrift        func(bool)
 }
 
 func startAcceptanceSupport(t *testing.T) (*httptest.Server, *rsa.PrivateKey, *acceptanceCalls) {
@@ -422,13 +430,37 @@ func startAcceptanceSupport(t *testing.T) (*httptest.Server, *rsa.PrivateKey, *a
 		Notes string `json:"notes"`
 	}
 	agent := sdk.NewServer(&sdk.Implementation{Name: "acceptance-summary-agent", Version: "1"}, nil)
-	sdk.AddTool(agent, &sdk.Tool{Name: "summarize"}, func(_ context.Context, _ *sdk.CallToolRequest, input notes) (*sdk.CallToolResult, notes, error) {
+	handleNotes := func(ctx context.Context, input notes) error {
 		calls.agent.Add(1)
 		if input.Notes != acceptanceRedacted {
-			return nil, notes{}, errors.New("agent expected scrubbed notes")
+			return errors.New("agent expected scrubbed notes")
 		}
-		return nil, notes{Notes: input.Notes}, nil
-	})
+		if pause := calls.pause.Swap(nil); pause != nil {
+			close(pause.entered)
+			select {
+			case <-pause.release:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return nil
+	}
+	type revisedOutput struct {
+		Overview string `json:"overview"`
+	}
+	calls.setDrift = func(drifted bool) {
+		tool := &sdk.Tool{Name: "summarize"}
+		if drifted {
+			sdk.AddTool(agent, tool, func(ctx context.Context, _ *sdk.CallToolRequest, input notes) (*sdk.CallToolResult, revisedOutput, error) {
+				return nil, revisedOutput{Overview: input.Notes}, handleNotes(ctx, input)
+			})
+			return
+		}
+		sdk.AddTool(agent, tool, func(ctx context.Context, _ *sdk.CallToolRequest, input notes) (*sdk.CallToolResult, notes, error) {
+			return nil, input, handleNotes(ctx, input)
+		})
+	}
+	calls.setDrift(false)
 	router := http.NewServeMux()
 	router.Handle("/mcp", sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return agent },
 		&sdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true}))
