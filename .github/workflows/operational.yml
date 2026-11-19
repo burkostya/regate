@@ -1,0 +1,26 @@
+name: Reproducible operational fault and fuzz checks
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '14 5 * * 6'
+  pull_request:
+    paths:
+      - 'internal/server/**'
+      - 'internal/strictjson/**'
+      - 'internal/storage/**'
+      - '.github/workflows/operational.yml'
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Bounded alpha and beta HTTP MCP load
+        run: go test -race ./internal/server -run '^TestTwoProcessMCPReadLoadIsolation$' -count=1 -v
+      - name: Strict management JSON framing fuzz campaign (20s)
+        run: go test ./internal/server -run '^$' -fuzz '^FuzzStrictAdminJSONObjectFraming$' -fuzztime=20s -parallel=2
+      - name: Race and privacy assurance of rate/collector failures
+        run: go test -race ./internal/server -run '^(TestPeerQuota|TestRateAdmission|TestRateQuotas|TestCollectorQueue)' -count=1 -v
