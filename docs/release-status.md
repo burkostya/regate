@@ -60,6 +60,12 @@ revision isolation and subscription delivery, management and Chromium
 authoring, and rejection of an incompatible agent response. See the
 [stand, evidence and remaining release gates](testing/two-mcp-stand.md#composed-v1-scenario-on-the-same-providers).
 
+Run `make test-v1-soak` for sustained mixed traffic with beta and Regate
+process failures. The same graph is used behind loopback proxies with
+independent OAuth identities and persisted state. The test checks lease
+takeover, protected side effects and audited reconciliation under this local
+profile. [Soak profile and report](testing/two-mcp-stand.md#sustained-mixed-traffic-and-process-failures)
+
 #### Compiler milestone: port schemas and source-safe graph edits
 
 - JSON Schema 2020-12 input/output contracts are compiled before activation.

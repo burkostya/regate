@@ -102,6 +102,35 @@ dispatch, and production acceptance, remain in
 provider attestation remains in
 [#106](https://github.com/burkostya/regate/issues/106).
 
+## Sustained mixed traffic and process failures
+
+Run `make test-v1-soak` to exercise the same OAuth-protected graph over six
+minutes of steady traffic plus outage and recovery windows. Eight parallel
+clients issue read-only MCP calls, normal publishes, publishes with a lost
+post-commit reply, and calls refused by tool scope, Decision or the scrubber.
+The run uses nine synthetic OAuth identities and a disposable SQLite database.
+Use `REGATE_SOAK_DURATION=9s make test-v1-soak` for a shorter profile or set a
+duration up to `15m`. The profile runs with Go's race detector.
+
+The test kills beta and continues serving mixed traffic during the outage.
+It restarts beta on the same state and continues the load. A loopback proxy
+then holds the successful reply to a designated beta write and the test kills
+the Regate process. The replacement acquires the real SQLite execution lease
+after expiry and continues serving calls through the same proxy endpoint.
+
+The test correlates every expected write with the provider record, operation
+token and corresponding SQLite journal entry. Committed uncertain writes must
+resolve via authenticated readback with audit evidence. Writes attempted while
+beta was offline remain `unknown` when readback cannot prove a commit. All
+provider writes are counted, and the responses and retained diagnostics are
+checked for synthetic PII and bearer leakage.
+
+See `.state/v1-soak/latest.log` for the Git SHA, traffic counts, p95 and maximum
+client latency by traffic class, measured recovery windows and verified write
+totals. This profile uses one Regate replica and loopback proxies. Cross-replica
+quotas, tenant data isolation and sustained production-scale capacity remain
+in [#10](https://github.com/burkostya/regate/issues/10).
+
 ## Running the three processes by hand
 
 Use three terminal windows and a single disposable state root. Set the
