@@ -52,7 +52,7 @@ func (s *Service) Handler() http.Handler {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		io.WriteString(w, `<!doctype html><html lang="en"><meta charset="utf-8"><title>Regate</title><style>body{font-family:system-ui;margin:6rem auto;max-width:48rem;padding:1rem;color:#263246}a{color:#365f91}code{background:#eee;padding:.2em .4em}</style><h1>Regate Gateway</h1><p>The MCP gateway is running. The SvelteKit/Svelte Flow console is a separate development service.</p><p>Start it with <code>make web-dev</code>, then open <a href="http://localhost:5173">localhost:5173</a>.</p><p>Health: <a href="/healthz">/healthz</a>.</p></html>`)
 	})
-	return mux
+	return s.observability.wrap(mux)
 }
 func constantTimeEq(a, b string) bool {
 	return a != "" && b != "" && subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
@@ -112,7 +112,10 @@ func (s *Service) api(w http.ResponseWriter, r *http.Request) {
 	cfg, rev := s.Current()
 	if r.Method == "GET" {
 		switch p {
-		case "status":
+		case "metrics":
+            reply(w, 200, s.observability.Snapshot())
+            return
+        case "status":
 			reply(w, 200, s.Status())
 			return
 		case "config":
@@ -438,6 +441,9 @@ func (s *Service) dispatchMCP(ctx context.Context, surface string, admin bool, m
 	return nil, &mcp.RPCError{Code: -32601, Message: "method not implemented: " + method}
 }
 func (s *Service) Serve(ctx context.Context, addr string) error {
+    if s.observability != nil && s.observability.exporter != nil {
+        go s.observability.exporter.run(ctx)
+    }
 	httpSrv := &http.Server{Addr: addr, Handler: s.Handler(), ReadHeaderTimeout: 8 * time.Second, IdleTimeout: 75 * time.Second}
 	go func() {
 		<-ctx.Done()
