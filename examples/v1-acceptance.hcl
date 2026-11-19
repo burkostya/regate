@@ -97,6 +97,7 @@ pipeline "publish_summary" {
     tool      = "get_record"
     effect    = "read"
     arguments = { record_id = "input.record_id" }
+    mock      = { record = { value = "Synthetic preview" } }
   }
 
   node "redact" {
@@ -111,8 +112,8 @@ pipeline "publish_summary" {
     value = "nodes.redact.value"
     output_schema = {
       type       = "object"
-      properties = { summary = { type = "string" } }
-      required   = ["summary"]
+      properties = { notes = { type = "string" } }
+      required   = ["notes"]
     }
   }
 
@@ -125,13 +126,13 @@ pipeline "publish_summary" {
   node "join" {
     kind  = "join"
     mode  = "all"
-    value = "ports.label + input.record_id + ': ' + ports.agent.summary"
+    value = "ports.label + input.record_id + ': ' + ports.agent.notes"
     input_ports = {
       label = { type = "string" }
       agent = {
         type       = "object"
-        properties = { summary = { type = "string" } }
-        required   = ["summary"]
+        properties = { notes = { type = "string" } }
+        required   = ["notes"]
       }
     }
     output_schema = { type = "string" }
@@ -142,6 +143,7 @@ pipeline "publish_summary" {
     upstream = "beta"
     tool     = "put_record"
     effect   = "write"
+    mock     = { record = { record_id = "preview" } }
     arguments = {
       record_id = "input.record_id"
       value     = "nodes.join.value"

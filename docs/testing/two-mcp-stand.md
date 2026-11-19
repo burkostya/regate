@@ -68,12 +68,25 @@ management diagnostics.
   owner without the tool scope cannot resume it. The owner resumes with a
   fresh bearer after a new revision is activated. The task writes once using
   its original revision, verified in the stored result and run trace.
+- **Authoring:** The management MCP client reads the shipped authoring skill,
+  inspects the upstream catalogs, patches a draft, validates, dry-runs,
+  reviews the semantic diff, activates and rolls back. A patch preserves an
+  opaque HCL attribute and activation refuses it. The Chromium scenario
+  performs the authoring cycle from the graph and HCL editors. It also checks
+  that a stale graph projection cannot overwrite a draft with opaque HCL.
+
+For Chromium, install the web dependencies and Playwright Chromium (see
+[the browser setup](../../README.md#browser-end-to-end-acceptance-test)),
+then run `make test-v1-browser`. It builds the production console and starts
+it on a new loopback port with a new disposable gateway. Set
+`REGATE_E2E_CHROMIUM_EXECUTABLE` to use an installed Chromium executable.
 
 The verbose output records the run, revision, effect and beta write counter.
-The full Go race suite also runs these cases. Remaining #10 scenarios include
-the management MCP and browser authoring cycle, upstream schema changes,
-revision changes during live calls and production acceptance. Independent writable provider
-attestation remains in [#106](https://github.com/burkostya/regate/issues/106).
+The full Go race suite runs the Go cases, and the web browser job runs the
+Chromium case. Remaining #10 scenarios include upstream schema changes,
+revision changes during live calls and production acceptance. Independent
+writable provider attestation remains in
+[#106](https://github.com/burkostya/regate/issues/106).
 
 ## Running the three processes by hand
 

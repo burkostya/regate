@@ -320,6 +320,19 @@ func TestV1Acceptance(t *testing.T) {
 		assertStandCount(t, providerCall(t, betaConn, "stats", nil), "writes_received", betaWrites+1)
 		t.Logf("task=%s revision=%s active_revision=%s effect=%s status=%s", taskID, originalRev, activeRev, effect.ID, effect.Status)
 	})
+
+	t.Run("management_mcp", func(t *testing.T) {
+		base, _, _ := startGateway(t)
+		testAcceptanceAuthoring(t, base, adminToken)
+	})
+
+	t.Run("browser", func(t *testing.T) {
+		if os.Getenv("REGATE_V1_ACCEPTANCE_BROWSER") != "1" {
+			t.Skip("opt in with make test-v1-browser")
+		}
+		base, _, _ := startGateway(t)
+		testAcceptanceBrowser(t, base, adminToken)
+	})
 }
 
 func acceptancePublish(t *testing.T, base, token, recordID string, loseReply bool) map[string]any {
@@ -408,16 +421,13 @@ func startAcceptanceSupport(t *testing.T) (*httptest.Server, *rsa.PrivateKey, *a
 	type notes struct {
 		Notes string `json:"notes"`
 	}
-	type summary struct {
-		Summary string `json:"summary"`
-	}
 	agent := sdk.NewServer(&sdk.Implementation{Name: "acceptance-summary-agent", Version: "1"}, nil)
-	sdk.AddTool(agent, &sdk.Tool{Name: "summarize"}, func(_ context.Context, _ *sdk.CallToolRequest, input notes) (*sdk.CallToolResult, summary, error) {
+	sdk.AddTool(agent, &sdk.Tool{Name: "summarize"}, func(_ context.Context, _ *sdk.CallToolRequest, input notes) (*sdk.CallToolResult, notes, error) {
 		calls.agent.Add(1)
 		if input.Notes != acceptanceRedacted {
-			return nil, summary{}, errors.New("agent expected scrubbed notes")
+			return nil, notes{}, errors.New("agent expected scrubbed notes")
 		}
-		return nil, summary{Summary: input.Notes}, nil
+		return nil, notes{Notes: input.Notes}, nil
 	})
 	router := http.NewServeMux()
 	router.Handle("/mcp", sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return agent },
