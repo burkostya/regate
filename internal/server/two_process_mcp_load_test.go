@@ -80,6 +80,19 @@ func TestTwoProcessMCPReadLoadIsolation(t *testing.T) {
     if before!=after {t.Fatalf("denied branch performed protected reads: %v -> %v",before,after)}
     assertStandCount(t,standStats(t,base,"alpha"),"writes_committed",1)
     assertStandCount(t,standStats(t,base,"beta"),"writes_committed",0)
-    if len(svc.Store.Effects())!=1 {t.Fatalf("read load fabricated external effects: %v",svc.Store.Effects())}
+    // Authorization hooks have their own correctly journaled HTTP effects.
+    // Count only external provider writes: the denied requests must not
+    // create an additional alpha/beta put_record entry.
+    writeEvents:=0
+    for _,effect:=range svc.Store.Effects() {
+        if effect.Operation=="alpha.put_record" {
+            writeEvents++
+            if effect.Status!="confirmed" {t.Fatalf("seed write uncertain: %#v",effect)}
+        }
+        if effect.Operation=="beta.put_record" {
+            t.Fatalf("denied load dispatched a write to beta: %#v",effect)
+        }
+    }
+    if writeEvents!=1 {t.Fatalf("unexpected provider write effect count: %d",writeEvents)}
     t.Log("64 read calls under 8 concurrent clients, 2 live OS-process providers, no write amplification")
 }
