@@ -184,7 +184,7 @@ func (s *Store) initialize(initial string) error {
     defer tx.Rollback()
     var version int
     if err=tx.QueryRow("PRAGMA user_version").Scan(&version);err!=nil{return err}
-    if version>5 {return fmt.Errorf("database schema version %d is newer than Regate",version)}
+    if version>6 {return fmt.Errorf("database schema version %d is newer than Regate",version)}
     if version==0 {
         for _,stmt:=range []string{
             `CREATE TABLE IF NOT EXISTS revisions (
@@ -303,6 +303,20 @@ func (s *Store) initialize(initial string) error {
             }
         }
     }
+    if version<6 {
+        if _,err=tx.Exec(`CREATE TABLE IF NOT EXISTS audit_events (
+            seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            at TEXT NOT NULL,
+            category TEXT NOT NULL,
+            action TEXT NOT NULL,
+            outcome TEXT NOT NULL,
+            prev_digest TEXT NOT NULL,
+            digest TEXT NOT NULL
+        )`);err!=nil{return fmt.Errorf("SQLite v6 audit migration: %w",err)}
+        if _,err=tx.Exec("PRAGMA user_version=6");err!=nil{return err}
+    }
+    // Refuse to open a modified or truncated historical audit chain.
+    if err=verifyAuditTx(tx);err!=nil{return fmt.Errorf("audit integrity: %w",err)}
     var count int
     if err=tx.QueryRow("SELECT COUNT(*) FROM revisions").Scan(&count);err!=nil{return err}
     if count==0 {

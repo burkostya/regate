@@ -22,6 +22,7 @@ type Arg struct {
 
 var AdminTools = map[string][]Arg{
 	"regate_status":           {},
+    "regate_audit": {},
 	"regate_upstreams":        {},
 	"regate_inspect":          {{"name", "Upstream name", false}},
 	"regate_config_get":       {},
@@ -134,11 +135,49 @@ func checkExpectedExecutionRevision(args map[string]any, current string) error {
     }
     return nil
 }
-func (s *Service) Admin(ctx context.Context, name string, args map[string]any) (any, error) {
+// An administrative effect cannot begin when its durable audit admission
+// record is unavailable. The second record is best effort after the
+// operation, but a failure must never be presented as a successful retry.
+var auditedManagementMutations = map[string]bool{
+    "regate_draft_create":true,
+    "regate_draft_patch":true,
+    "regate_activate":true,
+    "regate_rollback":true,
+    "regate_graph_patch":true,
+    "regate_attribute_patch":true,
+    "regate_attribute_add":true,
+    "regate_queue_rewrap":true,
+    "regate_grant_rewrap":true,
+    "regate_effect_compensate":true,
+    "regate_effect_readback":true,
+    "regate_effect_decide":true,
+    "regate_run":true,
+    "regate_resume":true,
+    "regate_task_resume_grant":true,
+    "regate_upstream_refresh":true,
+}
+func (s *Service) Admin(ctx context.Context,name string,args map[string]any)(any,error) {
+    if !auditedManagementMutations[name] {return s.adminOperation(ctx,name,args)}
+    if err:=s.Store.AppendAudit("management",name,"started");err!=nil {
+        return nil,fmt.Errorf("management audit admission unavailable: %w",err)
+    }
+    result,err:=s.adminOperation(ctx,name,args)
+    outcome:="succeeded"
+    if err!=nil {outcome="failed"}
+    if auditErr:=s.Store.AppendAudit("management",name,outcome);auditErr!=nil {
+        // A successful remote effect may already exist. Never imply rollback
+        // or tell clients to retry an unknown outcome.
+        return nil,fmt.Errorf("management action outcome audit unavailable; inspect state before retry: %w",auditErr)
+    }
+    return result,err
+}
+func (s *Service) adminOperation(ctx context.Context, name string, args map[string]any) (any, error) {
 	cfg, rev := s.Current()
 	switch name {
 	case "regate_status":
 		return s.Status(), nil
+    case "regate_audit":
+        return s.Store.AuditTail(100)
 	case "regate_upstreams":
 		return cfg.Upstreams, nil
 	case "regate_inspect":
