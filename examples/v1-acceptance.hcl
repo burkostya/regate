@@ -81,6 +81,16 @@ pipeline "publish_summary" {
     value     = "input"
   }
 
+  node "require_approval" {
+    kind = "condition"
+    test = "has(input.approval_required) && input.approval_required"
+  }
+
+  node "approval" {
+    kind          = "suspend"
+    output_schema = { type = "boolean", const = true }
+  }
+
   node "fetch" {
     kind      = "mcp.call"
     upstream  = "alpha"
@@ -146,10 +156,29 @@ pipeline "publish_summary" {
 
   edge {
     from = "authorize"
+    to   = "require_approval"
+  }
+  edge {
+    from = "require_approval"
+    to   = "approval"
+    when = "true"
+  }
+  edge {
+    from = "require_approval"
+    to   = "fetch"
+    when = "false"
+  }
+  edge {
+    from = "require_approval"
+    to   = "label"
+    when = "false"
+  }
+  edge {
+    from = "approval"
     to   = "fetch"
   }
   edge {
-    from = "authorize"
+    from = "approval"
     to   = "label"
   }
   edge {
@@ -203,8 +232,9 @@ surface "acceptance" {
     input_schema = {
       type = "object"
       properties = {
-        record_id  = { type = "string" }
-        lose_reply = { type = "boolean" }
+        record_id         = { type = "string" }
+        lose_reply        = { type = "boolean" }
+        approval_required = { type = "boolean" }
       }
       required             = ["record_id", "lose_reply"]
       additionalProperties = false

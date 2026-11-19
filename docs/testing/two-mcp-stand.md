@@ -63,12 +63,16 @@ management diagnostics.
   A denied policy reaches Decision only, and a failed scrubber reaches alpha
   and redaction only. The test checks provider and hook counters, plus the
   absence of the synthetic failure payload in the reply and diagnostics.
+- **OAuth task recovery:** A task waits for approval before reading alpha.
+  The service is reopened on the same SQLite state. Another subject and an
+  owner without the tool scope cannot resume it. The owner resumes with a
+  fresh bearer after a new revision is activated. The task writes once using
+  its original revision, verified in the stored result and run trace.
 
 The verbose output records the run, revision, effect and beta write counter.
 The full Go race suite also runs these cases. Remaining #10 scenarios include
-OAuth task recovery, the management
-MCP and browser authoring cycle, upstream schema changes, revision changes
-during live calls and production acceptance. Independent writable provider
+the management MCP and browser authoring cycle, upstream schema changes,
+revision changes during live calls and production acceptance. Independent writable provider
 attestation remains in [#106](https://github.com/burkostya/regate/issues/106).
 
 ## Running the three processes by hand

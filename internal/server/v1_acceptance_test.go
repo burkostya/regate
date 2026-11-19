@@ -104,7 +104,9 @@ func TestV1Acceptance(t *testing.T) {
 
 			result := acceptancePublish(t, base, token, tc.name, tc.loseReply)
 			if (result["isError"] == true) != tc.loseReply {
-				t.Fatalf("unexpected MCP result for lose_reply=%t", tc.loseReply)
+				var traces []storage.Trace
+				acceptanceAdminGet(t, base+"/api/traces", adminToken, token, &traces)
+				t.Fatalf("unexpected MCP result for lose_reply=%t: traces=%v", tc.loseReply, traces)
 			}
 			if !tc.loseReply && standContent(t, result)["record_id"] != tc.name {
 				t.Fatal("successful reply did not identify the written record")
@@ -228,24 +230,168 @@ func TestV1Acceptance(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("recover_oauth_task", func(t *testing.T) {
+		const recordID = "approval_task"
+		providerCall(t, alphaConn, "put_record", map[string]any{"record_id": recordID, "value": acceptanceNotes})
+		alphaReads := providerCall(t, alphaConn, "stats", nil)["reads"].(float64)
+		betaWrites := providerCall(t, betaConn, "stats", nil)["writes_received"].(float64)
+		base, originalRev, stop := startGateway(t)
+		created := acceptanceRPC(t, base+"/mcp/acceptance", token, "tools/call", map[string]any{
+			"name":      "publish_summary",
+			"arguments": map[string]any{"record_id": recordID, "lose_reply": false, "approval_required": true},
+			"_meta": map[string]any{
+				"io.modelcontextprotocol/protocolVersion": "2026-07-28",
+				"io.modelcontextprotocol/clientCapabilities": map[string]any{
+					"extensions": map[string]any{"io.modelcontextprotocol/tasks": map[string]any{}},
+				},
+			},
+		})
+		handle, _ := created["result"].(map[string]any)
+		taskID, _ := handle["taskId"].(string)
+		if taskID == "" {
+			t.Fatalf("async MCP call did not start a task: %v", created["error"])
+		}
+		waitAcceptanceTask(t, base, token, taskID, "input_required")
+		assertStandCount(t, providerCall(t, alphaConn, "stats", nil), "reads", alphaReads)
+		assertStandCount(t, providerCall(t, betaConn, "stats", nil), "writes_received", betaWrites)
+
+		stop()
+		base, reopenedRev, _ := startGateway(t)
+		if reopenedRev != originalRev {
+			t.Fatal("reopen did not retain the original active revision")
+		}
+		update := map[string]any{
+			"taskId":         taskID,
+			"inputResponses": map[string]any{"resume": map[string]any{"action": "accept", "content": true}},
+		}
+		other := signedTestJWTSubject(t, private, acceptanceIssuer, acceptanceAudience,
+			"acceptance:access summary:write", "another-test-user")
+		denied := latestCall(t, base+"/mcp/acceptance", other, "tasks/update", 1, update)
+		var refusal struct {
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		err := json.NewDecoder(denied.Body).Decode(&refusal)
+		denied.Body.Close()
+		if err != nil || denied.StatusCode < 400 || refusal.Error.Message != "task not found" {
+			t.Fatalf("another OAuth subject could address the task: HTTP %d (%v)", denied.StatusCode, err)
+		}
+		limited := signedTestJWT(t, private, acceptanceIssuer, acceptanceAudience, "acceptance:access")
+		if got := acceptanceRPC(t, base+"/mcp/acceptance", limited, "tasks/update", update); got["error"] == nil {
+			t.Fatal("owner without the original tool scope could resume the task")
+		}
+		fresh := signedTestJWT(t, private, acceptanceIssuer, acceptanceAudience,
+			"acceptance:access summary:write extra:read")
+		waitAcceptanceTask(t, base, fresh, taskID, "input_required")
+		assertStandCount(t, providerCall(t, betaConn, "stats", nil), "writes_received", betaWrites)
+
+		draft := acceptanceAdminTool(t, base, adminToken, "regate_draft_create", nil)
+		edit := acceptanceAdminTool(t, base, adminToken, "regate_attribute_patch", map[string]any{
+			"draft_id": draft["id"], "expected_source_digest": draft["source_digest"],
+			"path": "pipeline/publish_summary/node/label", "attribute": "value",
+			"expression": `"literal:New summary for "`,
+		})
+		revision := acceptanceAdminTool(t, base, adminToken, "regate_activate", map[string]any{
+			"draft_id": edit["id"], "expected_source_digest": edit["source_digest"],
+		})
+		activeRev, _ := revision["id"].(string)
+		if activeRev == "" || activeRev == originalRev {
+			t.Fatal("activation did not produce a different revision")
+		}
+		t.Cleanup(func() {
+			// A failed assertion still leaves the shared stand on its baseline source.
+			acceptanceAdminTool(t, base, adminToken, "regate_rollback", map[string]any{"revision": originalRev})
+		})
+
+		updated := acceptanceRPC(t, base+"/mcp/acceptance", fresh, "tasks/update", update)
+		if updated["error"] != nil {
+			t.Fatalf("owner could not resume task after restart: %v", updated["error"])
+		}
+		completed := waitAcceptanceTask(t, base, fresh, taskID, "completed")
+		if result, ok := completed["result"].(map[string]any); !ok || standContent(t, result)["record_id"] != recordID {
+			t.Fatal("resumed OAuth task did not return its published record ID")
+		}
+		record := providerCall(t, betaConn, "get_record", map[string]any{"record_id": recordID})
+		assertRecord(t, record, "beta", recordID, "Summary for "+recordID+": "+acceptanceRedacted)
+		effect := acceptanceBetaEffect(t, base, adminToken, fresh, beta.url, int(betaWrites)+1)
+		assertAcceptanceTraceRevision(t, base, adminToken, fresh, effect.RunID, originalRev, "write")
+		assertStandCount(t, providerCall(t, betaConn, "stats", nil), "writes_received", betaWrites+1)
+		t.Logf("task=%s revision=%s active_revision=%s effect=%s status=%s", taskID, originalRev, activeRev, effect.ID, effect.Status)
+	})
 }
 
 func acceptancePublish(t *testing.T, base, token, recordID string, loseReply bool) map[string]any {
 	t.Helper()
-	reply := decode(t, latestCall(t, base+"/mcp/acceptance", token, "tools/call", 1, map[string]any{
+	reply := acceptanceRPC(t, base+"/mcp/acceptance", token, "tools/call", map[string]any{
 		"name":      "publish_summary",
 		"arguments": map[string]any{"record_id": recordID, "lose_reply": loseReply},
-	}))
-	wire, err := json.Marshal(reply)
-	if err != nil {
-		t.Fatal(err)
-	}
-	checkAcceptancePrivacy(t, "public MCP reply", wire, token)
+	})
 	result, ok := reply["result"].(map[string]any)
 	if !ok {
 		t.Fatal("missing public MCP tool result")
 	}
 	return result
+}
+
+func acceptanceRPC(t *testing.T, endpoint, token, method string, params map[string]any) map[string]any {
+	t.Helper()
+	reply := decode(t, latestCall(t, endpoint, token, method, 1, params))
+	wire, err := json.Marshal(reply)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkAcceptancePrivacy(t, "MCP reply", wire, token)
+	return reply
+}
+
+func acceptanceAdminTool(t *testing.T, base, token, name string, args map[string]any) map[string]any {
+	t.Helper()
+	if args == nil {
+		args = map[string]any{}
+	}
+	reply := acceptanceRPC(t, base+"/mcp/admin", token, "tools/call", map[string]any{"name": name, "arguments": args})
+	result, ok := reply["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("management MCP %s returned a protocol error: %v", name, reply["error"])
+	}
+	return standContent(t, result)
+}
+
+func waitAcceptanceTask(t *testing.T, base, token, taskID, status string) map[string]any {
+	t.Helper()
+	var actual any
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		reply := acceptanceRPC(t, base+"/mcp/acceptance", token, "tasks/get", map[string]any{"taskId": taskID})
+		result, ok := reply["result"].(map[string]any)
+		if !ok {
+			t.Fatalf("task lookup returned no result: %v", reply["error"])
+		}
+		actual = result["status"]
+		if actual == status {
+			return result
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("task %s stayed at %v, wanted %s", taskID, actual, status)
+	return nil
+}
+
+func assertAcceptanceTraceRevision(t *testing.T, base, adminToken, token, run, rev, node string) {
+	t.Helper()
+	var traces []storage.Trace
+	acceptanceAdminGet(t, base+"/api/traces?run_id="+run, adminToken, token, &traces)
+	found := false
+	for _, trace := range traces {
+		if trace.RunID != run || trace.Revision != rev {
+			t.Fatal("run trace used a different revision")
+		}
+		found = found || trace.Node == node && trace.Status == "success"
+	}
+	if !found {
+		t.Fatalf("run did not trace successful node %s", node)
+	}
 }
 
 type acceptanceCalls struct {
