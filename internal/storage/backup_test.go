@@ -198,3 +198,28 @@ func TestVerifiedBackupRestoresUnknownEffectsAndUnclaimedQueueSafely(t *testing.
             scheduled,args,err)
     }
 }
+
+func TestVerifyBackupRejectsModifiedOrDeletedAuditEvents(t *testing.T) {
+    s,err:=New(t.TempDir(),initSource())
+    if err!=nil{t.Fatal(err)}
+    defer s.Close()
+    if err=s.AppendAudit("management","regate_activate","started");err!=nil{t.Fatal(err)}
+    if err=s.AppendAudit("management","regate_activate","succeeded");err!=nil{t.Fatal(err)}
+    for _,mutation:=range []struct{name,sql string}{
+        {"tamper", "UPDATE audit_events SET outcome='failed' WHERE seq=1"},
+        {"delete", "DELETE FROM audit_events WHERE seq=1"},
+    } {
+        t.Run(mutation.name,func(t *testing.T) {
+            backup:=filepath.Join(t.TempDir(),"mutated-audit.sqlite")
+            report,err:=s.BackupVerified(backup)
+            if err!=nil || report.AuditEvents!=2 {t.Fatalf("valid journal not backed up: %v %#v",err,report)}
+            db,err:=sql.Open("sqlite3","file:"+backup)
+            if err!=nil{t.Fatal(err)}
+            if _,err=db.Exec(mutation.sql);err!=nil{t.Fatal(err)}
+            if err=db.Close();err!=nil{t.Fatal(err)}
+            if _,err=VerifyBackup(backup);!errors.Is(err,ErrInvalidBackup) {
+                t.Fatalf("tampered audit backup accepted: %v",err)
+            }
+        })
+    }
+}

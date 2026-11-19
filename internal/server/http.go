@@ -112,7 +112,11 @@ func (s *Service) api(w http.ResponseWriter, r *http.Request) {
 	cfg, rev := s.Current()
 	if r.Method == "GET" {
 		switch p {
-		case "metrics":
+		case "audit":
+            events,e:=s.Store.AuditTail(200)
+            if e!=nil {http.Error(w,"audit integrity verification unavailable",http.StatusServiceUnavailable)} else {reply(w,200,events)}
+            return
+        case "metrics":
             reply(w, 200, s.observability.Snapshot())
             return
         case "status":
@@ -183,11 +187,20 @@ func (s *Service) api(w http.ResponseWriter, r *http.Request) {
 			errorJSON(w, 400, e)
 			return
 		}
-		if e = s.Store.SaveLayout(strings.TrimPrefix(p, "layout/"), v); e != nil {
-			errorJSON(w, 400, e)
-			return
-		}
-		reply(w, 200, map[string]any{"saved": true})
+        if e=s.Store.AppendAudit("management","regate_layout_put","started");e!=nil {
+            http.Error(w,"management audit unavailable",http.StatusServiceUnavailable)
+            return
+        }
+        if e=s.Store.SaveLayout(strings.TrimPrefix(p, "layout/"),v);e!=nil {
+            _=s.Store.AppendAudit("management","regate_layout_put","failed")
+            errorJSON(w,400,e)
+            return
+        }
+        if e=s.Store.AppendAudit("management","regate_layout_put","succeeded");e!=nil {
+            http.Error(w,"management outcome audit unavailable; inspect state",http.StatusServiceUnavailable)
+            return
+        }
+        reply(w,200,map[string]any{"saved":true})
 		return
 	}
 	if r.Method == "POST" {

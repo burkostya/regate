@@ -24,6 +24,7 @@ type BackupManifest struct {
     ActiveRevision string `json:"active_revision"`
     Revisions int `json:"revisions"`
     Effects int `json:"effects"`
+    AuditEvents int `json:"audit_events"`
     Tasks int `json:"tasks"`
     Queued int `json:"queued"`
     Grants int `json:"grants"`
@@ -31,7 +32,7 @@ type BackupManifest struct {
     SHA256 string `json:"sha256"`
 }
 
-const latestSQLiteVersion = 5
+const latestSQLiteVersion = 6
 
 // VerifyBackup inspects a standalone SQLite snapshot without ever calling
 // Store.New (which could run recovery/migrations). It refuses symlinks,
@@ -66,6 +67,15 @@ func VerifyBackup(path string)(BackupManifest,error) {
         return manifest,ErrInvalidBackup
     }
     manifest.SchemaVersion=version
+
+    // Even a structurally intact SQLite snapshot may have a forged or
+    // truncated management audit chain. Reject it *before* publishing or
+    // allowing recovery to proceed.
+    auditRows,auditErr:=db.Query(auditSelect+" ORDER BY seq")
+    if auditErr!=nil{return BackupManifest{},ErrInvalidBackup}
+    auditCount,_,auditErr:=verifyAuditRows(auditRows)
+    if auditErr!=nil {return BackupManifest{},ErrInvalidBackup}
+    manifest.AuditEvents=int(auditCount)
 
     rows,err:=db.Query(`SELECT id,digest,parent,source
         FROM revisions ORDER BY seq`)
