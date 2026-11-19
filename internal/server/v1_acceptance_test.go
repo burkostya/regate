@@ -24,15 +24,16 @@ import (
 )
 
 const (
-	acceptanceIssuer   = "https://issuer.test"
-	acceptanceAudience = "https://regate.test/mcp/acceptance"
-	acceptanceEmail    = "acceptance-marker@example.com"
-	acceptanceNotes    = "Contact " + acceptanceEmail
-	acceptanceRedacted = "Contact [REDACTED]"
+	acceptanceIssuer       = "https://issuer.test"
+	acceptanceAudience     = "https://regate.test/mcp/acceptance"
+	acceptanceEmail        = "acceptance-marker@example.com"
+	acceptanceNotes        = "Contact " + acceptanceEmail
+	acceptanceRedacted     = "Contact [REDACTED]"
+	acceptanceScrubFailure = "Fail scrubber for " + acceptanceEmail
 )
 
-// Both writes go through the same OAuth-protected graph. Alpha and beta are
-// separate SDK processes, and only the gateway is reopened for readback.
+// The allow, fault and refusal cases use one OAuth-protected graph and
+// separate alpha and beta SDK processes.
 func TestV1Acceptance(t *testing.T) {
 	const adminToken = "v1-acceptance-local-admin"
 	t.Setenv("REGATE_ADMIN_TOKEN", adminToken)
@@ -41,7 +42,7 @@ func TestV1Acceptance(t *testing.T) {
 	root := t.TempDir()
 	alpha := startStandProcess(t, "alpha", filepath.Join(root, "alpha"))
 	beta := startStandProcess(t, "beta", filepath.Join(root, "beta"))
-	support, private, agentCalls := startAcceptanceSupport(t)
+	support, private, calls := startAcceptanceSupport(t)
 	token := signedTestJWT(t, private, acceptanceIssuer, acceptanceAudience, "acceptance:access summary:write")
 
 	template, err := os.ReadFile("../../examples/v1-acceptance.hcl")
@@ -101,17 +102,8 @@ func TestV1Acceptance(t *testing.T) {
 			providerCall(t, alphaConn, "put_record", map[string]any{"record_id": tc.name, "value": acceptanceNotes})
 			base, rev, stop := startGateway(t)
 
-			reply := decode(t, latestCall(t, base+"/mcp/acceptance", token, "tools/call", 1, map[string]any{
-				"name":      "publish_summary",
-				"arguments": map[string]any{"record_id": tc.name, "lose_reply": tc.loseReply},
-			}))
-			wire, err := json.Marshal(reply)
-			if err != nil {
-				t.Fatal(err)
-			}
-			checkAcceptancePrivacy(t, "public MCP reply", wire, token)
-			result, ok := reply["result"].(map[string]any)
-			if !ok || (result["isError"] == true) != tc.loseReply {
+			result := acceptancePublish(t, base, token, tc.name, tc.loseReply)
+			if (result["isError"] == true) != tc.loseReply {
 				t.Fatalf("unexpected MCP result for lose_reply=%t", tc.loseReply)
 			}
 			if !tc.loseReply && standContent(t, result)["record_id"] != tc.name {
@@ -121,7 +113,7 @@ func TestV1Acceptance(t *testing.T) {
 			value := "Summary for " + tc.name + ": " + acceptanceRedacted
 			record := providerCall(t, betaConn, "get_record", map[string]any{"record_id": tc.name})
 			assertRecord(t, record, "beta", tc.name, value)
-			if got := agentCalls.Load(); got != int64(i+1) {
+			if got := calls.agent.Load(); got != int64(i+1) {
 				t.Fatalf("agent accepted %d scrubbed calls, want %d", got, i+1)
 			}
 			assertBetaWrites := func() {
@@ -181,15 +173,92 @@ func TestV1Acceptance(t *testing.T) {
 			return
 		}
 	}
+
+	t.Run("refusals", func(t *testing.T) {
+		base, _, _ := startGateway(t)
+		limited := signedTestJWT(t, private, acceptanceIssuer, acceptanceAudience, "acceptance:access")
+		for _, tc := range []struct {
+			name, id, notes, bearer string
+			alphaReads, scrubs      int
+			journalNodes            map[string]string
+		}{
+			{name: "missing_tool_scope", id: "scope_refused", notes: acceptanceNotes, bearer: limited},
+			{name: "decision_denied", id: "DENY-policy", notes: acceptanceNotes, bearer: token,
+				journalNodes: map[string]string{"run/node:authorize": "confirmed"}},
+			{name: "scrubber_failed", id: "redaction_failed", notes: acceptanceScrubFailure, bearer: token,
+				alphaReads: 1, scrubs: 1, journalNodes: map[string]string{"run/node:authorize": "confirmed", "run/node:redact": "unknown"}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				providerCall(t, alphaConn, "put_record", map[string]any{"record_id": tc.id, "value": tc.notes})
+				alphaReads := providerCall(t, alphaConn, "stats", nil)["reads"].(float64)
+				betaStats := providerCall(t, betaConn, "stats", nil)
+				scrubs, agents := calls.scrubber.Load(), calls.agent.Load()
+				var before []storage.Effect
+				acceptanceAdminGet(t, base+"/api/effects", adminToken, token, &before)
+				known := make(map[string]bool, len(before))
+				for _, effect := range before {
+					known[effect.ID] = true
+				}
+
+				result := acceptancePublish(t, base, tc.bearer, tc.id, false)
+				if result["isError"] != true || result["structuredContent"] != nil {
+					t.Fatal("refused invocation returned successful or structured data")
+				}
+				assertStandCount(t, providerCall(t, alphaConn, "stats", nil), "reads", alphaReads+float64(tc.alphaReads))
+				afterBeta := providerCall(t, betaConn, "stats", nil)
+				assertStandCount(t, afterBeta, "writes_received", betaStats["writes_received"].(float64))
+				assertStandCount(t, afterBeta, "writes_committed", betaStats["writes_committed"].(float64))
+				if calls.agent.Load() != agents || calls.scrubber.Load()-scrubs != int64(tc.scrubs) {
+					t.Fatal("refused invocation crossed an unexpected hook boundary")
+				}
+
+				var after []storage.Effect
+				acceptanceAdminGet(t, base+"/api/effects", adminToken, tc.bearer, &after)
+				if len(after)-len(before) != len(tc.journalNodes) {
+					t.Fatalf("refusal created %d effect entries, want %d", len(after)-len(before), len(tc.journalNodes))
+				}
+				for _, effect := range after {
+					if !known[effect.ID] && tc.journalNodes[effect.Node] != effect.Status {
+						t.Fatalf("unexpected effect after refusal: node=%s status=%s", effect.Node, effect.Status)
+					}
+				}
+				var traces []storage.Trace
+				acceptanceAdminGet(t, base+"/api/traces", adminToken, tc.bearer, &traces)
+				t.Logf("alpha_reads=%d scrubber_calls=%d agent_calls=0 beta_write_attempts=0", tc.alphaReads, tc.scrubs)
+			})
+		}
+	})
 }
 
-func startAcceptanceSupport(t *testing.T) (*httptest.Server, *rsa.PrivateKey, *atomic.Int64) {
+func acceptancePublish(t *testing.T, base, token, recordID string, loseReply bool) map[string]any {
+	t.Helper()
+	reply := decode(t, latestCall(t, base+"/mcp/acceptance", token, "tools/call", 1, map[string]any{
+		"name":      "publish_summary",
+		"arguments": map[string]any{"record_id": recordID, "lose_reply": loseReply},
+	}))
+	wire, err := json.Marshal(reply)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkAcceptancePrivacy(t, "public MCP reply", wire, token)
+	result, ok := reply["result"].(map[string]any)
+	if !ok {
+		t.Fatal("missing public MCP tool result")
+	}
+	return result
+}
+
+type acceptanceCalls struct {
+	scrubber, agent atomic.Int64
+}
+
+func startAcceptanceSupport(t *testing.T) (*httptest.Server, *rsa.PrivateKey, *acceptanceCalls) {
 	t.Helper()
 	private, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var agentCalls atomic.Int64
+	var calls acceptanceCalls
 	type notes struct {
 		Notes string `json:"notes"`
 	}
@@ -198,10 +267,10 @@ func startAcceptanceSupport(t *testing.T) (*httptest.Server, *rsa.PrivateKey, *a
 	}
 	agent := sdk.NewServer(&sdk.Implementation{Name: "acceptance-summary-agent", Version: "1"}, nil)
 	sdk.AddTool(agent, &sdk.Tool{Name: "summarize"}, func(_ context.Context, _ *sdk.CallToolRequest, input notes) (*sdk.CallToolResult, summary, error) {
+		calls.agent.Add(1)
 		if input.Notes != acceptanceRedacted {
 			return nil, summary{}, errors.New("agent expected scrubbed notes")
 		}
-		agentCalls.Add(1)
 		return nil, summary{Summary: input.Notes}, nil
 	})
 	router := http.NewServeMux()
@@ -217,10 +286,19 @@ func startAcceptanceSupport(t *testing.T) (*httptest.Server, *rsa.PrivateKey, *a
 		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []any{key}})
 	})
 	router.HandleFunc("POST /redact", func(w http.ResponseWriter, r *http.Request) {
+		calls.scrubber.Add(1)
 		var body struct {
 			Input notes `json:"input"`
 		}
-		if json.NewDecoder(r.Body).Decode(&body) != nil || body.Input.Notes != acceptanceNotes {
+		if json.NewDecoder(r.Body).Decode(&body) != nil {
+			http.Error(w, "invalid scrubber input", http.StatusBadRequest)
+			return
+		}
+		if body.Input.Notes == acceptanceScrubFailure {
+			http.Error(w, "synthetic failure for "+acceptanceEmail, http.StatusServiceUnavailable)
+			return
+		}
+		if body.Input.Notes != acceptanceNotes {
 			http.Error(w, "expected synthetic source notes", http.StatusBadRequest)
 			return
 		}
@@ -230,7 +308,7 @@ func startAcceptanceSupport(t *testing.T) (*httptest.Server, *rsa.PrivateKey, *a
 	})
 	support := httptest.NewServer(router)
 	t.Cleanup(support.Close)
-	return support, private, &agentCalls
+	return support, private, &calls
 }
 
 func checkAcceptancePrivacy(t *testing.T, label string, raw []byte, token string) {

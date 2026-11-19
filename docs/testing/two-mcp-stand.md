@@ -45,7 +45,7 @@ alpha and beta on separate loopback ports with disposable state. It loads
 [`examples/v1-acceptance.hcl`](../../examples/v1-acceptance.hcl) in the Regate
 HTTP service and starts local JWKS, HTTP redaction and SDK MCP agent handlers.
 
-Both cases use a short-lived test bearer and one published MCP tool
+The cases use a signed test bearer and one published MCP tool
 (`publish_summary`). The same typed graph requests a Decision API approval,
 reads synthetic notes from alpha, scrubs them, calls the MCP agent and joins
 its summary with a separate label branch before writing to beta. The test
@@ -59,10 +59,14 @@ management diagnostics.
   error and the effect remains `unknown` after reopening the gateway HTTP
   service on the same SQLite state. Authenticated, token-bound readback marks
   it `resolved_applied` and adds an audit entry without another beta write.
+- **Refusals:** A valid bearer without the tool scope dispatches no effects.
+  A denied policy reaches Decision only, and a failed scrubber reaches alpha
+  and redaction only. The test checks provider and hook counters, plus the
+  absence of the synthetic failure payload in the reply and diagnostics.
 
 The verbose output records the run, revision, effect and beta write counter.
 The full Go race suite also runs these cases. Remaining #10 scenarios include
-scope and policy denials on this graph, OAuth task recovery, the management
+OAuth task recovery, the management
 MCP and browser authoring cycle, upstream schema changes, revision changes
 during live calls and production acceptance. Independent writable provider
 attestation remains in [#106](https://github.com/burkostya/regate/issues/106).
