@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -29,7 +30,17 @@ func TestMCPStandHelperProcess(t *testing.T) {
 	if instance == "" {
 		return
 	}
-	s, err := testmcp.New(instance, os.Getenv("REGATE_MCP_STAND_STATE"))
+	open := testmcp.New
+	if raw := os.Getenv("REGATE_MCP_STAND_RECORD_LIMIT"); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		open = func(instance, dir string) (*testmcp.Server, error) {
+			return testmcp.NewWithRecordLimit(instance, dir, limit)
+		}
+	}
+	s, err := open(instance, os.Getenv("REGATE_MCP_STAND_STATE"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +246,7 @@ func TestTwoProcessMCPStand(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer svc.Store.Close()
-	activeCfg, _ := svc.Current()
+	activeCfg,_:=svc.Current()
 	api := httptest.NewServer(svc.Handler())
 	defer api.Close()
 	base := api.URL
@@ -276,10 +287,10 @@ func TestTwoProcessMCPStand(t *testing.T) {
 	assertRecord(t, standContent(t, standCall(t, base, "alpha", "alpha_get",
 		map[string]any{"record_id": "seed_alpha"})), "alpha", "seed_alpha", "synthetic_alpha")
 	// A caller must not override the gateway's reserved write-identity field.
-	if result := standCall(t, base, "alpha", "alpha_put", map[string]any{
-		"record_id": "caller_token", "value": "test", "operation_token": strings.Repeat("a", 64),
-	}); result["isError"] != true {
-		t.Fatalf("caller-selected write token was accepted: %#v", result)
+	if result:=standCall(t,base,"alpha","alpha_put",map[string]any{
+		"record_id":"caller_token","value":"test","operation_token":strings.Repeat("a",64),
+	});result["isError"]!=true {
+		t.Fatalf("caller-selected write token was accepted: %#v",result)
 	}
 	if content := standContent(t, standCall(t, base, "beta", "beta_get",
 		map[string]any{"record_id": "seed_alpha"})); content["found"] != false {
@@ -323,16 +334,14 @@ func TestTwoProcessMCPStand(t *testing.T) {
 		unknown.TargetDigest != storage.TargetDigest("mcp", alpha.url) {
 		t.Fatalf("lost write not bound as a unique UNKNOWN effect: %+v (%d)", unknown, seen)
 	}
-	lostRead := standContent(t, standCall(t, base, "alpha", "alpha_get",
+	lostRead:=standContent(t, standCall(t, base, "alpha", "alpha_get",
 		map[string]any{"record_id": "lost_response"}))
 	assertRecord(t, lostRead, "alpha", "lost_response", "durable_synthetic_data")
-	lostToken, err := engine.ReadbackOperationToken(unknown.ID,
-		activeCfg.Readbacks["alpha_record"], activeCfg.Upstreams["alpha"])
-	if err != nil || lostToken == unknown.ID {
-		t.Fatalf("invalid contract-bound token: %q %v", lostToken, err)
-	}
-	if record := lostRead["record"].(map[string]any); record["operation_token"] != lostToken {
-		t.Fatalf("provider did not persist contract-bound token: %#v", record)
+	lostToken,err:=engine.ReadbackOperationToken(unknown.ID,
+		activeCfg.Readbacks["alpha_record"],activeCfg.Upstreams["alpha"])
+	if err!=nil || lostToken==unknown.ID {t.Fatalf("invalid contract-bound token: %q %v",lostToken,err)}
+	if record:=lostRead["record"].(map[string]any);record["operation_token"]!=lostToken {
+		t.Fatalf("provider did not persist contract-bound token: %#v",record)
 	}
 	assertStandCount(t, standStats(t, base, "alpha"), "writes_received", 2)
 	assertStandCount(t, standStats(t, base, "alpha"), "writes_committed", 2)
@@ -384,39 +393,39 @@ func TestTwoProcessMCPStand(t *testing.T) {
 	// A syntactically valid MCP isError=true may arrive AFTER the provider
 	// persisted a write. This is an uncertain application outcome, not a
 	// confirmation or an automatic replay permission.
-	appIntent := map[string]any{
-		"record_id": "error_after_commit", "value": "durably_committed_before_error",
-		"fault": "error_after_commit",
+	appIntent:=map[string]any{
+		"record_id":"error_after_commit","value":"durably_committed_before_error",
+		"fault":"error_after_commit",
 	}
-	if result := standCall(t, base, "alpha", "alpha_put", appIntent); result["isError"] != true {
-		t.Fatalf("post-commit MCP application error was swallowed: %#v", result)
+	if result:=standCall(t,base,"alpha","alpha_put",appIntent);result["isError"]!=true {
+		t.Fatalf("post-commit MCP application error was swallowed: %#v",result)
 	}
 	var appUnknown storage.Effect
 	var appUnknownCount int
-	for _, effect := range svc.Store.Effects() {
-		if effect.Operation == "alpha.put_record" && effect.Status == "unknown" {
-			appUnknown = effect
+	for _,effect:=range svc.Store.Effects() {
+		if effect.Operation=="alpha.put_record" && effect.Status=="unknown" {
+			appUnknown=effect
 			appUnknownCount++
 		}
 	}
-	if appUnknownCount != 1 || appUnknown.TargetDigest != storage.TargetDigest("mcp", alpha.url) {
-		t.Fatalf("application error was not classified UNKNOWN: %+v count=%d", appUnknown, appUnknownCount)
+	if appUnknownCount!=1 || appUnknown.TargetDigest!=storage.TargetDigest("mcp",alpha.url) {
+		t.Fatalf("application error was not classified UNKNOWN: %+v count=%d",appUnknown,appUnknownCount)
 	}
-	appRead := standContent(t, standCall(t, base, "alpha", "alpha_get",
-		map[string]any{"record_id": "error_after_commit"}))
-	assertRecord(t, appRead, "alpha", "error_after_commit", "durably_committed_before_error")
-	appToken, err := engine.ReadbackOperationToken(appUnknown.ID,
-		activeCfg.Readbacks["alpha_record"], activeCfg.Upstreams["alpha"])
-	if err != nil || appRead["record"].(map[string]any)["operation_token"] != appToken {
-		t.Fatalf("application error record lacks exact committed token: %+v %v", appRead, err)
+	appRead:=standContent(t,standCall(t,base,"alpha","alpha_get",
+		map[string]any{"record_id":"error_after_commit"}))
+	assertRecord(t,appRead,"alpha","error_after_commit","durably_committed_before_error")
+	appToken,err:=engine.ReadbackOperationToken(appUnknown.ID,
+		activeCfg.Readbacks["alpha_record"],activeCfg.Upstreams["alpha"])
+	if err!=nil || appRead["record"].(map[string]any)["operation_token"]!=appToken {
+		t.Fatalf("application error record lacks exact committed token: %+v %v",appRead,err)
 	}
-	appResolution := decode(t, jsonPost(t, base+"/api/effect-readback", "two-mcp-stand-admin",
-		map[string]any{"effect_id": appUnknown.ID, "adapter": "alpha_record", "intent": appIntent}))
-	if appResolution["status"] != "resolved_applied" {
-		t.Fatalf("post-error write not reconciled by safe readback: %#v", appResolution)
+	appResolution:=decode(t,jsonPost(t,base+"/api/effect-readback","two-mcp-stand-admin",
+		map[string]any{"effect_id":appUnknown.ID,"adapter":"alpha_record","intent":appIntent}))
+	if appResolution["status"]!="resolved_applied" {
+		t.Fatalf("post-error write not reconciled by safe readback: %#v",appResolution)
 	}
-	assertStandCount(t, standStats(t, base, "alpha"), "writes_received", 3)
-	assertStandCount(t, standStats(t, base, "alpha"), "writes_committed", 3)
+	assertStandCount(t,standStats(t,base,"alpha"),"writes_received",3)
+	assertStandCount(t,standStats(t,base,"alpha"),"writes_committed",3)
 
 	// Negative evidence: even identical record ID AND payload are not proof
 	// of this journaled write. The prior record has a different operation
@@ -424,14 +433,12 @@ func TestTwoProcessMCPStand(t *testing.T) {
 	collisionIntent := map[string]any{
 		"record_id": "seed_alpha", "value": "synthetic_alpha",
 	}
-	collisionToken, err := engine.ReadbackOperationToken(
-		storage.EffectID("collision-no-dispatch", "write", "alpha.put_record"),
-		activeCfg.Readbacks["alpha_record"], activeCfg.Upstreams["alpha"])
-	if err != nil {
-		t.Fatal(err)
-	}
-	collisionWire := map[string]any{
-		"record_id": "seed_alpha", "value": "synthetic_alpha", "operation_token": collisionToken,
+	collisionToken,err:=engine.ReadbackOperationToken(
+		storage.EffectID("collision-no-dispatch","write","alpha.put_record"),
+		activeCfg.Readbacks["alpha_record"],activeCfg.Upstreams["alpha"])
+	if err!=nil {t.Fatal(err)}
+	collisionWire:=map[string]any{
+		"record_id":"seed_alpha","value":"synthetic_alpha","operation_token":collisionToken,
 	}
 	collision, err := svc.Store.BeginEffectBound("collision-no-dispatch", "write",
 		"alpha.put_record", storage.TargetDigest("mcp", alpha.url), collisionWire)
@@ -469,10 +476,10 @@ func TestTwoProcessMCPStand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read after provider restart: %v", err)
 	}
-	restartedRecord := standContent(t, raw)
+	restartedRecord:=standContent(t,raw)
 	assertRecord(t, restartedRecord, "alpha", "lost_response", "durable_synthetic_data")
-	if record := restartedRecord["record"].(map[string]any); record["operation_token"] != lostToken {
-		t.Fatalf("provider restart lost contract-bound write provenance: %#v", record)
+	if record:=restartedRecord["record"].(map[string]any);record["operation_token"]!=lostToken {
+		t.Fatalf("provider restart lost contract-bound write provenance: %#v",record)
 	}
 	stats, err := conn.CallTool(ctx, "stats", map[string]any{})
 	if err != nil {

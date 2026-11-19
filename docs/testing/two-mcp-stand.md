@@ -109,6 +109,7 @@ minutes of steady traffic plus outage and recovery windows. Eight parallel
 clients issue read-only MCP calls, normal publishes, publishes with a lost
 post-commit reply, and calls refused by tool scope, Decision or the scrubber.
 The run uses nine synthetic OAuth identities and a disposable SQLite database.
+It raises the disposable providers' record limit to 4096 for this profile.
 Use `REGATE_SOAK_DURATION=9s make test-v1-soak` for a shorter profile or set a
 duration up to `15m`. The profile runs with Go's race detector.
 

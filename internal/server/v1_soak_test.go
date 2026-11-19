@@ -259,6 +259,7 @@ func TestV1Soak(t *testing.T) {
 	const admin = "synthetic-soak-admin"
 	t.Setenv("REGATE_ADMIN_TOKEN", admin)
 	t.Setenv("REGATE_OTLP_TRACES_URL", "")
+	t.Setenv("REGATE_MCP_STAND_RECORD_LIMIT", "4096")
 	root := t.TempDir()
 	alpha := startStandProcess(t, "alpha", filepath.Join(root, "alpha"))
 	beta := startStandProcess(t, "beta", filepath.Join(root, "beta"))
