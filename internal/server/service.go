@@ -16,6 +16,7 @@ import (
 
 type Service struct {
 	Store         *storage.Store
+    observability *httpObservability
 	Engine        *engine.Runtime
 	mu            sync.RWMutex
 	cfg           *config.Config
@@ -39,6 +40,8 @@ type catalogEntry struct {
 }
 
 func New(stateDir, source string) (*Service, error) {
+    observability, e := newHTTPObservability()
+    if e != nil { return nil, e }
 	if _, e := config.Decode(source); e != nil {
 		return nil, e
 	}
@@ -64,7 +67,7 @@ func New(stateDir, source string) (*Service, error) {
         _=store.Close()
         return nil,fmt.Errorf("start execution leader: %w",e)
     }
-	svc := &Service{Store: store, Engine: engine.New(store), cfg: cfg, rev: rev, catalog: map[string]catalogEntry{}}
+	svc := &Service{Store: store, Engine: engine.New(store), cfg: cfg, rev: rev, catalog: map[string]catalogEntry{}, observability:observability}
     svc.inbound, e = newInboundMCP(svc, cfg, rev.ID)
     if e != nil {
         _=store.Close()
