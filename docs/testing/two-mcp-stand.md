@@ -99,7 +99,7 @@ set `CC` if the host's compiler is named differently.
 
 The stand verifies runtime contract rejection and pre-dispatch isolation
 for pinned MCP tools. Alpha and beta are the accepted v1 durable-write
-environment. [Production acceptance](https://github.com/burkostya/regate/issues/10) ·
+environment. [Local v1 acceptance](https://github.com/burkostya/regate/issues/10) ·
 [Durable-write acceptance decision](https://github.com/burkostya/regate/issues/106)
 
 ## Sustained mixed traffic and process failures
@@ -180,11 +180,11 @@ the public key held separately. Results are recorded in
 `.state/v1-controlled/audit-retention.log`. The temporary container and its
 volume are removed after the test.
 
-This profile covers one host and a single execution leader. It is the accepted
-environment for the end-to-end scenario in
+This profile covers one host and a single execution leader. The end-to-end
+scenario passed on this topology in
 [#10](https://github.com/burkostya/regate/issues/10).
-[Independent audit custody and security and PII sign-off](../operations/threat-review.md#v100-rc1-security-and-pii-review)
-are the remaining release gates.
+[#113](https://github.com/burkostya/regate/issues/113) tracks independent audit
+custody, the operational threat review, and security and PII sign-off.
 
 ## Running the three processes by hand
 
@@ -261,7 +261,7 @@ on a public network would be unsafe.
 **Limitations:** The two processes use the same fixture implementation.
 This is NOT real third-party MCP-provider attestation, proof of arbitrary
 mutable-resource consistency, cross-process global fencing, OAuth/PII
-certification or production load/chaos acceptance (#7/#9/#10).
+certification or production load/chaos acceptance.
 
 ### Content matching for safe positive readback
 
