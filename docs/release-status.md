@@ -1,6 +1,6 @@
 # Regate release acceptance / implementation status
 
-**Target scope (user-approved):** full first release includes HTTP-only MCP client/server, editable virtual tools/resources/prompts, HCL2 declarative config, typed transformations/CEL, DAG branches and compositions, HTTP/MCP hooks including agents/PII/Decision API, policies, revisioned management MCP and skills, SvelteKit+Svelte Flow visual editor, async tasks, diagnostics, security and tests. **Do not silently split or drop these features.**
+**Target scope (user-approved):** full first release includes HTTP-only MCP client/server, editable virtual tools/resources/prompts, HCL2 declarative config, typed transformations/CEL, DAG branches and compositions, HTTP/MCP hooks including agents, transforms and Decision API, configurable sensitive data policies, revisioned management MCP and skills, SvelteKit+Svelte Flow visual editor, async tasks, diagnostics, security and tests. **Do not silently split or drop these features.**
 
 ## Current acceptance status
 
@@ -11,7 +11,7 @@ state. [Closed acceptance issue #10](https://github.com/burkostya/regate/issues/
 The [v1.0.0-rc.1 prerelease](https://github.com/burkostya/regate/releases/tag/v1.0.0-rc.1)
 contains the tested Linux x86-64 archive, its checksum and the
 [local acceptance report](https://github.com/burkostya/regate/releases/download/v1.0.0-rc.1/regate-v1-rc-892b6d3-acceptance.json).
-The operational threat review and security and PII sign-off remain open in
+The operational security and data handling review remains open in
 [#113](https://github.com/burkostya/regate/issues/113).
 
 ## Implementation history
@@ -60,8 +60,8 @@ the time of each entry.
 ## Acceptance criteria for complete v1
 
 - Two independently running MCP servers are connected over HTTP and exposed through one curated surface.
-- A virtual tool composes multiple upstream calls, branches, joins, and invokes both an HTTP Decision API, a PII scrubber and an MCP-based LLM agent.
-- A denied decision prevents any protected effect or exposure. Data classified as protected cannot cross a prohibited trust boundary, including in error paths and traces.
+- A virtual tool composes upstream calls, branches and joins, checks an HTTP Decision API, and applies a configured data transform before invoking an MCP-based LLM agent. The controlled scenario uses personal-data masking as the transform.
+- The data owner specifies sensitive fields and permitted recipients. A denied or indeterminate decision blocks protected effects and disclosures. The configured data boundaries also apply to errors and traces. [Sensitive data transfer contract](contracts/hooks.md#sensitive-data-transfer)
 - A lost response to an external write does not cause duplicate action; Regate read-backs/reconciles or durably awaits an operator decision.
 - An admin agent can inspect, patch, validate, test, review semantic diff, activate and roll back config using only management MCP + supplied skills.
 - A user can achieve the same flow in the Svelte Flow UI, preserving unsupported HCL fragments.
@@ -101,13 +101,12 @@ failures and management views. [Tenant and load profile](testing/two-mcp-stand.m
 Run `make test-v1-controlled` for the same full and sustained suites behind
 local NGINX TLS ingress with a separately running, two-realm Keycloak IdP.
 The controlled local topology is the accepted environment for the end-to-end
-scenario. Security and PII sign-off is tracked in
+scenario. Operational sign-off is tracked in
 [#113](https://github.com/burkostya/regate/issues/113).
 [Controlled topology and evidence](testing/two-mcp-stand.md#controlled-local-topology)
 
-The [v1.0.0-rc.1 security and PII review](operations/threat-review.md#v100-rc1-security-and-pii-review)
-maps the packaged RC's acceptance results and regression tests to the
-remaining sign-off.
+The [operational security and data handling review](operations/threat-review.md#operational-security-and-data-handling-review)
+uses the packaged RC's acceptance results and regression tests as evidence.
 
 The controlled 2026-11-20 run on `320a02c` passed the Chromium and OAuth
 scenarios and completed 2,023 calls across two issuer realms and two TLS

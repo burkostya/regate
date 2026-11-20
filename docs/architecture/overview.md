@@ -17,7 +17,7 @@ flowchart TB
   IR --> Runtime[Go execution engine]
   Surface --> Runtime
   Runtime --> Decisions[Decision API]
-  Runtime --> PII[PII masking HTTP service]
+  Runtime --> Transform[Data transformation HTTP service]
   Runtime --> Upstream[Official Go SDK HTTP MCP upstream tools]
   Runtime --> Agent[Agent MCP tool]
   Runtime --> Journal[Effects, traces, suspended state, tasks]
@@ -61,7 +61,10 @@ DAG constraints: no cycles, all nodes reachable from entry, all referenced hooks
 - HTTP hosts require loopback or explicit HTTPS allowlisting.
 - Decision API verdicts must explicitly say `allow`; `deny`, unknown and non-empty unfulfilled obligations abort.
 - Revisions cannot be silently overwritten when the draft base no longer matches current active revision.
-- PII masking must happen before external LLM transfer, but the current built-in masking algorithm does not provide a trustworthy data-label/taint proof.
+- Data owners define sensitive fields and permitted destinations. Regate
+  applies configured authorization and field transformations before
+  affected calls or responses. Personal-data masking is an example.
+  [Sensitive data transfer contract](../contracts/hooks.md#sensitive-data-transfer)
 
 ## Failure semantics
 

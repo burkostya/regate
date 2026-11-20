@@ -2,8 +2,8 @@
 
 The [v1.0.0-rc.1 prerelease](https://github.com/burkostya/regate/releases/tag/v1.0.0-rc.1)
 passed local acceptance with synthetic data. The
-[security and PII review](operations/threat-review.md#v100-rc1-security-and-pii-review)
-lists the tested controls and the evidence still needed for sign-off.
+[operational security and data handling review](operations/threat-review.md#operational-security-and-data-handling-review)
+sets out the evidence needed for sign-off.
 [Issue #113](https://github.com/burkostya/regate/issues/113) tracks that
 decision. Use the prerelease on isolated stands with synthetic data pending
 sign-off.
@@ -34,6 +34,10 @@ sign-off.
 
 ## Decision and data boundaries
 
+- The data owner classifies fields and approves their recipients. Express
+  those decisions in HCL with scopes, trust declarations, policy checks
+  and payload transformations. Apply controls before the dependent call
+  or client response. [Sensitive data transfer contract](contracts/hooks.md#sensitive-data-transfer)
 - OAuth execution preflight treats data as Restricted and requires explicit
   Restricted trust declarations for external destinations in the pipeline
   and its interceptors. Trust declarations and caller scopes are separate
@@ -49,8 +53,8 @@ sign-off.
   declare Restricted data, opt in with `allow_unmasked`, and require
   `pii:read`. OAuth resource and prompt text also passes through the mask.
   Opaque OAuth resource blobs are rejected. The mask uses recognizable
-  patterns and field names. A reviewer must assess data formats and external
-  redactors for the intended use.
+  patterns and field names. Use the configured data policy for any other
+  sensitive values and verify which inputs external redactors receive.
 - The demonstration tool `get_customer_direct` on the legacy demo
   surface deliberately returns the fixture's unmasked data. This direct
   proxying example belongs on an isolated, synthetic-data stand.

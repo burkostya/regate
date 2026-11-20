@@ -67,6 +67,10 @@ same HCL file. The example is an authorization fragment.
 
 ## Sensitive results and async tasks
 
+The data owner defines sensitive fields and approved recipients. Configure
+field projection, transforms and authorization for those flows.
+[Sensitive data transfer contract](hooks.md#sensitive-data-transfer)
+
 With OAuth enabled, tool content and structured results are recursively
 PII/credential-masked by default. A tool may opt into an unmasked release
 **only** with all three declarations: `data_classification="restricted"`,
@@ -88,9 +92,10 @@ The unfinished durable token-exchange/continuation contract remains separate.
 
 ## What is not proven by this milestone
 
-The current PII classifier is not a formal proof of full declassification:
-names, arbitrary identifiers, multimedia and other sensitive content can still
-require dedicated DLP policies/verified transforms. End-to-end taint tracking,
+The default response mask matches selected patterns and field names. Use
+configured transformations and test them with the formats and fields
+identified by the data owner, including non-personal business data.
+End-to-end taint tracking,
 delegated OAuth token exchange with target-audience validation, revocation
 propagation, live validation against each external IdP, strong audit
 attestations and production threat review remain release gates. Do not use

@@ -6,14 +6,14 @@
 the controlled alpha/beta stand. The
 [v1.0.0-rc.1 prerelease](https://github.com/burkostya/regate/releases/tag/v1.0.0-rc.1)
 contains the tested archive and report.
-Operational security and privacy approval are pending in
+Operational security and data handling approval are pending in
 [#113](https://github.com/burkostya/regate/issues/113).
 [Release status and evidence](docs/release-status.md)
 
 ## What you can experiment with now
 
 - Connect HTTP MCP upstream servers; expose renamed/curated tools through independent `surface` endpoints.
-- Expose tools from a DAG of transformations, policy decision hooks, PII masking, HTTP calls and other MCP tools.
+- Expose tools from a DAG of transformations, policy decision hooks, HTTP calls and other MCP tools. Authors configure which sensitive fields to transform and where they may be sent. [Sensitive data transfer](docs/contracts/hooks.md#sensitive-data-transfer)
 - Discover upstream tools, proxy existing MCP tool results, publish local resources and prompts.
 - Inspect, draft, validate, diff, activate and roll back configuration through a **separate authenticated management MCP** and matching REST API.
 - Use stateless MCP `2026-07-28` discovery/tools/tasks/skills requests and local `subscriptions/listen` change notifications; legacy `initialize` has basic compatibility.

@@ -2,11 +2,35 @@
 
 ## Goal
 
-Hooks allow PII scrubbers, Decision APIs, external agent MCP tools, audit observers and transform services to participate in tool execution. The gateway remains authoritative for permissions; the hook response never grants a caller more rights than configured in the gateway.
+Hooks allow transform services, Decision APIs, external agent MCP tools and
+observers to participate in tool execution. The gateway enforces the
+configured permissions even when a hook returns an allow decision.
+
+## Sensitive data transfer
+
+The data owner determines which fields and values are sensitive and who may
+receive them. The configuration author expresses that policy in HCL with
+caller scopes, destination trust declarations, decision checks, and explicit
+mappings or transforms. The same policy can cover internal prices, contract
+text, credentials and personal data.
+
+Use a local CEL transform to build a payload from the fields approved for
+the destination. For example, the payload for an external billing tool can
+contain only the order ID and public price. Connect the call to the
+transformed value and validate its shape where a schema is available.
+A denied decision or a failed required transform blocks the dependent
+call. Apply the same rules before returning results to MCP clients.
+
+HTTP and MCP hooks, including external redactors and decision services,
+are destinations in their own right. Authorize the input sent to each hook.
+The local `mask.pii` node is one example of a transform. It matches selected
+patterns and field names. Use explicit payload mappings for fields that the
+owner's policy protects, including arbitrary business data.
+[OAuth trust and response rules](oauth.md#restricted-data-trust-boundary)
 
 ## Hook transports
 
-1. `builtin`: local Go transformer; the prototype includes simple email/key masking, **not robust PII declassification**.
+1. `builtin`: local Go transformer with pattern-based masking.
 2. `http`: HTTP POST JSON `{ "input": value }`, optional `auth_env`, request timeout and JSON response.
 3. `mcp`: `tools/call` on a configured upstream MCP tool, with JSON object arguments.
 
@@ -40,9 +64,10 @@ Interceptors are sorted by `order` and then `name`, optionally scoped to surface
 
 - Place the trusted mandatory policy check before reading or transmitting protected data.
 - HTTP and MCP hooks are external transfers. They need independent trust, authentication and effect contracts.
-- Avoid logging request or response values that could contain PII. Trace journal stores statuses and messages rather than full values by default, but error text can still contain sensitive data.
-- Fail-closed is necessary but not sufficient: trustworthy classification, audit and authorization enforcement are required before production.
-- The PII masker should return a verifiable declassification result only after a trusted, testable procedure. The current prototype does not remove data labels or implement information-flow proofs.
+- Keep sensitive values out of diagnostics, including request bodies, response
+  bodies and error text. Review retained output against the owner's policy.
+- Verify the configured mapping, recipient and authorization with
+  representative inputs and a denied or failed path before activation.
 
 
 ## Resuming a suspended pipeline (PR #59)
@@ -87,5 +112,3 @@ transformations and before an HTTP write is admitted into the effect
 journal or sent over the network. Oversized payloads therefore cannot
 create an external effect or an ambiguous write outcome. The limit is
 separate from, and equally strict as, the 4 MiB response framing limit.
-The caller remains responsible for approved data transfer and trust
-classification; a size limit is not a data-loss-prevention policy.
