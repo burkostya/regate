@@ -85,10 +85,16 @@ failures and management views. [Tenant and load profile](testing/two-mcp-stand.m
 
 Run `make test-v1-controlled` for the same full and sustained suites behind
 local NGINX TLS ingress with a separately running, two-realm Keycloak IdP.
-The target signs a verified SQLite audit checkpoint with a disposable
-Ed25519 key and verifies that a later snapshot extends it. Approval for the
-target deployment, security and PII signoff, and off-host immutable audit
-custody remain in #10. [Controlled topology and evidence](testing/two-mcp-stand.md#controlled-local-topology)
+The test signs a verified SQLite audit checkpoint with a disposable
+Ed25519 key and verifies that a later snapshot extends it. The controlled
+local topology is the accepted environment for the end-to-end scenario.
+Security and PII sign-off and independent off-host audit custody are the
+remaining [#10 gates](https://github.com/burkostya/regate/issues/10).
+[Controlled topology and evidence](testing/two-mcp-stand.md#controlled-local-topology)
+
+The [v1.0.0-rc.1 security and PII review](operations/threat-review.md#v100-rc1-security-and-pii-review)
+maps the packaged RC's acceptance results and regression tests to the
+remaining sign-off.
 
 `make test-v1-audit-retention` exercises S3 COMPLIANCE retention on the local
 signed manifest bundle. It checks deletion denial and verifies the downloaded
