@@ -15,6 +15,14 @@ import (
 )
 
 var ErrInvalidBackup = errors.New("Regate SQLite backup failed verification")
+var ErrAuditAnchorMismatch = errors.New("backup audit chain does not contain the trusted checkpoint")
+
+// AuditAnchor identifies a previously verified audit chain head. Verify the
+// authenticity of the source of this pair before trusting its values.
+type AuditAnchor struct {
+	Sequence int64
+	SHA256   string
+}
 
 // BackupManifest contains structural, application-level and byte-integrity
 // evidence about a standalone SQLite snapshot. It intentionally contains no
@@ -25,6 +33,7 @@ type BackupManifest struct {
     Revisions int `json:"revisions"`
     Effects int `json:"effects"`
     AuditEvents int `json:"audit_events"`
+	AuditHeadSHA256 string `json:"audit_head_sha256"`
     Tasks int `json:"tasks"`
     Queued int `json:"queued"`
     Grants int `json:"grants"`
@@ -32,7 +41,7 @@ type BackupManifest struct {
     SHA256 string `json:"sha256"`
 }
 
-const latestSQLiteVersion = 6
+const latestSQLiteVersion = 7
 
 // VerifyBackup inspects a standalone SQLite snapshot without ever calling
 // Store.New (which could run recovery/migrations). It refuses symlinks,
@@ -42,6 +51,18 @@ const latestSQLiteVersion = 6
 // An integrity check cannot prove that a remote effect or grant is semantically
 // correct, or that the external encryption keyring is still available.
 func VerifyBackup(path string)(BackupManifest,error) {
+	return verifyBackup(path, nil)
+}
+
+func VerifyAnchoredBackup(path string, anchor AuditAnchor) (BackupManifest, error) {
+	digest, err := hex.DecodeString(anchor.SHA256)
+	if err != nil || len(digest) != sha256.Size || anchor.Sequence < 0 {
+		return BackupManifest{}, ErrAuditAnchorMismatch
+	}
+	return verifyBackup(path, &anchor)
+}
+
+func verifyBackup(path string, anchor *AuditAnchor) (BackupManifest, error) {
     var manifest BackupManifest
     info,err:=os.Lstat(path)
     if err!=nil{return manifest,err}
@@ -50,7 +71,13 @@ func VerifyBackup(path string)(BackupManifest,error) {
     }
     absolute,err:=filepath.Abs(path)
     if err!=nil{return manifest,err}
-    uri:=(&url.URL{Scheme:"file",Path:absolute}).String()+"?mode=ro"
+	for _, suffix := range []string{"-wal", "-journal"} {
+		if _, err := os.Lstat(absolute + suffix); !errors.Is(err, os.ErrNotExist) {
+			return manifest, ErrInvalidBackup
+		}
+	}
+	// Inspect only the standalone bytes covered by the manifest's SHA-256.
+    uri:=(&url.URL{Scheme:"file",Path:absolute}).String()+"?mode=ro&immutable=1"
     db,err:=sql.Open("sqlite3",uri)
     if err!=nil{return manifest,ErrInvalidBackup}
     defer db.Close()
@@ -63,19 +90,42 @@ func VerifyBackup(path string)(BackupManifest,error) {
     }
     var version int
     if err=db.QueryRow("PRAGMA user_version").Scan(&version);err!=nil ||
-        version!=latestSQLiteVersion {
+        version<6 || version>latestSQLiteVersion {
         return manifest,ErrInvalidBackup
     }
     manifest.SchemaVersion=version
+    if version >= 7 {
+        var principals int
+        if err=db.QueryRow("SELECT count(*) FROM oauth_quota").Scan(&principals);err!=nil || principals>maxOAuthQuotaPrincipals {
+            return BackupManifest{},ErrInvalidBackup
+        }
+    }
 
     // Even a structurally intact SQLite snapshot may have a forged or
     // truncated management audit chain. Reject it *before* publishing or
     // allowing recovery to proceed.
     auditRows,auditErr:=db.Query(auditSelect+" ORDER BY seq")
     if auditErr!=nil{return BackupManifest{},ErrInvalidBackup}
-    auditCount,_,auditErr:=verifyAuditRows(auditRows)
+    auditCount,auditHead,auditErr:=verifyAuditRows(auditRows)
     if auditErr!=nil {return BackupManifest{},ErrInvalidBackup}
     manifest.AuditEvents=int(auditCount)
+	manifest.AuditHeadSHA256 = auditHead
+	if anchor != nil {
+		matching := auditGenesis
+		switch {
+		case anchor.Sequence > auditCount:
+			return BackupManifest{}, ErrAuditAnchorMismatch
+		case anchor.Sequence == auditCount:
+			matching = auditHead
+		case anchor.Sequence > 0:
+			if err := db.QueryRow("SELECT digest FROM audit_events WHERE seq=?", anchor.Sequence).Scan(&matching); err != nil {
+				return BackupManifest{}, ErrAuditAnchorMismatch
+			}
+		}
+		if matching != anchor.SHA256 {
+			return BackupManifest{}, ErrAuditAnchorMismatch
+		}
+	}
 
     rows,err:=db.Query(`SELECT id,digest,parent,source
         FROM revisions ORDER BY seq`)

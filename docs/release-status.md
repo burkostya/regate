@@ -38,13 +38,13 @@
 7. SQLite transactions, legacy-state import and backups are implemented in PR #20. Remaining: durable execution leases/fencing, verified reconciliation/compensation, bounded scheduling and safe retention/compaction of all sensitive records.
 8. OAuth JWT/JWKS or RFC7662 introspection and issuer/audience/scope-verified public surfaces are implemented in PR #18. Management remains a separate static admin bearer; delegated upstream token exchange, end-to-end taint policies, provider-specific integration, audit-ready secret management and production threat verification remain open.
 9. Independent MCP resource/prompt discovery (including templates, pagination and revision-aware caching) now exists; source-safe mapping/editing, upstream change detection and compatibility diagnostics remain open.
-10. The functional Web console scope in #8 is covered by typed graph/HCL editor, authenticated catalog, dry/live revision-pinned execution, semantic diff, source-preserving draft CAS, tracing, activation/rollback and production-build Chromium E2E. Remaining operational browser/a11y/security hardening, provider attestation and full release impact proofs belong to #9/#10.
+10. The functional Web console scope in #8 is covered by typed graph/HCL editor, authenticated catalog, dry/live revision-pinned execution, semantic diff, source-preserving draft CAS, tracing, activation/rollback and production-build Chromium E2E. Remaining operational browser, accessibility, security and release acceptance checks belong to #10.
 11. OpenTelemetry spans/metrics/export, quotas and capacity controls, full audit history, release acceptance/e2e scenarios.
 12. Execute and check the formal model under TLC/Alloy, rather than keeping an unchecked design sketch.
 
 ## Acceptance criteria for complete v1
 
-- Two external MCP servers are connected over HTTP and exposed through one curated surface.
+- Two independently running MCP servers are connected over HTTP and exposed through one curated surface.
 - A virtual tool composes multiple upstream calls, branches, joins, and invokes both an HTTP Decision API, a PII scrubber and an MCP-based LLM agent.
 - A denied decision prevents any protected effect or exposure. Data classified as protected cannot cross a prohibited trust boundary, including in error paths and traces.
 - A lost response to an external write does not cause duplicate action; Regate read-backs/reconciles or durably awaits an operator decision.
@@ -53,6 +53,53 @@
 - Updated upstream schemas are detected, breaking changes isolated; in-flight calls retain their original immutable revision.
 - Tasks survive restart, subscription notifications work, concurrency/authorization invariants pass formal and load tests.
 - Standard MCP conformance, browser integration, race/security and production acceptance suites all pass.
+
+Alpha and beta are the accepted v1 durable-write environment. They run as
+separate HTTP MCP processes with independent persisted state. Third-party
+durable-write attestation is outside the v1 release criteria.
+[Acceptance decision](https://github.com/burkostya/regate/issues/106)
+
+The shared local #10 scenario is runnable with `make test-v1-full`. It covers
+confirmed and uncertain writes, policy and privacy refusals, task recovery,
+revision isolation and subscription delivery, management and Chromium
+authoring, and schema drift isolation before dispatch for a pinned agent.
+This gate applies to explicitly pinned tools and validates the advertised
+contract per call. See the
+[stand, evidence and remaining release gates](testing/two-mcp-stand.md#composed-v1-scenario-on-the-same-providers).
+
+Run `make test-v1-soak` for sustained mixed traffic behind loopback proxies
+with independent OAuth identities. Two Regate CLI processes share same-host
+SQLite. The test checks standby promotion on the latest active revision,
+protected side effects and audited reconciliation after beta and primary
+process failures. [Soak profile and report](testing/two-mcp-stand.md#sustained-mixed-traffic-and-process-failures)
+
+An opt-in OAuth request quota preserves the same verified principal's limit
+across proxy changes and same-host standby promotion. Go race tests cover
+concurrent requests through independent proxies, token replacement, and
+unchanged capacity for a separate principal. [Quota settings](operations/telemetry.md#http-admission-telemetry-and-privacy-boundaries)
+
+The full local suite also exercises two independently configured OAuth
+issuers with the same subject string and overlapping record IDs. It
+checks credentials, provider routing, suspended task ownership and PII in
+failures and management views. [Tenant and load profile](testing/two-mcp-stand.md#sustained-mixed-traffic-and-process-failures)
+
+Run `make test-v1-controlled` for the same full and sustained suites behind
+local NGINX TLS ingress with a separately running, two-realm Keycloak IdP.
+The target signs a verified SQLite audit checkpoint with a disposable
+Ed25519 key and verifies that a later snapshot extends it. Approval for the
+target deployment, security and PII signoff, and off-host immutable audit
+custody remain in #10. [Controlled topology and evidence](testing/two-mcp-stand.md#controlled-local-topology)
+
+`make test-v1-audit-retention` exercises S3 COMPLIANCE retention on the local
+signed manifest bundle. It checks deletion denial and verifies the downloaded
+signature after storage restart. [Local retention check](testing/two-mcp-stand.md#controlled-local-topology)
+
+The controlled 2026-11-20 run on `320a02c` passed the Chromium and OAuth
+scenarios and completed 2,023 calls across two issuer realms and two TLS
+ingresses. Beta committed 827 writes with zero replays. Verified readback
+resolved 166 uncertain outcomes with corresponding audit records. Three
+offline writes remained unknown. Beta recovered in 4.871 seconds and the
+standby began serving the active revision 28.895 seconds after primary loss.
 
 #### Compiler milestone: port schemas and source-safe graph edits
 
@@ -1497,9 +1544,7 @@
   authenticated management readback/compensation, and test independent
   provider-level replay, stale fencing and restart persistence using the
   official MCP SDK. The dedicated race gate covers both scenarios.
-- By explicit user decision, durable writes on an independently operated
-  **real** MCP provider are deferred to #106. These local results are
-  sufficient for the current engineering acceptance of the fixture-specific
-  semantics but are **not** vendor attestation or full release readiness.
-  Live-provider release conformance, broader #9 chaos/load/security/PII
-  review and #10 holistic production acceptance remain separate.
+- On 2026-11-20 the user accepted alpha and beta for v1 durable-write
+  acceptance and retired third-party durable-write attestation in #106.
+  Provider-specific guarantees depend on the provider's contract. Target
+  deployment, audit custody and security/PII acceptance remain in #10.

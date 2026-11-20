@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
     "encoding/json"
+	"errors"
 	"fmt"
 	"log"
     "io"
@@ -16,10 +17,18 @@ import (
     "github.com/burkostya/regate/internal/storage"
 )
 
-func verifyBackupToWriter(path string,w io.Writer)error {
-    manifest,err:=storage.VerifyBackup(path)
-    if err!=nil{return err}
-    return json.NewEncoder(w).Encode(manifest)
+func verifyBackupToWriter(path string, w io.Writer, anchor *storage.AuditAnchor) error {
+	var manifest storage.BackupManifest
+	var err error
+	if anchor == nil {
+		manifest, err = storage.VerifyBackup(path)
+	} else {
+		manifest, err = storage.VerifyAnchoredBackup(path, *anchor)
+	}
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(w).Encode(manifest)
 }
 
 func verifyBackupKeysToWriter(path string, w io.Writer) error {
@@ -48,7 +57,10 @@ func main() {
 	file := flag.String("config", "examples/regate.hcl", "HCL configuration source")
 	state := flag.String("state", ".state", "persistent state directory")
 	listen := flag.String("listen", "", "override HTTP listen address")
+	waitForLeader := flag.Bool("wait-for-leader", false, "wait for the existing worker to release the shared SQLite execution lease")
     verifyBackup:=flag.String("verify-backup","","verify standalone SQLite backup and print non-secret JSON manifest")
+	anchorSequence := flag.Int64("audit-anchor-sequence", -1, "sequence from an independently verified audit checkpoint")
+	anchorSHA := flag.String("audit-anchor-sha256", "", "audit chain head SHA-256 from the same verified checkpoint")
     restoreBackup:=flag.String("restore-backup","","restore a verified snapshot into a pre-existing empty private -state directory")
     verifyBackupKeys:=flag.String("verify-backup-keys","","authenticate encrypted queued inputs and grants in a standalone backup using environment keyrings")
     ackRestore:=flag.Bool("acknowledge-restore",false,"OFFLINE: discard historical executable work and lift restored-state quarantine (irreversible)")
@@ -56,6 +68,13 @@ func main() {
     ackActor:=flag.String("operator","","identity of the responsible recovery operator")
     ackEvidence:=flag.String("fence-evidence","","operator statement of old-worker and upstream isolation; stored as digest only")
 	flag.Parse()
+	var anchor *storage.AuditAnchor
+	if *anchorSequence != -1 || *anchorSHA != "" {
+		if *verifyBackup == "" || *anchorSequence < 0 || *anchorSHA == "" {
+			log.Fatal("audit checkpoint verification requires -verify-backup, -audit-anchor-sequence and -audit-anchor-sha256")
+		}
+		anchor = &storage.AuditAnchor{Sequence: *anchorSequence, SHA256: *anchorSHA}
+	}
     commands:=0
     for _,path:=range []string{*verifyBackup,*restoreBackup,*verifyBackupKeys}{
         if path!="" {commands++}
@@ -95,7 +114,7 @@ func main() {
     if *verifyBackup!="" {
         // Verification is intentionally read-only and works without a
         // running Regate service, admin bearer or live configuration.
-        if err:=verifyBackupToWriter(*verifyBackup,os.Stdout);err!=nil {
+        if err:=verifyBackupToWriter(*verifyBackup,os.Stdout,anchor);err!=nil {
             log.Fatal(err)
         }
         return
@@ -110,8 +129,19 @@ func main() {
     if os.Getenv("REGATE_ADMIN_TOKEN")=="" {
         log.Fatal("REGATE_ADMIN_TOKEN is required; refusing management MCP without authentication")
     }
-	srv, e := server.New(*state, string(b))
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+	start := server.New
+	if *waitForLeader {
+		start = func(state, source string) (*server.Service, error) {
+			return server.WaitForLeader(ctx, state, source)
+		}
+	}
+	srv, e := start(*state, string(b))
 	if e != nil {
+		if errors.Is(e, context.Canceled) && ctx.Err() != nil {
+			return
+		}
 		log.Fatal(e)
 	}
     defer srv.Store.Close()
@@ -131,8 +161,6 @@ func main() {
 		log.Fatal("non-loopback listen requires REGATE_PUBLIC_TOKEN")
 	}
 	log.Println(fmt.Sprintf("Regate config loaded: %s", srv.DebugConfig()))
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
 	if e = srv.Serve(ctx, addr); e != nil {
         _=srv.Store.Close()
 		log.Fatal(e)

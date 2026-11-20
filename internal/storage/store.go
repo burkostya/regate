@@ -133,6 +133,11 @@ func (s *Store) LockSuspendedRun(runID string) func() {
 const databaseName = "regate.sqlite"
 
 func New(dir,initial string) (*Store,error) {
+    absolute, err := filepath.Abs(dir)
+    if err != nil {
+        return nil, err
+    }
+    dir = absolute
     // Do not even open a quarantined restore: initialization can otherwise
     // migrate state or reconcile interrupted work before operator review.
     if err:=checkRestoreQuarantine(dir);err!=nil{return nil,err}
@@ -152,17 +157,6 @@ func New(dir,initial string) (*Store,error) {
     if err=s.initialize(initial);err!=nil {
         _=db.Close()
         return nil,err
-    }
-    // The observer must not mark tasks from a live worker as interrupted.
-    // Only when no execution lease is active may startup reconcile orphaned
-    // records. A live service obtains its own lease before accepting requests.
-    live,err:=s.liveExecutionLease()
-    if err!=nil {_=db.Close();return nil,err}
-    if !live {
-        if err=s.RecoverInterruptedTasks();err!=nil {
-            _=db.Close()
-            return nil,err
-        }
     }
     return s,nil
 }
@@ -184,7 +178,7 @@ func (s *Store) initialize(initial string) error {
     defer tx.Rollback()
     var version int
     if err=tx.QueryRow("PRAGMA user_version").Scan(&version);err!=nil{return err}
-    if version>6 {return fmt.Errorf("database schema version %d is newer than Regate",version)}
+    if version>latestSQLiteVersion {return fmt.Errorf("database schema version %d is newer than Regate",version)}
     if version==0 {
         for _,stmt:=range []string{
             `CREATE TABLE IF NOT EXISTS revisions (
@@ -315,6 +309,20 @@ func (s *Store) initialize(initial string) error {
         )`);err!=nil{return fmt.Errorf("SQLite v6 audit migration: %w",err)}
         if _,err=tx.Exec("PRAGMA user_version=6");err!=nil{return err}
     }
+    if version < 7 {
+        for _, statement := range []string{
+            `CREATE TABLE IF NOT EXISTS oauth_quota (
+                principal BLOB PRIMARY KEY NOT NULL CHECK (length(principal) = 32),
+                ready_ns INTEGER NOT NULL
+            ) WITHOUT ROWID`,
+            "CREATE INDEX IF NOT EXISTS oauth_quota_ready ON oauth_quota(ready_ns)",
+            "PRAGMA user_version=7",
+        } {
+            if _, err = tx.Exec(statement); err != nil {
+                return fmt.Errorf("SQLite v7 OAuth quota migration: %w", err)
+            }
+        }
+    }
     // Refuse to open a modified or truncated historical audit chain.
     if err=verifyAuditTx(tx);err!=nil{return fmt.Errorf("audit integrity: %w",err)}
     var count int
@@ -327,12 +335,13 @@ func (s *Store) initialize(initial string) error {
             if _,err=activateTx(tx,initial,"");err!=nil{return err}
         }
     }
-    // Observer processes must not transition a live worker's dispatching
-    // effects into UNKNOWN. A crashed/expired lease can be recovered.
+    // Inspect the lease and recover within the same write transaction. A
+    // worker cannot acquire leadership between the check and recovery.
     live,err:=leaseLiveTx(tx,time.Now().UnixNano())
     if err!=nil{return err}
     if !live {
         if err=recoverDispatches(tx);err!=nil{return err}
+        if err=recoverInterruptedTasksTx(tx);err!=nil{return err}
         if err=recoverRefreshingGrantsTx(tx);err!=nil{return err}
     }
     return tx.Commit()
@@ -439,6 +448,9 @@ func (s *Store) activateDraft(id string, expectedSource *string)(Revision,error)
     tx,err:=s.db.BeginTx(context.Background(),nil)
     if err!=nil{return Revision{},err}
     defer tx.Rollback()
+    if err := s.checkExecutionLeaseTx(tx); err != nil {
+        return Revision{}, err
+    }
     var base,source,active string
     err=tx.QueryRow("SELECT base,source FROM drafts WHERE id=?",id).Scan(&base,&source)
     if err!=nil{return Revision{},err}
@@ -460,6 +472,9 @@ func (s *Store) Rollback(target string)(Revision,error) {
     tx,err:=s.db.BeginTx(context.Background(),nil)
     if err!=nil{return Revision{},err}
     defer tx.Rollback()
+    if err := s.checkExecutionLeaseTx(tx); err != nil {
+        return Revision{}, err
+    }
     var source,parent string
     err=tx.QueryRow("SELECT source FROM revisions WHERE id=?",target).Scan(&source)
     if err!=nil{return Revision{},err}

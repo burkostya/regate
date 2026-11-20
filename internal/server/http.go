@@ -22,7 +22,14 @@ import (
 
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { reply(w, 200, map[string]any{"ok": true}) })
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		err := s.Store.RequireExecutionLeader(r.Context())
+		if err != nil {
+			reply(w, http.StatusServiceUnavailable, map[string]any{"ok": false})
+			return
+		}
+		reply(w, http.StatusOK, map[string]any{"ok": true})
+	})
     mux.HandleFunc("/.well-known/oauth-protected-resource/",s.oauthResourceMetadata)
 	mux.Handle("/api/", s.requireAdmin(http.HandlerFunc(s.api)))
 	mux.Handle("/mcp/admin", s.requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.inbound.handle(s, w, r, "", true) })))
@@ -141,6 +148,9 @@ func (s *Service) api(w http.ResponseWriter, r *http.Request) {
 			return
 		case "effects":
 			reply(w, 200, s.Store.Effects())
+			return
+		case "effect-history":
+			s.effectHistory(w, r)
 			return
         case "queue-key-usage":
             usage,e:=s.Store.QueueKeyUsage(r.Context())
@@ -454,6 +464,11 @@ func (s *Service) dispatchMCP(ctx context.Context, surface string, admin bool, m
 	return nil, &mcp.RPCError{Code: -32601, Message: "method not implemented: " + method}
 }
 func (s *Service) Serve(ctx context.Context, addr string) error {
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
     if s.observability != nil && s.observability.exporter != nil {
         go s.observability.exporter.run(ctx)
     }
@@ -464,8 +479,8 @@ func (s *Service) Serve(ctx context.Context, addr string) error {
 		defer cancel()
 		_ = httpSrv.Shutdown(shutCtx)
 	}()
-	log.Printf("regate listening on %s", addr)
-	e := httpSrv.ListenAndServe()
+	log.Printf("regate listening on %s", listener.Addr())
+	e := httpSrv.Serve(listener)
 	if errors.Is(e, http.ErrServerClosed) {
 		return nil
 	}

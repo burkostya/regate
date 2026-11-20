@@ -7,8 +7,6 @@ import (
 	"net"
 	"syscall"
 	"time"
-
-	"github.com/burkostya/regate/internal/mcp"
 )
 
 // readRetryPolicy is private to a single MCP read node. A retry is only
@@ -16,7 +14,7 @@ import (
 // SDK transport retries remain disabled for every MCP session.
 type readRetryPolicy struct {
 	maxAttempts int
-	delay time.Duration
+	delay       time.Duration
 }
 type readRetryKey struct{}
 
@@ -25,7 +23,9 @@ func withReadRetry(ctx context.Context, attempts int, delay time.Duration) conte
 }
 
 func retryableReadTransportError(err error) bool {
-	if err == nil { return false }
+	if err == nil {
+		return false
+	}
 	// Only connection-level uncertainties, not application JSON-RPC errors,
 	// denied authorization, malformed content or explicit MCP tool failures.
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
@@ -36,11 +36,11 @@ func retryableReadTransportError(err error) bool {
 	return errors.As(err, &network)
 }
 
-func (r *Runtime) callReadWithRetry(ctx context.Context, conn *mcp.Conn,
-	tool string, args map[string]any) (map[string]any, error) {
+func (r *Runtime) callReadWithRetry(ctx context.Context,
+	call func(context.Context) (map[string]any, error)) (map[string]any, error) {
 	policy, ok := ctx.Value(readRetryKey{}).(readRetryPolicy)
 	if !ok || policy.maxAttempts < 2 {
-		return conn.CallTool(ctx, tool, args)
+		return call(ctx)
 	}
 	// This bound is enforced again here to fail closed on malformed internal
 	// context, even though configuration compilation already checks it.
@@ -49,7 +49,9 @@ func (r *Runtime) callReadWithRetry(ctx context.Context, conn *mcp.Conn,
 		return nil, errors.New("invalid bounded read retry policy")
 	}
 	for attempt := 1; attempt <= policy.maxAttempts; attempt++ {
-		if err := ctx.Err(); err != nil { return nil, err }
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if attempt > 1 {
 			timer := time.NewTimer(policy.delay)
 			select {
@@ -60,13 +62,11 @@ func (r *Runtime) callReadWithRetry(ctx context.Context, conn *mcp.Conn,
 			}
 			// Cancellation, revocation, loss of leadership and grant fencing
 			// must all prevent a follow-on network call.
-			if err := r.CheckQueuedTaskExecution(ctx); err != nil { return nil, err }
-			if err := r.CheckGrantExecution(ctx); err != nil { return nil, err }
-			if r.Store != nil {
-				if err := r.Store.RequireExecutionLeader(ctx); err != nil { return nil, err }
+			if err := r.checkMCPDispatch(ctx); err != nil {
+				return nil, err
 			}
 		}
-		raw, err := conn.CallTool(ctx, tool, args)
+		raw, err := call(ctx)
 		if err == nil || attempt == policy.maxAttempts ||
 			!retryableReadTransportError(err) {
 			return raw, err

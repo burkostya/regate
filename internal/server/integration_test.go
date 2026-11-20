@@ -263,6 +263,15 @@ func TestHTTPAdmin(t *testing.T) {
 
 func latestCall(t *testing.T, url, token, method string, id int, extra map[string]any) *http.Response {
 	t.Helper()
+	response, err := http.DefaultClient.Do(latestRequest(t, url, token, method, id, extra))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response
+}
+
+func latestRequest(t *testing.T, url, token, method string, id int, extra map[string]any) *http.Request {
+	t.Helper()
 	params := map[string]any{"_meta": map[string]any{
 		"io.modelcontextprotocol/protocolVersion":    "2026-07-28",
 		"io.modelcontextprotocol/clientCapabilities": map[string]any{},
@@ -290,11 +299,7 @@ func latestCall(t *testing.T, url, token, method string, id int, extra map[strin
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	response, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return response
+	return req
 }
 func TestSubscriptionsNotifyOnActivate(t *testing.T) {
 	svc, server, _ := fixture(t)

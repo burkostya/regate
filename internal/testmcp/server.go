@@ -26,6 +26,8 @@ import (
 )
 
 const maxRecordCount = 128
+const maxSoakRecordCount = 4096
+const maxStateBytes = 1 << 20
 const maxWireBytes = 4 << 20
 
 type diskState struct {
@@ -55,6 +57,7 @@ type diskState struct {
 type Server struct {
 	instance string
 	path     string
+	limit    int
 	mu       sync.Mutex
 	state    diskState
 	reads    atomic.Int64
@@ -86,13 +89,22 @@ func validOperationToken(token string) bool {
 }
 
 func New(instance, dir string) (*Server, error) {
+	return NewWithRecordLimit(instance, dir, maxRecordCount)
+}
+
+// NewWithRecordLimit allows a bounded, opt-in capacity for a sustained run.
+// Use the same limit when reopening the fixture's state after a restart.
+func NewWithRecordLimit(instance, dir string, limit int) (*Server, error) {
 	if !validID(instance) || dir == "" {
 		return nil, errors.New("fixture requires a safe instance name and dedicated state directory")
+	}
+	if limit < 1 || limit > maxSoakRecordCount {
+		return nil, fmt.Errorf("fixture record limit must be in 1..%d", maxSoakRecordCount)
 	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	s := &Server{instance: instance, path: filepath.Join(dir, "records.json")}
+	s := &Server{instance: instance, path: filepath.Join(dir, "records.json"), limit: limit}
 	s.state = diskState{Instance: instance, Records: map[string]string{},
 		OperationTokens: map[string]string{}, Compensated: map[string]bool{}}
 	body, err := os.ReadFile(s.path)
@@ -101,7 +113,7 @@ func New(instance, dir string) (*Server, error) {
 		return s, nil
 	case err != nil:
 		return nil, err
-	case len(body) > 1<<20:
+	case len(body) > maxStateBytes:
 		return nil, errors.New("test MCP state exceeds safe fixture limit")
 	}
 	var restored diskState
@@ -109,7 +121,7 @@ func New(instance, dir string) (*Server, error) {
 		return nil, fmt.Errorf("invalid persisted fixture state: %w", err)
 	}
 	if restored.Instance != instance || restored.Records == nil ||
-		len(restored.Records) > maxRecordCount ||
+		len(restored.Records) > s.limit ||
 		restored.WritesCommitted > restored.WritesReceived ||
 		restored.WritesReceived < 0 || restored.WritesCommitted < 0 ||
 		restored.FencedRejections < 0 || restored.IdempotentReplays < 0 ||
@@ -151,6 +163,9 @@ func (s *Server) persist(next diskState) error {
 	body, err := json.Marshal(next)
 	if err != nil {
 		return err
+	}
+	if len(body) > maxStateBytes {
+		return errors.New("test MCP state exceeds safe fixture limit")
 	}
 	dir := filepath.Dir(s.path)
 	f, err := os.CreateTemp(dir, ".fixture-*")
@@ -246,7 +261,7 @@ func (s *Server) put(id, value, token string, epoch uint64) (bool, error) {
             return false,errors.New("operation token already used for another record")
         }
     }
-    if len(next.Records)>=maxRecordCount {
+    if len(next.Records)>=s.limit {
         return false,errors.New("fixture record capacity reached")
     }
     next.Records[id]=value

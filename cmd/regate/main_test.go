@@ -20,10 +20,10 @@ func TestOfflineBackupVerifierWritesOnlyManifest(t *testing.T) {
     // config file or execution lease. It never runs recovery.
     t.Setenv("REGATE_ADMIN_TOKEN","")
     var output bytes.Buffer
-    if err=verifyBackupToWriter(destination,&output);err!=nil{t.Fatal(err)}
+    if err=verifyBackupToWriter(destination,&output,nil);err!=nil{t.Fatal(err)}
     var manifest storage.BackupManifest
     if err=json.Unmarshal(output.Bytes(),&manifest);err!=nil{t.Fatal(err)}
-    if manifest.Revisions!=1 || len(manifest.SHA256)!=64 ||
+    if manifest.Revisions!=1 || len(manifest.SHA256)!=64 || len(manifest.AuditHeadSHA256)!=64 ||
         manifest.ActiveRevision=="" {
         t.Fatalf("CLI manifest missing verification fields: %#v",manifest)
     }
@@ -31,7 +31,7 @@ func TestOfflineBackupVerifierWritesOnlyManifest(t *testing.T) {
         t.Fatal("original HCL source leaked through backup manifest")
     }
     missing:=filepath.Join(t.TempDir(),"missing.sqlite")
-    if err=verifyBackupToWriter(missing,&bytes.Buffer{});err==nil ||
+    if err=verifyBackupToWriter(missing,&bytes.Buffer{},nil);err==nil ||
         !os.IsNotExist(err){
         t.Fatalf("missing backup was not rejected: %v",err)
     }

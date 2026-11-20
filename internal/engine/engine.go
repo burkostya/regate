@@ -1200,71 +1200,119 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 	}
 	return ret
 }
-func (r *Runtime) mcpCall(ctx context.Context,cfg *config.Config,u config.Upstream,tool string,args map[string]any,runID,node,effect string)(map[string]any,error) {
-    if err:=r.CheckQueuedTaskExecution(ctx);err!=nil{return nil,err}
-    if err:=r.CheckGrantExecution(ctx);err!=nil{return nil,err}
-    if err:=checkOutbound(u.URL);err!=nil {return nil,err}
-    // Acquire and verify the target token before any dispatching effect is
-    // journaled. Authorization failure means no external write was attempted.
-    conn,err:=r.connFor(ctx,cfg,u)
-    if err!=nil{return nil,err}
-    if r.Store!=nil {
-        if err=r.Store.RequireExecutionLeader(ctx);err!=nil{return nil,err}
-    }
-    var attempt storage.Effect
-    if effect!="read" {
-        operation:=u.Name+"."+tool
-        tokenArg,token,tokenErr:=writeTokenArgument(cfg,operation,u,storage.EffectID(runID,node,operation))
-        if tokenErr!=nil{return nil,tokenErr}
-        args,tokenErr=attachWriteToken(args,tokenArg,token)
-        if tokenErr!=nil{return nil,tokenErr}
-        if r.Store==nil {return nil,fmt.Errorf("durable effect journal required before external write")}
-        // The same logical run/node/operation has a stable journal identity.
-        // SQLite admission is atomic across workers: unknown results and
-        // attempts already in flight cannot be silently dispatched again.
-        attempt,err=r.Store.BeginEffectBound(runID,node,u.Name+"."+tool,storage.TargetDigest("mcp",u.URL),args)
-        if err!=nil{return nil,err}
-    }
-    if effect!="read" {
-        // Any post-admission denial, including an execution lease lost after
-        // the SQLite write barrier, must leave the effect reconcilable. The
-        // attempt identity still forbids a second network dispatch.
-        if err=r.checkMCPPostAdmission(ctx,attempt);err!=nil{return nil,err}
-    } else {
-        if r.Store!=nil {
-            if err=r.Store.RequireExecutionLeader(ctx);err!=nil{return nil,err}
-        }
-        if err=r.CheckQueuedTaskExecution(ctx);err!=nil{return nil,err}
-        if err=r.CheckGrantExecution(ctx);err!=nil{return nil,err}
-    }
-    var raw map[string]any
-    var e error
-    if effect=="read" {
-        raw,e=r.callReadWithRetry(ctx,conn,tool,args)
-    } else {
-        raw,e=conn.CallTool(ctx,tool,args)
-    }
-    if effect!="read" {
-        state:="confirmed"
-        reason:=""
-        if e!=nil {
-            state="unknown"
-            reason=expr.RedactDiagnostic(e.Error())
-        } else if outcomeErr:=validateMCPToolOutcome(raw);outcomeErr!=nil {
-            // A provider can commit a write and subsequently return an MCP
-            // application error. Only a valid non-error tool result confirms
-            // the outcome; the envelope itself stays transparent to callers.
-            state="unknown"
-            reason=expr.RedactDiagnostic(outcomeErr.Error())
-        }
-        if err:=r.Store.CompleteEffect(attempt.ID,state,reason);err!=nil {
-            // Never return success when the remote action completed but
-            // durability of its outcome could not be established.
-            return nil,fmt.Errorf("effect outcome not durable: %w",err)
-        }
-    }
-    return raw,e
+func (r *Runtime) mcpCall(ctx context.Context, cfg *config.Config, u config.Upstream, tool string, args map[string]any, runID, node, effect string) (map[string]any, error) {
+	if err := r.CheckQueuedTaskExecution(ctx); err != nil {
+		return nil, err
+	}
+	if err := r.CheckGrantExecution(ctx); err != nil {
+		return nil, err
+	}
+	if err := checkOutbound(u.URL); err != nil {
+		return nil, err
+	}
+	// Acquire and verify the target token before any dispatching effect is
+	// journaled. Authorization failure means no external write was attempted.
+	conn, err := r.connFor(ctx, cfg, u)
+	if err != nil {
+		return nil, err
+	}
+	if r.Store != nil {
+		if err = r.Store.RequireExecutionLeader(ctx); err != nil {
+			return nil, err
+		}
+	}
+	pin := u.ToolSchemaPins[tool]
+	if effect == "read" {
+		if err := r.checkMCPDispatch(ctx); err != nil {
+			return nil, err
+		}
+		return r.callReadWithRetry(ctx, func(ctx context.Context) (map[string]any, error) {
+			if pin != "" {
+				return conn.CallPinnedTool(ctx, tool, args, pin, r.checkMCPDispatch)
+			}
+			return conn.CallTool(ctx, tool, args)
+		})
+	}
+
+	operation := u.Name + "." + tool
+	tokenArg, token, err := writeTokenArgument(cfg, operation, u, storage.EffectID(runID, node, operation))
+	if err != nil {
+		return nil, err
+	}
+	args, err = attachWriteToken(args, tokenArg, token)
+	if err != nil {
+		return nil, err
+	}
+	if r.Store == nil {
+		return nil, fmt.Errorf("durable effect journal required before external write")
+	}
+
+	var attempt storage.Effect
+	admitted := false
+	admit := func(ctx context.Context) error {
+		if err := r.checkMCPDispatch(ctx); err != nil {
+			return err
+		}
+		// Unknown results and attempts already in flight cannot be replayed.
+		var err error
+		attempt, err = r.Store.BeginEffectBound(runID, node, operation, storage.TargetDigest("mcp", u.URL), args)
+		if err != nil {
+			return err
+		}
+		if err = r.checkMCPPostAdmission(ctx, attempt); err != nil {
+			return err
+		}
+		admitted = true
+		return nil
+	}
+	var raw map[string]any
+	var e error
+	if pin != "" {
+		raw, e = conn.CallPinnedTool(ctx, tool, args, pin, admit)
+	} else {
+		if err := admit(ctx); err != nil {
+			return nil, err
+		}
+		raw, e = conn.CallTool(ctx, tool, args)
+	}
+	if admitted {
+		state := "confirmed"
+		reason := ""
+		if e != nil {
+			state = "unknown"
+			reason = expr.RedactDiagnostic(e.Error())
+		} else if outcomeErr := validateMCPToolOutcome(raw); outcomeErr != nil {
+			// A provider can commit a write and subsequently return an MCP
+			// application error. Only a valid non-error tool result confirms
+			// the outcome; the envelope itself stays transparent to callers.
+			state = "unknown"
+			reason = expr.RedactDiagnostic(outcomeErr.Error())
+		}
+		if err := r.Store.CompleteEffect(attempt.ID, state, reason); err != nil {
+			// Never return success when the remote action completed but
+			// durability of its outcome could not be established.
+			return nil, fmt.Errorf("effect outcome not durable: %w", err)
+		}
+	}
+	return raw, e
 }
+
+// Recheck authorization and the execution lease after schema discovery.
+func (r *Runtime) checkMCPDispatch(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if r.Store != nil {
+		if err := r.Store.RequireExecutionLeader(ctx); err != nil {
+			return err
+		}
+	}
+	if err := r.CheckQueuedTaskExecution(ctx); err != nil {
+		return err
+	}
+	return r.CheckGrantExecution(ctx)
+}
+
 // checkMCPPostAdmission seals every denied write after durable admission.
 // Even when the request was not sent, the conservative UNKNOWN result is
 // preferable to an unresolvable dispatching journal or a speculative retry.

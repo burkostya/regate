@@ -1,4 +1,4 @@
-# Regate SQLite durability contract (schema version 5)
+# Regate SQLite durability contract (schema version 7)
 
 SQLite is the authoritative on-disk store for revisions, active selection,
 drafts, graph layouts, MCP task records, suspended run checkpoints, execution
@@ -13,8 +13,10 @@ acquire the single `default` lease before exposing MCP endpoints. An
 independent process opening the same state directory cannot become execution
 leader while that lease is alive; it may inspect stored state but cannot
 dispatch external writes. Leases have a 30-second deadline renewed every
-5 seconds. Each takeover increments a monotonic `epoch`; an old worker's
-late heartbeat, stale `Close` and subsequent external effects are fenced.
+5 seconds. Promotion after expiry increments the expired lease's `epoch`.
+Regate fences late heartbeats and stale `Close` calls by owner and epoch.
+An expired or replaced worker cannot publish a revision or admit a new
+external effect.
 
 A database observer must **not** convert another worker's live
 `dispatching` effects into `unknown`, nor fail its running tasks. Startup
@@ -26,11 +28,34 @@ expired. No task is automatically replayed after takeover.
 The CLI releases leadership on graceful shutdown and on fatal validation
 paths after startup.
 
+Start a same-host standby with `regate -wait-for-leader`, the same SQLite
+state directory and security settings, and a distinct listen address.
+While the primary owns its lease, the standby leaves its HTTP socket
+closed. At promotion it reads the latest active revision from SQLite
+and starts accepting connections. A reverse proxy can use `/healthz`,
+which returns HTTP 503 after loss of leadership. After a hard kill, the
+standby waits for the remaining lease lifetime before promotion. Route
+new traffic after the health check succeeds and disable proxy retries for
+MCP POST requests. Streaming clients must reconnect after a process loss.
+
 This protects a single SQLite-backed Regate deployment from common duplicate
 worker execution. It is not external-service fencing: an already in-flight
 write cannot be revoked at a remote service without an idempotency key or a
 resource-specific fencing contract. Full distributed coordinator semantics
 remain a separate acceptance gate.
+
+## Shared OAuth request quota (schema v7)
+
+The opt-in OAuth request quota persists per-principal admission timestamps
+in `oauth_quota`. The same database and quota settings preserve a budget
+across promotion of a same-host standby. The sole stored identifier is
+HMAC-SHA-256 of the verified issuer and subject. Each write transaction
+serializes admission and bounds the table to 4096 principals. New
+principals reclaim fully refilled entries before consuming capacity.
+
+Existing schema v6 backup archives remain verifiable and restorable.
+Regate migrates the restored database when the operator releases it from
+quarantine and starts the service.
 
 ## Atomicity and restart
 
@@ -134,7 +159,7 @@ backup. The staging directory and final path must share a filesystem.
 digest-consistent immutable HCL revision history, effect-current to
 latest-event projection consistency, and basic task/queue/grant table
 presence. It returns a non-secret manifest (revision ID, table counts,
-file size and SHA-256). It neither runs migrations nor invokes task
+verified audit head SHA-256, file size and snapshot SHA-256). It neither runs migrations nor invokes task
 recovery. Files with unsafe permissions or symlinks are refused.
 
 Offline verification is available without a running Regate service or admin
@@ -145,6 +170,10 @@ go run ./cmd/regate -verify-backup /secure/backups/regate.sqlite
 ```
 
 Store the reported SHA-256 in an independently protected backup inventory.
+To require an exact audit ancestor during backup verification, provide the
+authenticated checkpoint's sequence and digest with
+`-audit-anchor-sequence` and `-audit-anchor-sha256`. See
+[off-host audit checkpoints](../operations/telemetry.md#off-host-audit-checkpoints).
 A verified SQLite file is **not** proof that remote effects were reconciled,
 or that the external `REGATE_GRANT_KEYS_JSON` /
 `REGATE_QUEUE_KEYS_JSON` encryption keys are available for restore.

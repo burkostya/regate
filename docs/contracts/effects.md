@@ -184,6 +184,11 @@ attestation remain release gates.
 ## Management surface
 
 - `regate_effects`: list current status projections.
+- `regate_effect_history` and `GET /api/effect-history?effect_id=ID`: view up to
+  200 oldest committed transitions for one operation in journal order, with
+  its run and node IDs for trace correlation. The admin bearer is required.
+  Transition entries contain only status and timestamp. A `truncated` field
+  indicates additional entries.
 - `regate_effect_compensate`: explicitly authorize a one-time inverse through
   `effect_id`, `contract`, original write `intent`, `actor` and `reason`.
 - REST equivalent: `POST /api/effect-compensate` (admin bearer required).
@@ -231,6 +236,7 @@ Unchanged legacy tokenless inverse contracts retain their existing behavior.
 
 This allows the local alpha/beta write/readback/compensation acceptance stand
 to exercise the same contract-bound token across **both** actual provider
-processes. Their simulated local native idempotency and epoch fencing are
-bounded fixture guarantees only. A generic MCP provider does **not** inherit
-these guarantees; see deferred real-provider attestation issue #106.
+processes. Idempotency and epoch fencing are verified for alpha and beta.
+Other providers' guarantees depend on their own contracts. Alpha and beta
+are the accepted durable-write test environment for v1.
+[Acceptance decision](https://github.com/burkostya/regate/issues/106)

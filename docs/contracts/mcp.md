@@ -10,6 +10,8 @@ discovery and task-start `resultType: task` are narrow compatibility bridges.
 The management `regate_upstream_refresh` method returns:
 
 - `items`: tool descriptors, retained for older management API clients;
+- `tool_schema_fingerprints`: lowercase SHA-256 fingerprints of observable
+  input and output schemas by unambiguous tool name;
 - `resources`, `resourceTemplates` and `prompts`: independent upstream
   descriptors from standard MCP list methods;
 - `revision`: immutable Regate configuration revision used for this discovery;
@@ -31,6 +33,38 @@ A cache entry is usable only for the same Regate revision; activation and
 rollback invalidate the cache, and a discovery that completes after a revision
 switch cannot overwrite the new cache. A cached failure is returned as an
 error, never silently converted into a successful empty list.
+
+## Tool schema pins
+
+To require a known MCP tool contract, inspect the authenticated management
+`regate_upstream_refresh` result for the upstream, review the tool's
+`inputSchema` and `outputSchema`, and copy its `tool_schema_fingerprints`
+value into `tool_schema_pins` under that `upstream` in an HCL draft. Validate
+and activate the draft to start enforcing it. Each map key is the actual
+upstream tool name, including when an exposed Regate tool has a different
+name. Existing HCL without pins keeps its dispatch behavior.
+
+Before calling a pinned tool, Regate follows bounded `tools/list` pages in
+the same SDK session and under the same upstream authorization as the call.
+It stops before sending arguments or admitting a durable effect when the
+catalog is unavailable or the tool is missing, duplicated or mismatched.
+This applies to direct tools, pipeline nodes, MCP hooks, readback and
+compensation. A configured safe-read retry rechecks the pin in its own
+session. Dry-runs continue to use configured mocks.
+
+Fingerprints hash the two SDK-decoded schema JSON objects with sorted object
+keys. A missing output schema is represented as `null`. Tool descriptions
+and annotations outside the schemas do not affect the hash. A changed schema
+requires an explicitly reviewed new pin or restoration of the pinned schema.
+Management refresh only reports observations. Pins are part of the immutable
+HCL revision and do not change reconciliation tokens for previously attempted
+writes.
+
+This check compares advertised schemas. It cannot make the list and call
+atomic on the provider, and it cannot establish the behavior of a provider
+that returns a matching descriptor. Existing runtime validation still
+checks configured data contracts. Resource and prompt descriptors have no
+schema pins.
 
 ## Test matrix
 

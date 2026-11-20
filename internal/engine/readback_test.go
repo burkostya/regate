@@ -234,6 +234,12 @@ func TestReadbackOperationTokenBindsOriginalContract(t *testing.T) {
     if err!=nil || len(expected)!=64 {t.Fatalf("cannot derive token: %q %v",expected,err)}
     duplicate,err:=ReadbackOperationToken(id,rule,u)
     if err!=nil || duplicate!=expected {t.Fatalf("token is not deterministic: %q %v",duplicate,err)}
+	pinned := u
+	pinned.ToolSchemaPins = map[string]string{rule.ReadTool: strings.Repeat("c", 64)}
+	withPin, err := ReadbackOperationToken(id, rule, pinned)
+	if err != nil || withPin != expected {
+		t.Fatal("adding a dispatch precondition changed the token for a prior write")
+	}
 
     changes:=[]struct{
         name string

@@ -18,39 +18,71 @@ type Catalog struct {
     Prompts []map[string]any `json:"prompts"`
 }
 
-// collectCatalog follows all upstream pages with a bounded item count and
-// refuses repeated cursors, including a first-page self-loop.
 func collectCatalog[T any](method string, fetch func(string) ([]T, string, error)) ([]map[string]any, error) {
-    results := []map[string]any{}
-    seen := map[string]bool{"":true}
-    cursor := ""
-    for page:=0; page<maxToolPages; page++ {
-        items, next, err := fetch(cursor)
-        if err != nil { return nil,fmt.Errorf("%s page %d: %w",method,page+1,err) }
-        if len(items) > maxCatalogItems-len(results) {
-            return nil,fmt.Errorf("%s exceeds %d entries",method,maxCatalogItems)
-        }
-        for _, item := range items {
-            var value map[string]any
-            if err:=remarshal(item,&value); err!=nil { return nil,fmt.Errorf("%s schema: %w",method,err) }
-            if value == nil { return nil,fmt.Errorf("%s returned null entry",method) }
-            results=append(results,value)
-        }
-        if next=="" {return results,nil}
-        if seen[next] {return nil,fmt.Errorf("%s repeated cursor %q",method,next)}
-        seen[next]=true
-        cursor=next
-    }
-    return nil,fmt.Errorf("%s exceeded %d pages",method,maxToolPages)
+	results := []map[string]any{}
+	err := visitCatalog(method, fetch, func(item T) error {
+		var value map[string]any
+		if err := remarshal(item, &value); err != nil {
+			return fmt.Errorf("%s schema: %w", method, err)
+		}
+		if value == nil {
+			return fmt.Errorf("%s returned null entry", method)
+		}
+		results = append(results, value)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
-func allTools(ctx context.Context, session *sdk.ClientSession) ([]map[string]any,error) {
-    return collectCatalog("tools/list",func(cursor string)([]*sdk.Tool,string,error) {
-        r,err:=session.ListTools(ctx,&sdk.ListToolsParams{Cursor:cursor})
-        if err!=nil {return nil,"",err}
-        return r.Tools,r.NextCursor,nil
-    })
+// visitCatalog lets runtime schema checks reuse the discovery bounds without
+// retaining pages or allocating copies of unrelated descriptors.
+func visitCatalog[T any](method string, fetch func(string) ([]T, string, error), visit func(T) error) error {
+	seen := map[string]bool{"": true}
+	cursor := ""
+	count := 0
+	for page := 0; page < maxToolPages; page++ {
+		items, next, err := fetch(cursor)
+		if err != nil {
+			return fmt.Errorf("%s page %d: %w", method, page+1, err)
+		}
+		if len(items) > maxCatalogItems-count {
+			return fmt.Errorf("%s exceeds %d entries", method, maxCatalogItems)
+		}
+		count += len(items)
+		for _, item := range items {
+			if err := visit(item); err != nil {
+				return err
+			}
+		}
+		if next == "" {
+			return nil
+		}
+		if seen[next] {
+			return fmt.Errorf("%s repeated cursor %q", method, next)
+		}
+		seen[next] = true
+		cursor = next
+	}
+	return fmt.Errorf("%s exceeded %d pages", method, maxToolPages)
 }
+
+func allTools(ctx context.Context, session *sdk.ClientSession) ([]map[string]any, error) {
+	return collectCatalog("tools/list", toolPages(ctx, session))
+}
+
+func toolPages(ctx context.Context, session *sdk.ClientSession) func(string) ([]*sdk.Tool, string, error) {
+	return func(cursor string) ([]*sdk.Tool, string, error) {
+		r, err := session.ListTools(ctx, &sdk.ListToolsParams{Cursor: cursor})
+		if err != nil {
+			return nil, "", err
+		}
+		return r.Tools, r.NextCursor, nil
+	}
+}
+
 func allResources(ctx context.Context, session *sdk.ClientSession) ([]map[string]any,error) {
     return collectCatalog("resources/list",func(cursor string)([]*sdk.Resource,string,error) {
         r,err:=session.ListResources(ctx,&sdk.ListResourcesParams{Cursor:cursor})
@@ -78,7 +110,7 @@ func allPrompts(ctx context.Context, session *sdk.ClientSession) ([]map[string]a
 // guard optional families; tools/list stays callable for older deployments
 // that implement it but omit the tools capability in server/discover.
 func (c *Conn) DiscoverCatalog(ctx context.Context) (Catalog,error) {
-    return withSession(c,ctx,func(session *sdk.ClientSession)(Catalog,error) {
+    return withSession(c,ctx,func(ctx context.Context,session *sdk.ClientSession)(Catalog,error) {
         cat:=Catalog{
             Tools:[]map[string]any{},
             Resources:[]map[string]any{},
