@@ -1,58 +1,75 @@
 # Security and operational boundaries
 
-**This implementation is a prototype for local testing. It has not been security audited and must not be Internet-exposed or used with sensitive personal/production data.**
+The [v1.0.0-rc.1 prerelease](https://github.com/burkostya/regate/releases/tag/v1.0.0-rc.1)
+passed local acceptance with synthetic data. The
+[security and PII review](operations/threat-review.md#v100-rc1-security-and-pii-review)
+lists the tested controls and the evidence still needed for sign-off.
+[Issue #10](https://github.com/burkostya/regate/issues/10) tracks that
+decision and independent audit custody. Use the prerelease on isolated
+stands with synthetic data pending sign-off.
 
-## What is enforced now
+## Identity and management
 
-- Admin bearer token is mandatory for CLI start and protected management endpoints.
-- Unconfigured legacy public surfaces use a public bearer token on non-loopback clients or allow anonymous loopback access for local development only. The admin bearer no longer implicitly authenticates to public surfaces.
-- OAuth-protected surfaces verify their trusted issuer, audience, expiry, required scopes and JWT signature (JWKS) or opaque token activity (introspection). This never falls back to loopback/public token auth. Individual tool/resource/prompt catalogs are scope-filtered and calls deny before protected effects.
-- RFC 9728 protected-resource metadata is available without credentials for configured OAuth surfaces. Sensitive OAuth tool results and task results are masked by default; unmasked tool release requires explicit `restricted` classification and `pii:read` scope.
-- Constant-time comparison for bearer equality.
-- No upstream token is passed through automatically; authentication is looked up from a named environment variable (`auth_env`).
-- HTTP hook and MCP upstream outbound host allowlist, no HTTP redirects, HTTP(S) URL validation. Outbound clients now reject DNS results pointing to loopback, private, link-local, shared-address and selected reserved ranges unless the original hostname is explicitly loopback. Connections dial validated IPs (DNS rebinding is blocked at dial-time); outgoing HTTP proxies are disabled for these clients.
-- HCL changes pass validation and draft base revision conflicts are rejected.
-- Decision `deny`/`indeterminate`/network errors and unfulfilled obligations fail closed.
-- The expression evaluator accepts a finite safe subset without arbitrary code execution.
-- Suspended calls and task statuses have file-backed persistence; event journal records dispatching/unknown states.
+- The CLI requires `REGATE_ADMIN_TOKEN`. Management REST and MCP require
+  that bearer. Public OAuth credentials grant access only to their authorized
+  public operations. The console keeps the admin token in browser memory and
+  sends it through its same-origin management proxy.
+- On a public surface without OAuth, `REGATE_PUBLIC_TOKEN` is required
+  when configured. Anonymous access is limited to loopback peers when the
+  token is unset. The CLI requires a public token for non-loopback listeners.
+- An OAuth surface verifies issuer, audience, subject, expiry and scopes
+  using JWT signatures with JWKS or opaque-token introspection. Tool,
+  resource and prompt scopes govern discovery and invocation. Task access
+  also checks the originating surface, the original scopes, and the owner
+  bound to the verified issuer, audience and subject. See the
+  [OAuth resource-server contract](contracts/oauth.md).
+- Regate keeps inbound bearer credentials at the resource-server boundary.
+  Outbound credentials come from environment variables named by `auth_env`
+  or a separately verified RFC 8693 exchange with an explicit target
+  audience. Keep secret values out of HCL, draft inputs, UI layout, URLs and
+  diagnostics.
+- Activation validates HCL and rejects stale draft bases. Use
+  `expected_source_digest` to pin the reviewed draft content. In-flight runs
+  keep their revision.
 
-## Missing before production deployment
+## Decision and data boundaries
 
-1. Use the official `modelcontextprotocol/go-sdk` with conformance tests, complete multi-version negotiation, stream cancellation, subscription closing and OAuth protected resources.
-2. Complete OAuth token-exchange/delegation and session lifecycle, real-IdP verification, short-lived credential refresh, revocation propagation and multi-tenant audit. JWT issuer/audience/scope validation and per-object enforcement are implemented, but full OAuth authorization-code/PKCE is not provided by Regate (it remains an external host/IdP function).
-3. Security-audit and extend DNS/IP egress rules (including internal-service exception policies and less-common reserved ranges), verify redirects, proxy behavior and all transports. Enforce outgoing request size, data volume and content policies.
-4. Complete trusted PII detection, classification, labels, provenance, declassification proofs, consent/retention and no-leak invariants.
-5. Implement EffectContract verification, remote idempotency support, read-back reconciliation and compensation mechanisms for unclear write results.
-6. Extend HCL2/CEL typed compilation with runtime JSON Schema validation, compilation against observed upstream schemas and security-aware impact analysis.
-7. Strengthen the persistent state with transactional database semantics, file encryption/access controls, key rotation, safe migrations and leader election if multi-process.
-8. Audit every hook, identity, policy decision and changed configuration, with reliable tamper-aware records and redacted observability.
-9. Establish rate limiting, concurrency fairness, resource budgets, body and SSE limits, task quotas and robust shutdown.
-10. Implement sandboxing/attestation of executable adapters, dependency pinning, SBOM, fuzz/property testing and a security review.
+- OAuth execution preflight treats data as Restricted and requires explicit
+  Restricted trust declarations for external destinations in the pipeline
+  and its interceptors. Trust declarations and caller scopes are separate
+  checks. Outside loopback, the outbound HTTP guard requires HTTPS hosts
+  listed in `REGATE_ALLOWED_HOSTS`. It applies IP checks at dial time and
+  blocks redirects and environment HTTP proxies.
+- Decision denial, indeterminate results, invalid responses and unsupported
+  obligations stop the protected path before its effects. In the acceptance
+  pipeline, the agent receives scrubbed data. A scrubber failure stops the
+  agent call and the downstream write.
+- OAuth tool responses and task results mask recognized PII and credentials
+  by default, including nested fields. An unmasked tool must explicitly
+  declare Restricted data, opt in with `allow_unmasked`, and require
+  `pii:read`. OAuth resource and prompt text also passes through the mask.
+  Opaque OAuth resource blobs are rejected. The mask uses recognizable
+  patterns and field names. A reviewer must assess data formats and external
+  redactors for the intended use.
+- The demonstration tool `get_customer_direct` on the legacy demo
+  surface deliberately returns the fixture's unmasked data. This direct
+  proxying example belongs on an isolated, synthetic-data stand.
 
-**Known demo-only unsafe tool:** `get_customer_direct` intentionally publishes an unmasked CRM result. It exists to test transparent MCP proxying. Do not distribute that surface without explicit access controls.
+## Durable state and diagnostics
 
-## Configuration secrets
-
-Use `REGATE_ADMIN_TOKEN` for management, `REGATE_PUBLIC_TOKEN` for non-loopback, `REGATE_ALLOWED_HOSTS` for approved HTTPS upstreams, `REGATE_SKILLS_DIR` for installed skill docs. Upstream/hook `auth_env` fields contain names of environment variables, not credentials. Never place bearer tokens in HCL source or UI layout.
-
-## OAuth provider and protected resource security
-
-See [OAuth resource-server contract](contracts/oauth.md) for HCL, JOSE
-algorithms, scope filtering, metadata discovery and test evidence. This is a
-resource-server boundary, not an identity provider. Inbound OAuth bearer
-credentials never become upstream authorization headers implicitly. Operators
-must configure the JWKS/introspection host in `REGATE_ALLOWED_HOSTS` and use
-trusted HTTPS endpoints outside local-only tests. Secret environment variable
-*names* can be stored in HCL, but secret *values* must stay outside it.
-
-## Delegation and data-boundary admission
-
-An authenticated Regate token cannot be used for another audience: RFC8693
-exchange must return a separately issuer-verified bearer for an explicitly
-configured `oauth_audience`. Missing/failed exchange denies before a
-write-effect journal entry. Every OAuth pipeline is conservatively Restricted
-until independently verified declassification is available; all external
-hooks, agents and MCP upstreams must be marked `trust_level="restricted"`
-or the complete pipeline fails before dispatch. Async delegated operations
-currently require a durable grant mechanism and are refused rather than
-persisting the incoming credential. See `docs/contracts/oauth.md`.
+- SQLite holds configuration revisions, tasks, suspension checkpoints,
+  effects, traces and audit records. Queued inputs and provisioned OAuth task
+  grants use separate encryption keyrings. HCL revisions and ordinary
+  suspension checkpoints can contain plaintext. Protect the state directory,
+  SQLite WAL and backups as sensitive files. See the
+  [SQLite contract](contracts/sqlite.md).
+- The effect journal preserves an uncertain write outcome for reconciliation.
+  Verified readback can resolve it using evidence bound to its original
+  intent. An absent record under a positive-only readback contract leaves
+  the operation uncertain.
+- The administrative audit stores a fixed event schema and a chained
+  digest. Pipeline traces and effect diagnostics retain bounded metadata and
+  sanitize recognized sensitive values. They are separate from the audit
+  schema and may contain configured names. Metrics and optional OTLP/HTTP
+  transport spans use fixed labels.
+  See [telemetry and audit](operations/telemetry.md).

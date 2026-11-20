@@ -180,9 +180,11 @@ the public key held separately. Results are recorded in
 `.state/v1-controlled/audit-retention.log`. The temporary container and its
 volume are removed after the test.
 
-This profile covers one host and a single execution leader. Target deployment
-testing, external key custody, off-host immutable audit retention and security
-and PII signoff remain tracked in [#10](https://github.com/burkostya/regate/issues/10).
+This profile covers one host and a single execution leader. It is the accepted
+environment for the end-to-end scenario in
+[#10](https://github.com/burkostya/regate/issues/10).
+[Independent audit custody and security and PII sign-off](../operations/threat-review.md#v100-rc1-security-and-pii-review)
+are the remaining release gates.
 
 ## Running the three processes by hand
 
