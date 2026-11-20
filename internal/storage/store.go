@@ -306,11 +306,11 @@ func (s *Store) initialize(initial string) error {
     }
     if version < 7 {
         for _, statement := range []string{
-            `CREATE TABLE oauth_quota (
+            `CREATE TABLE IF NOT EXISTS oauth_quota (
                 principal BLOB PRIMARY KEY NOT NULL CHECK (length(principal) = 32),
                 ready_ns INTEGER NOT NULL
             ) WITHOUT ROWID`,
-            "CREATE INDEX oauth_quota_ready ON oauth_quota(ready_ns)",
+            "CREATE INDEX IF NOT EXISTS oauth_quota_ready ON oauth_quota(ready_ns)",
             "PRAGMA user_version=7",
         } {
             if _, err = tx.Exec(statement); err != nil {
