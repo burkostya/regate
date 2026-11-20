@@ -5,8 +5,8 @@ passed local acceptance with synthetic data. The
 [security and PII review](operations/threat-review.md#v100-rc1-security-and-pii-review)
 lists the tested controls and the evidence still needed for sign-off.
 [Issue #113](https://github.com/burkostya/regate/issues/113) tracks that
-decision and independent audit custody. Use the prerelease on isolated
-stands with synthetic data pending sign-off.
+decision. Use the prerelease on isolated stands with synthetic data pending
+sign-off.
 
 ## Identity and management
 

@@ -162,29 +162,14 @@ scrubber and agent hooks with the disposable alpha/beta MCP processes. A
 separate tenant case uses synthetic tokens to deliberately exercise an
 identical subject string across issuers.
 
-After effect reconciliation, an OpenSSL process signs the verified audit
-checkpoint with a disposable Ed25519 key. The script verifies the signature and
-checks that a later SQLite snapshot extends that checkpoint. The report lives
-at `.state/v1-controlled/latest.log`. Its `signed_audit_evidence` entry points
-to the retained public key, signed checkpoint manifest and later manifest.
-Temporary fixtures, private keys and database snapshots are removed at exit.
-
-Set `REGATE_AUDIT_EVIDENCE_DIR` to that evidence directory and run
-`make test-v1-audit-retention` to exercise retention using a digest-pinned
-RustFS container. The test uploads the signed manifest bundle to a disposable S3
-bucket with a one-day COMPLIANCE lock, adds an unretained control version and
-restarts storage. The same account must be able to delete the control version
-while deletion of the locked version returns HTTP 403. The test reads the
-locked version by ID, compares its bytes and verifies the signature with
-the public key held separately. Results are recorded in
-`.state/v1-controlled/audit-retention.log`. The temporary container and its
-volume are removed after the test.
+The report lives at `.state/v1-controlled/latest.log`. The script removes
+the temporary Keycloak container and its TLS fixtures at exit.
 
 This profile covers one host and a single execution leader. The end-to-end
 scenario passed on this topology in
 [#10](https://github.com/burkostya/regate/issues/10).
-[#113](https://github.com/burkostya/regate/issues/113) tracks independent audit
-custody, the operational threat review, and security and PII sign-off.
+[#113](https://github.com/burkostya/regate/issues/113) tracks the operational
+threat review and security and PII sign-off.
 
 ## Running the three processes by hand
 

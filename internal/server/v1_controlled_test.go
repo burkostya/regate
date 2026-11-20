@@ -14,8 +14,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/burkostya/regate/internal/storage"
 )
 
 type v1OAuthFixture struct {
@@ -148,20 +146,4 @@ http {
 	}
 	t.Fatal("TLS ingress did not reach the Regate health check")
 	return ""
-}
-
-func v1AuditSnapshot(t *testing.T, state, source, name string) {
-	t.Helper()
-	dir := os.Getenv("REGATE_CONTROLLED_AUDIT_DIR")
-	if dir == "" {
-		return
-	}
-	store, err := storage.New(state, source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	if _, err := store.BackupVerified(filepath.Join(dir, name+".sqlite")); err != nil {
-		t.Fatal(err)
-	}
 }

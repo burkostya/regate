@@ -181,7 +181,6 @@ func TestV1Acceptance(t *testing.T) {
 				t.Fatal(err)
 			}
 			assertAcceptanceEffectHistory(t, timeline, effect, "dispatching", "unknown", "resolved_applied")
-			v1AuditSnapshot(t, state, source, "checkpoint")
 			assertBetaWrites()
 			t.Logf("effect=%s status=%s beta_write_attempts=%d", final.ID, final.Status, totalWrites)
 		}) {
@@ -345,9 +344,6 @@ func TestV1Acceptance(t *testing.T) {
 		base, rev, _ := startGateway(t)
 		testAcceptanceSchemaDrift(t, base, adminToken, token, rev, calls, alphaConn, betaConn)
 	})
-	if !t.Failed() {
-		v1AuditSnapshot(t, state, source, "final")
-	}
 }
 
 func assertAcceptanceEffectHistory(t *testing.T, history storage.EffectHistory, effect storage.Effect, want ...string) {

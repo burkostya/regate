@@ -5,8 +5,8 @@
 **Release status.** The full v1 functional scope passed local acceptance on
 the controlled alpha/beta stand. The
 [v1.0.0-rc.1 prerelease](https://github.com/burkostya/regate/releases/tag/v1.0.0-rc.1)
-contains the tested archive and report. Independent audit custody and
-operational security and privacy approval are pending in
+contains the tested archive and report.
+Operational security and privacy approval are pending in
 [#113](https://github.com/burkostya/regate/issues/113).
 [Release status and evidence](docs/release-status.md)
 

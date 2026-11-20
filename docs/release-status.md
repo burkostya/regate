@@ -11,8 +11,7 @@ state. [Closed acceptance issue #10](https://github.com/burkostya/regate/issues/
 The [v1.0.0-rc.1 prerelease](https://github.com/burkostya/regate/releases/tag/v1.0.0-rc.1)
 contains the tested Linux x86-64 archive, its checksum and the
 [local acceptance report](https://github.com/burkostya/regate/releases/download/v1.0.0-rc.1/regate-v1-rc-892b6d3-acceptance.json).
-Independent off-host audit signing and retention, the operational threat
-review, and security and PII sign-off remain open in
+The operational threat review and security and PII sign-off remain open in
 [#113](https://github.com/burkostya/regate/issues/113).
 
 ## Implementation history
@@ -101,20 +100,14 @@ failures and management views. [Tenant and load profile](testing/two-mcp-stand.m
 
 Run `make test-v1-controlled` for the same full and sustained suites behind
 local NGINX TLS ingress with a separately running, two-realm Keycloak IdP.
-The test signs a verified SQLite audit checkpoint with a disposable
-Ed25519 key and verifies that a later snapshot extends it. The controlled
-local topology is the accepted environment for the end-to-end scenario.
-Security and PII sign-off and independent off-host audit custody are tracked in
+The controlled local topology is the accepted environment for the end-to-end
+scenario. Security and PII sign-off is tracked in
 [#113](https://github.com/burkostya/regate/issues/113).
 [Controlled topology and evidence](testing/two-mcp-stand.md#controlled-local-topology)
 
 The [v1.0.0-rc.1 security and PII review](operations/threat-review.md#v100-rc1-security-and-pii-review)
 maps the packaged RC's acceptance results and regression tests to the
 remaining sign-off.
-
-`make test-v1-audit-retention` exercises S3 COMPLIANCE retention on the local
-signed manifest bundle. It checks deletion denial and verifies the downloaded
-signature after storage restart. [Local retention check](testing/two-mcp-stand.md#controlled-local-topology)
 
 The controlled 2026-11-20 run on `320a02c` passed the Chromium and OAuth
 scenarios and completed 2,023 calls across two issuer realms and two TLS
