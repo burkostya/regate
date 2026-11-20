@@ -1,4 +1,4 @@
-.PHONY: test test-mcp-stand test-v1-acceptance test-v1-browser test-v1-full test-v1-soak test-v1-controlled run fmt vet web-dev web-build check
+.PHONY: test test-mcp-stand test-v1-acceptance test-v1-browser test-v1-full test-v1-soak test-v1-controlled test-v1-audit-retention run fmt vet web-dev web-build check
 run:
 	go run ./cmd/regate -config ./examples/regate.hcl -state ./.state
 
@@ -23,6 +23,9 @@ test-v1-soak:
 
 test-v1-controlled:
 	bash scripts/test-v1-controlled.sh
+
+test-v1-audit-retention:
+	bash scripts/test-v1-audit-retention.sh
 
 fmt:
 	gofmt -w ./cmd ./internal

@@ -85,6 +85,10 @@ Ed25519 key and verifies that a later snapshot extends it. Approval for the
 target deployment, security and PII signoff, and off-host immutable audit
 custody remain in #10. [Controlled topology and evidence](testing/two-mcp-stand.md#controlled-local-topology)
 
+`make test-v1-audit-retention` exercises S3 COMPLIANCE retention on the local
+signed manifest bundle. It checks deletion denial and verifies the downloaded
+signature after storage restart. [Local retention check](testing/two-mcp-stand.md#controlled-local-topology)
+
 #### Compiler milestone: port schemas and source-safe graph edits
 
 - JSON Schema 2020-12 input/output contracts are compiled before activation.

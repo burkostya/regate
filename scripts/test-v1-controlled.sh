@@ -8,7 +8,7 @@ scratch=$(mktemp -d)
 container=
 cleanup() {
     if [[ -n "$container" ]]; then
-        docker rm -f "$container" >/dev/null
+        docker rm -f "$container" >/dev/null || true
     fi
     rm -r "$scratch"
 }
@@ -84,6 +84,7 @@ run() {
     make_realm regate-secondary
     chmod 0755 "$scratch/import"
     container=$(docker run -d --rm --memory 1g --publish 127.0.0.1::8080 \
+        --env 'JAVA_OPTS_KC_HEAP=-Xms128m -Xmx384m' \
         --mount "type=bind,src=$scratch/import,dst=/opt/keycloak/data/import,readonly" \
         "$image" start-dev --import-realm)
     authority=$(docker port "$container" 8080/tcp)
