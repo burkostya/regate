@@ -83,7 +83,7 @@ run() {
     make_realm regate-primary
     make_realm regate-secondary
     chmod 0755 "$scratch/import"
-    container=$(docker run -d --rm --publish 127.0.0.1::8080 \
+    container=$(docker run -d --rm --memory 1g --publish 127.0.0.1::8080 \
         --mount "type=bind,src=$scratch/import,dst=/opt/keycloak/data/import,readonly" \
         "$image" start-dev --import-realm)
     authority=$(docker port "$container" 8080/tcp)

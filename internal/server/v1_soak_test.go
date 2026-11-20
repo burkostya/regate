@@ -170,7 +170,14 @@ func runSoakJob(t *testing.T, client *http.Client, base string, alpha *mcp.Conn,
 func checkSoakReply(client *http.Client, req *http.Request, job soakJob) error {
 	resp, err := client.Do(req)
 	if err != nil {
-		return errors.New("failed to receive HTTP response through the test proxy")
+		var requestErr *url.Error
+		if errors.As(err, &requestErr) {
+			if requestErr.Timeout() {
+				return fmt.Errorf("test proxy did not respond within %s", client.Timeout)
+			}
+			return fmt.Errorf("test proxy HTTP transport failure (%T)", requestErr.Err)
+		}
+		return fmt.Errorf("test proxy HTTP failure (%T)", err)
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(resp.Body)
