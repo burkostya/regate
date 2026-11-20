@@ -38,13 +38,13 @@
 7. SQLite transactions, legacy-state import and backups are implemented in PR #20. Remaining: durable execution leases/fencing, verified reconciliation/compensation, bounded scheduling and safe retention/compaction of all sensitive records.
 8. OAuth JWT/JWKS or RFC7662 introspection and issuer/audience/scope-verified public surfaces are implemented in PR #18. Management remains a separate static admin bearer; delegated upstream token exchange, end-to-end taint policies, provider-specific integration, audit-ready secret management and production threat verification remain open.
 9. Independent MCP resource/prompt discovery (including templates, pagination and revision-aware caching) now exists; source-safe mapping/editing, upstream change detection and compatibility diagnostics remain open.
-10. The functional Web console scope in #8 is covered by typed graph/HCL editor, authenticated catalog, dry/live revision-pinned execution, semantic diff, source-preserving draft CAS, tracing, activation/rollback and production-build Chromium E2E. Remaining operational browser/a11y/security hardening, provider attestation and full release impact proofs belong to #9/#10.
+10. The functional Web console scope in #8 is covered by typed graph/HCL editor, authenticated catalog, dry/live revision-pinned execution, semantic diff, source-preserving draft CAS, tracing, activation/rollback and production-build Chromium E2E. Remaining operational browser, accessibility, security and release acceptance checks belong to #10.
 11. OpenTelemetry spans/metrics/export, quotas and capacity controls, full audit history, release acceptance/e2e scenarios.
 12. Execute and check the formal model under TLC/Alloy, rather than keeping an unchecked design sketch.
 
 ## Acceptance criteria for complete v1
 
-- Two external MCP servers are connected over HTTP and exposed through one curated surface.
+- Two independently running MCP servers are connected over HTTP and exposed through one curated surface.
 - A virtual tool composes multiple upstream calls, branches, joins, and invokes both an HTTP Decision API, a PII scrubber and an MCP-based LLM agent.
 - A denied decision prevents any protected effect or exposure. Data classified as protected cannot cross a prohibited trust boundary, including in error paths and traces.
 - A lost response to an external write does not cause duplicate action; Regate read-backs/reconciles or durably awaits an operator decision.
@@ -53,6 +53,11 @@
 - Updated upstream schemas are detected, breaking changes isolated; in-flight calls retain their original immutable revision.
 - Tasks survive restart, subscription notifications work, concurrency/authorization invariants pass formal and load tests.
 - Standard MCP conformance, browser integration, race/security and production acceptance suites all pass.
+
+Alpha and beta are the accepted v1 durable-write environment. They run as
+separate HTTP MCP processes with independent persisted state. Third-party
+durable-write attestation is outside the v1 release criteria.
+[Acceptance decision](https://github.com/burkostya/regate/issues/106)
 
 The shared local #10 scenario is runnable with `make test-v1-full`. It covers
 confirmed and uncertain writes, policy and privacy refusals, task recovery,
@@ -1539,9 +1544,7 @@ standby began serving the active revision 28.895 seconds after primary loss.
   authenticated management readback/compensation, and test independent
   provider-level replay, stale fencing and restart persistence using the
   official MCP SDK. The dedicated race gate covers both scenarios.
-- By explicit user decision, durable writes on an independently operated
-  **real** MCP provider are deferred to #106. These local results are
-  sufficient for the current engineering acceptance of the fixture-specific
-  semantics but are **not** vendor attestation or full release readiness.
-  Live-provider release conformance, broader #9 chaos/load/security/PII
-  review and #10 holistic production acceptance remain separate.
+- On 2026-11-20 the user accepted alpha and beta for v1 durable-write
+  acceptance and retired third-party durable-write attestation in #106.
+  Provider-specific guarantees depend on the provider's contract. Target
+  deployment, audit custody and security/PII acceptance remain in #10.

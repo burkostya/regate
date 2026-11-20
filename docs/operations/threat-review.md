@@ -2,8 +2,8 @@
 
 The local engineering review covers the alpha/beta, independent read-only
 providers and controlled Keycloak and NGINX acceptance profiles. #10 tracks
-production acceptance. #106 tracks independent durable writable provider
-attestation.
+production acceptance. Alpha and beta cover v1 durable-write acceptance.
+[Acceptance decision](https://github.com/burkostya/regate/issues/106)
 
 | Threat / abuse case | Implemented defense | Repeatable evidence | Residual risk |
 |---|---|---|---|
@@ -15,7 +15,7 @@ attestation.
 | Telemetry exporter outage blocks effect safety | Async bounded 256-span queue; 32-span batches, 2-second timeout, drop counter; egress DNS/redirect/proxy protections | `TestCollectorQueueOutageIsBoundedAndCountersRemainPrivate`, OTLP integration test | Spans may be dropped; telemetry not an authoritative effect journal |
 | Local audit record modification or deletion | SQLite append-only-by-API audit chain, before-mutation barrier and offline backup verification against a signed checkpoint | `TestAuditChainRestartParallelAndTamperRefusal`, `make test-v1-controlled`, `make test-v1-audit-retention` | Independent signer custody and off-host immutable retention require deployment and review |
 | Arbitrary credentials/data leak through management logs | Audit taxonomy allowlist (category/action/outcome), never accepts free-text/payload; admin bearer protected | `TestManagementMutationsCreateRedactedAuditedBeforeAndAfterRecords` | Full label-aware PII taint proof and signed actor identity still need external review |
-| Uncertain external write blindly retried after timeout/lost response | Durable journal, contract-bound positive readback, provider-native idempotency/fence/tombstone in disposable alpha/beta OS processes | `TestTwoProcessMCPDurableProviderContracts`, `TestTwoProcessMCPReadLoadIsolation` | Independent remote vendor's durable-write semantics not attested: #106 |
+| Uncertain external write blindly retried after timeout/lost response | Durable journal, contract-bound positive readback, provider-native idempotency/fence/tombstone in disposable alpha/beta OS processes | `TestTwoProcessMCPDurableProviderContracts`, `TestTwoProcessMCPReadLoadIsolation` | Guarantees for other providers depend on their contracts |
 | Decision deny races a write | Mandatory policy compiler dominance and runtime check before effects; no bypass | `TestTwoProcessMCPReadLoadIsolation` + existing DAG/TLC checks | Broader cross-tenant live IdP/PII/agent end-to-end attestation remains #10 |
 
 ## Operator checks
@@ -28,4 +28,4 @@ Quota environment variables: `REGATE_PUBLIC_RPS` (default 300), `REGATE_PUBLIC_B
 
 Production acceptance in #10 requires load in the target topology, external
 audit custody, authentication and consent checks, and security and PII
-signoff. Independent durable write attestation remains in #106.
+signoff.

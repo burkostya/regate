@@ -236,6 +236,7 @@ Unchanged legacy tokenless inverse contracts retain their existing behavior.
 
 This allows the local alpha/beta write/readback/compensation acceptance stand
 to exercise the same contract-bound token across **both** actual provider
-processes. Their simulated local native idempotency and epoch fencing are
-bounded fixture guarantees only. A generic MCP provider does **not** inherit
-these guarantees; see deferred real-provider attestation issue #106.
+processes. Idempotency and epoch fencing are verified for alpha and beta.
+Other providers' guarantees depend on their own contracts. Alpha and beta
+are the accepted durable-write test environment for v1.
+[Acceptance decision](https://github.com/burkostya/regate/issues/106)

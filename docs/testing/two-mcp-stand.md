@@ -98,10 +98,9 @@ browser job exercise their respective cases. Set
 set `CC` if the host's compiler is named differently.
 
 The stand verifies runtime contract rejection and pre-dispatch isolation
-for pinned MCP tools. Wider production acceptance remains in
-[#10](https://github.com/burkostya/regate/issues/10). Independent writable
-provider attestation remains in
-[#106](https://github.com/burkostya/regate/issues/106).
+for pinned MCP tools. Alpha and beta are the accepted v1 durable-write
+environment. [Production acceptance](https://github.com/burkostya/regate/issues/10) ·
+[Durable-write acceptance decision](https://github.com/burkostya/regate/issues/106)
 
 ## Sustained mixed traffic and process failures
 
@@ -341,9 +340,7 @@ The second test verifies, for **both** real fixture processes:
   epochs and counters after killing and restarting each provider.
 - No automatic re-dispatch of `confirmed` or `unknown` Regate effect IDs.
 
-**This replaces the external durable sandbox as the current *local
-engineering acceptance*, not as third-party provider attestation.** Real
-independent durable writable MCP provider verification is deferred to
-[issue #106](https://github.com/burkostya/regate/issues/106). Never claim
-that two local processes with one fixture implementation establish a
-production exactly-once guarantee or verify independent vendor behavior.
+The two independently persisted alpha and beta instances cover v1
+durable-write acceptance. The tests establish the guarantees of the fixture
+implementation. Guarantees for other providers depend on those providers'
+contracts. [Acceptance decision](https://github.com/burkostya/regate/issues/106)
