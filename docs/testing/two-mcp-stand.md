@@ -169,7 +169,7 @@ This profile covers one host and a single execution leader. The end-to-end
 scenario passed on this topology in
 [#10](https://github.com/burkostya/regate/issues/10).
 [#113](https://github.com/burkostya/regate/issues/113) tracks the operational
-threat review and security and PII sign-off.
+security and data handling review.
 
 ## Running the three processes by hand
 

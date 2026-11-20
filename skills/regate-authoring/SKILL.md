@@ -42,7 +42,9 @@ Pipeline node expressions are compiled CEL programs with runtime cost limits and
 - Decision hooks must return `{ "decision": "allow" }` or deny/indeterminate; do not treat a failure as approval.
 - Transform hooks return `{ "action": "replace", "value": ... }`.
 - External handlers receive JSON `{ "input": ... }`.
-- PII masking must precede transfer to a less trusted LLM system; a named hook alone is not proof that information was declassified.
+- Use the data owner's approved fields and recipients. Apply required local
+  transformations before an external call and bind the call to their output.
+  Treat external transform and decision hooks as recipients of their inputs.
 - Configure timeouts. Carefully distinguish read-only and effectful actions.
 
 ## Authoring workflow
