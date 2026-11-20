@@ -173,7 +173,7 @@ func (s *Store) initialize(initial string) error {
     defer tx.Rollback()
     var version int
     if err=tx.QueryRow("PRAGMA user_version").Scan(&version);err!=nil{return err}
-    if version>6 {return fmt.Errorf("database schema version %d is newer than Regate",version)}
+    if version>latestSQLiteVersion {return fmt.Errorf("database schema version %d is newer than Regate",version)}
     if version==0 {
         for _,stmt:=range []string{
             `CREATE TABLE IF NOT EXISTS revisions (
@@ -303,6 +303,20 @@ func (s *Store) initialize(initial string) error {
             digest TEXT NOT NULL
         )`);err!=nil{return fmt.Errorf("SQLite v6 audit migration: %w",err)}
         if _,err=tx.Exec("PRAGMA user_version=6");err!=nil{return err}
+    }
+    if version < 7 {
+        for _, statement := range []string{
+            `CREATE TABLE oauth_quota (
+                principal BLOB PRIMARY KEY NOT NULL CHECK (length(principal) = 32),
+                ready_ns INTEGER NOT NULL
+            ) WITHOUT ROWID`,
+            "CREATE INDEX oauth_quota_ready ON oauth_quota(ready_ns)",
+            "PRAGMA user_version=7",
+        } {
+            if _, err = tx.Exec(statement); err != nil {
+                return fmt.Errorf("SQLite v7 OAuth quota migration: %w", err)
+            }
+        }
     }
     // Refuse to open a modified or truncated historical audit chain.
     if err=verifyAuditTx(tx);err!=nil{return fmt.Errorf("audit integrity: %w",err)}

@@ -6,6 +6,24 @@ Regate reserves **128 concurrent public** and **16 concurrent management** HTTP 
 
 Set `REGATE_OTLP_TRACES_URL` to an **approved**, absolute OTLP/HTTP JSON `/v1/traces` endpoint to enable trace export. Loopback HTTP is allowed for local testing; external HTTPS requires the collector hostname in `REGATE_ALLOWED_HOSTS`. The existing DNS-rebinding, proxy and redirect restrictions also apply. A bounded 256-span queue, 32-span batches and 2-second send deadline ensure a failing collector never blocks MCP requests; `otlp_spans_dropped` counts queue overflow and export failures. Events contain only fixed-route HTTP transport metadata, random IDs and timestamps. No request body, token, per-user identity, raw path or remote data is exported. The collector receives no upstream credentials. Export is disabled by default.
 
+For a shared quota on authenticated public MCP requests, set
+`REGATE_OAUTH_QUOTA_KEY` to a separate secret of 32 random bytes encoded
+as hex. Configure `REGATE_OAUTH_QUOTA_RPM` (default 600) and
+`REGATE_OAUTH_QUOTA_BURST` (default 60) within 1–10000. All Regate
+processes using the same state directory must use identical settings
+and share a host clock. A key change starts new quotas. Deliver the key
+through the deployment's secret store.
+
+Admission is charged after the gateway verifies the OAuth token and
+surface scopes. A verified issuer and subject share one budget across
+surfaces, tokens, reverse proxies and same-host process failover. Exhaustion
+returns HTTP 429 and `Retry-After` before tool dispatch, and SQLite failure
+returns HTTP 503. Process-local socket-peer and in-flight limits continue
+to apply. Management and public surfaces without OAuth retain those limits.
+The shared quota has no per-client metrics labels and covers requests to
+open streams rather than stream duration. See the
+[durability contract](../contracts/sqlite.md#shared-oauth-request-quota-schema-v7).
+
 **Known limits:** HTTP spans do not yet include pipeline/node relationships, effect transitions or end-to-end audit identity. A collector outage can lose traces by design; use the durable SQLite effect journal for write reconciliation, not telemetry. This is an observability/hardening milestone for #9, **not** production v1 acceptance. Full threat review, rate-limit fairness, load/chaos/PII tests, durable audit and approval remain open.
 
 ## Durable administrative audit (SQLite v6)

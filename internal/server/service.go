@@ -20,6 +20,7 @@ import (
 type Service struct {
 	Store         *storage.Store
     observability *httpObservability
+	oauthQuota    *oauthQuota
 	Engine        *engine.Runtime
 	mu            sync.RWMutex
 	cfg           *config.Config
@@ -55,6 +56,10 @@ func WaitForLeader(ctx context.Context, stateDir, source string) (*Service, erro
 func newService(ctx context.Context, stateDir, source string, wait bool) (*Service, error) {
     observability, e := newHTTPObservability()
     if e != nil { return nil, e }
+	quota, e := oauthQuotaFromEnv()
+	if e != nil {
+		return nil, e
+	}
 	if _, e := config.Decode(source); e != nil {
 		return nil, e
 	}
@@ -82,7 +87,7 @@ func newService(ctx context.Context, stateDir, source string, wait bool) (*Servi
         _=store.Close()
         return nil,fmt.Errorf("start encrypted queue: %w",storage.ErrTaskQueueKeyUnavailable)
     }
-	svc := &Service{Store: store, Engine: engine.New(store), cfg: cfg, rev: rev, catalog: map[string]catalogEntry{}, observability:observability}
+	svc := &Service{Store: store, Engine: engine.New(store), cfg: cfg, rev: rev, catalog: map[string]catalogEntry{}, observability:observability, oauthQuota:quota}
     svc.inbound, e = newInboundMCP(svc, cfg, rev.ID)
     if e != nil {
         _=store.Close()

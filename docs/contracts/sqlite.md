@@ -1,4 +1,4 @@
-# Regate SQLite durability contract (schema version 5)
+# Regate SQLite durability contract (schema version 7)
 
 SQLite is the authoritative on-disk store for revisions, active selection,
 drafts, graph layouts, MCP task records, suspended run checkpoints, execution
@@ -41,6 +41,19 @@ worker execution. It is not external-service fencing: an already in-flight
 write cannot be revoked at a remote service without an idempotency key or a
 resource-specific fencing contract. Full distributed coordinator semantics
 remain a separate acceptance gate.
+
+## Shared OAuth request quota (schema v7)
+
+The opt-in OAuth request quota persists per-principal admission timestamps
+in `oauth_quota`. The same database and quota settings preserve a budget
+across promotion of a same-host standby. The sole stored identifier is
+HMAC-SHA-256 of the verified issuer and subject. Each write transaction
+serializes admission and bounds the table to 4096 principals. New
+principals reclaim fully refilled entries before consuming capacity.
+
+Existing schema v6 backup archives remain verifiable and restorable.
+Regate migrates the restored database when the operator releases it from
+quarantine and starts the service.
 
 ## Atomicity and restart
 

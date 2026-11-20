@@ -116,6 +116,9 @@ func (m *inboundMCP) handle(s *Service, w http.ResponseWriter, r *http.Request, 
                 http.Error(w,"insufficient scope",http.StatusForbidden)
                 return
             }
+            if !s.oauthQuota.allow(s.Store, w, r, p) {
+                return
+            }
             verified:=identity.WithPrincipal(r.Context(),p)
             r=r.WithContext(identity.WithSubjectToken(verified,bearer(r)))
         } else if !s.authorize(r,false) {

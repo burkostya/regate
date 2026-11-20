@@ -32,7 +32,7 @@ type BackupManifest struct {
     SHA256 string `json:"sha256"`
 }
 
-const latestSQLiteVersion = 6
+const latestSQLiteVersion = 7
 
 // VerifyBackup inspects a standalone SQLite snapshot without ever calling
 // Store.New (which could run recovery/migrations). It refuses symlinks,
@@ -63,10 +63,16 @@ func VerifyBackup(path string)(BackupManifest,error) {
     }
     var version int
     if err=db.QueryRow("PRAGMA user_version").Scan(&version);err!=nil ||
-        version!=latestSQLiteVersion {
+        version<6 || version>latestSQLiteVersion {
         return manifest,ErrInvalidBackup
     }
     manifest.SchemaVersion=version
+    if version >= 7 {
+        var principals int
+        if err=db.QueryRow("SELECT count(*) FROM oauth_quota").Scan(&principals);err!=nil || principals>maxOAuthQuotaPrincipals {
+            return BackupManifest{},ErrInvalidBackup
+        }
+    }
 
     // Even a structurally intact SQLite snapshot may have a forged or
     // truncated management audit chain. Reject it *before* publishing or

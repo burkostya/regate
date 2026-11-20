@@ -68,6 +68,11 @@ SQLite. The test checks standby promotion on the latest active revision,
 protected side effects and audited reconciliation after beta and primary
 process failures. [Soak profile and report](testing/two-mcp-stand.md#sustained-mixed-traffic-and-process-failures)
 
+An opt-in OAuth request quota preserves the same verified principal's limit
+across proxy changes and same-host standby promotion. Go race tests cover
+concurrent requests through independent proxies, token replacement, and
+unchanged capacity for a separate principal. [Quota settings](operations/telemetry.md#http-admission-telemetry-and-privacy-boundaries)
+
 #### Compiler milestone: port schemas and source-safe graph edits
 
 - JSON Schema 2020-12 input/output contracts are compiled before activation.
