@@ -19,7 +19,7 @@ jobs:
           curl --fail --location --show-error --silent --retry 3 \
             -o /tmp/tla2tools.jar \
             https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
-          echo '7e53aa636dac8a3cb0533f343115c0548e03fc0ce5edc7739becf58d3d0fb84f  /tmp/tla2tools.jar' | sha256sum --check -
+          echo 'fdffef247f563ef6edbfd44958d2a82db79e7564e07cb673262d896353fa6713  /tmp/tla2tools.jar' | sha256sum --check -
       - name: Exhaustive bounded effect lifecycle safety
         working-directory: docs/formal
         run: java -XX:+UseParallelGC -jar /tmp/tla2tools.jar -workers 1 -deadlock -config EffectLifecycle.cfg EffectLifecycle.tla
