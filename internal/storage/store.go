@@ -153,17 +153,6 @@ func New(dir,initial string) (*Store,error) {
         _=db.Close()
         return nil,err
     }
-    // The observer must not mark tasks from a live worker as interrupted.
-    // Only when no execution lease is active may startup reconcile orphaned
-    // records. A live service obtains its own lease before accepting requests.
-    live,err:=s.liveExecutionLease()
-    if err!=nil {_=db.Close();return nil,err}
-    if !live {
-        if err=s.RecoverInterruptedTasks();err!=nil {
-            _=db.Close()
-            return nil,err
-        }
-    }
     return s,nil
 }
 func (s *Store) Close() error {
@@ -327,12 +316,13 @@ func (s *Store) initialize(initial string) error {
             if _,err=activateTx(tx,initial,"");err!=nil{return err}
         }
     }
-    // Observer processes must not transition a live worker's dispatching
-    // effects into UNKNOWN. A crashed/expired lease can be recovered.
+    // Inspect the lease and recover within the same write transaction. A
+    // worker cannot acquire leadership between the check and recovery.
     live,err:=leaseLiveTx(tx,time.Now().UnixNano())
     if err!=nil{return err}
     if !live {
         if err=recoverDispatches(tx);err!=nil{return err}
+        if err=recoverInterruptedTasksTx(tx);err!=nil{return err}
         if err=recoverRefreshingGrantsTx(tx);err!=nil{return err}
     }
     return tx.Commit()

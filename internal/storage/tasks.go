@@ -1,7 +1,6 @@
 package storage
 
 import (
-    "context"
     "database/sql"
     "encoding/json"
     "fmt"
@@ -83,18 +82,8 @@ func (t TaskRecord) Public() map[string]any {
     return out
 }
 
-// RecoverInterruptedTasks explicitly terminates orphaned in-process execution
-// leases without replaying their external effects. dispatching effects are
-// separately made unknown by recoverDispatches in the same startup sequence.
-// Each task update is atomic and conditioned on its original status.
-func (s *Store) RecoverInterruptedTasks() error {
-    tx,err:=s.db.BeginTx(context.Background(),nil)
-    if err!=nil{return err}
-    defer tx.Rollback()
-    if err=recoverInterruptedTasksTx(tx);err!=nil{return err}
-    return tx.Commit()
-}
-
+// recoverInterruptedTasksTx terminates orphaned tasks without replaying them.
+// Callers must establish in the same transaction that no previous lease is live.
 func recoverInterruptedTasksTx(tx *sql.Tx) error {
     rows,err:=tx.Query("SELECT task_id,record FROM tasks WHERE status='working'")
     if err!=nil{return err}

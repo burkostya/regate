@@ -26,6 +26,16 @@ expired. No task is automatically replayed after takeover.
 The CLI releases leadership on graceful shutdown and on fatal validation
 paths after startup.
 
+Start a same-host standby with `regate -wait-for-leader`, the same SQLite
+state directory and security settings, and a distinct listen address.
+While the primary owns its lease, the standby leaves its HTTP socket
+closed. At promotion it reads the latest active revision from SQLite
+and starts accepting connections. A reverse proxy can use `/healthz`,
+which returns HTTP 503 after loss of leadership. After a hard kill, the
+standby waits for the remaining lease lifetime before promotion. Route
+new traffic after the health check succeeds and disable proxy retries for
+MCP POST requests. Streaming clients must reconnect after a process loss.
+
 This protects a single SQLite-backed Regate deployment from common duplicate
 worker execution. It is not external-service fencing: an already in-flight
 write cannot be revoked at a remote service without an idempotency key or a

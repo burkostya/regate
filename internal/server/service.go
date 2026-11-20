@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"sync"
@@ -42,6 +44,15 @@ type catalogEntry struct {
 }
 
 func New(stateDir, source string) (*Service, error) {
+	return newService(context.Background(), stateDir, source, false)
+}
+
+// WaitForLeader starts a service only after it owns the shared execution lease.
+func WaitForLeader(ctx context.Context, stateDir, source string) (*Service, error) {
+	return newService(ctx, stateDir, source, true)
+}
+
+func newService(ctx context.Context, stateDir, source string, wait bool) (*Service, error) {
     observability, e := newHTTPObservability()
     if e != nil { return nil, e }
 	if _, e := config.Decode(source); e != nil {
@@ -51,6 +62,12 @@ func New(stateDir, source string) (*Service, error) {
 	if e != nil {
 		return nil, e
 	}
+	if e = acquireLeadership(ctx, store, wait); e != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("start execution leader: %w", e)
+	}
+	// The previous leader may have activated a revision while this process
+	// was waiting. Load the published configuration after promotion.
 	rev, active, e := store.Active()
 	if e != nil {
         _=store.Close()
@@ -64,10 +81,6 @@ func New(stateDir, source string) (*Service, error) {
     if cfg.MaxQueuedTasks>0 && !store.HasTaskQueueKeys() {
         _=store.Close()
         return nil,fmt.Errorf("start encrypted queue: %w",storage.ErrTaskQueueKeyUnavailable)
-    }
-    if e=store.AcquireExecutionLease();e!=nil {
-        _=store.Close()
-        return nil,fmt.Errorf("start execution leader: %w",e)
     }
 	svc := &Service{Store: store, Engine: engine.New(store), cfg: cfg, rev: rev, catalog: map[string]catalogEntry{}, observability:observability}
     svc.inbound, e = newInboundMCP(svc, cfg, rev.ID)
@@ -83,6 +96,27 @@ func New(stateDir, source string) (*Service, error) {
     }
     if cfg.MaxQueuedTasks>0 || depth>0 {svc.startQueueDispatcher()}
     return svc, nil
+}
+
+func acquireLeadership(ctx context.Context, store *storage.Store, wait bool) error {
+	err := store.AcquireExecutionLeaseContext(ctx)
+	if !wait || !errors.Is(err, storage.ErrExecutionLeaseHeld) {
+		return err
+	}
+	log.Print("regate waiting for execution lease")
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			err = store.AcquireExecutionLeaseContext(ctx)
+			if !errors.Is(err, storage.ErrExecutionLeaseHeld) {
+				return err
+			}
+		}
+	}
 }
 func (s *Service) Current() (*config.Config, storage.Revision) {
 	s.mu.RLock()

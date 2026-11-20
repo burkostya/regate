@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
     "encoding/json"
+	"errors"
 	"fmt"
 	"log"
     "io"
@@ -48,6 +49,7 @@ func main() {
 	file := flag.String("config", "examples/regate.hcl", "HCL configuration source")
 	state := flag.String("state", ".state", "persistent state directory")
 	listen := flag.String("listen", "", "override HTTP listen address")
+	waitForLeader := flag.Bool("wait-for-leader", false, "wait for the existing worker to release the shared SQLite execution lease")
     verifyBackup:=flag.String("verify-backup","","verify standalone SQLite backup and print non-secret JSON manifest")
     restoreBackup:=flag.String("restore-backup","","restore a verified snapshot into a pre-existing empty private -state directory")
     verifyBackupKeys:=flag.String("verify-backup-keys","","authenticate encrypted queued inputs and grants in a standalone backup using environment keyrings")
@@ -110,8 +112,19 @@ func main() {
     if os.Getenv("REGATE_ADMIN_TOKEN")=="" {
         log.Fatal("REGATE_ADMIN_TOKEN is required; refusing management MCP without authentication")
     }
-	srv, e := server.New(*state, string(b))
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+	start := server.New
+	if *waitForLeader {
+		start = func(state, source string) (*server.Service, error) {
+			return server.WaitForLeader(ctx, state, source)
+		}
+	}
+	srv, e := start(*state, string(b))
 	if e != nil {
+		if errors.Is(e, context.Canceled) && ctx.Err() != nil {
+			return
+		}
 		log.Fatal(e)
 	}
     defer srv.Store.Close()
@@ -131,8 +144,6 @@ func main() {
 		log.Fatal("non-loopback listen requires REGATE_PUBLIC_TOKEN")
 	}
 	log.Println(fmt.Sprintf("Regate config loaded: %s", srv.DebugConfig()))
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
 	if e = srv.Serve(ctx, addr); e != nil {
         _=srv.Store.Close()
 		log.Fatal(e)

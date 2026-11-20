@@ -22,20 +22,17 @@ func leaseLiveTx(tx *sql.Tx,now int64)(bool,error) {
     if err!=nil{return false,err}
     return deadline>now,nil
 }
-func (s *Store) liveExecutionLease()(bool,error) {
-    var deadline int64
-    err:=s.db.QueryRow("SELECT deadline_ns FROM execution_leases WHERE name=?",executionLeaseName).Scan(&deadline)
-    if errors.Is(err,sql.ErrNoRows){return false,nil}
-    if err!=nil{return false,err}
-    return deadline>time.Now().UnixNano(),nil
-}
-
 // AcquireExecutionLease promotes a single process to execution leader.
 // Monotone epochs prevent an old worker from renewing a lease after takeover.
 // A new execution leader may only start after the existing lease is released
 // or expires. The lease is internal to Regate; no upstream is trusted to
 // enforce it unless an effect adapter explicitly supports fencing.
 func (s *Store) AcquireExecutionLease()error {
+    return s.AcquireExecutionLeaseContext(context.Background())
+}
+
+// AcquireExecutionLeaseContext lets a waiting process stop on shutdown.
+func (s *Store) AcquireExecutionLeaseContext(ctx context.Context) error {
     if err:=checkRestoreQuarantine(s.Dir);err!=nil{return err}
     s.mu.RLock()
     already:=s.leaseOwner!=""
@@ -43,7 +40,7 @@ func (s *Store) AcquireExecutionLease()error {
     if already{return fmt.Errorf("execution lease already acquired by this store")}
 
     owner:=ID()
-    tx,err:=s.db.BeginTx(context.Background(),nil)
+    tx,err:=s.db.BeginTx(ctx,nil)
     if err!=nil{return err}
     defer tx.Rollback()
     var prior string

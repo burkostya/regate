@@ -114,11 +114,14 @@ It raises the disposable providers' record limit to 4096 for this profile.
 Use `REGATE_SOAK_DURATION=9s make test-v1-soak` for a shorter profile or set a
 duration up to `15m`. The profile runs with Go's race detector.
 
-The test kills beta and continues serving mixed traffic during the outage.
-It restarts beta on the same state and continues the load. A loopback proxy
-then holds the successful reply to a designated beta write and the test kills
-the Regate process. The replacement acquires the real SQLite execution lease
-after expiry and continues serving calls through the same proxy endpoint.
+Two Regate CLI processes share the SQLite state directory. The standby is
+started with `-wait-for-leader` before any load and is checked for readiness
+only after the primary is killed. The test activates a new revision while
+the standby is waiting. It kills beta, continues mixed traffic during the
+outage, and restarts beta on the same state. A loopback proxy then holds a
+successful reply to a designated beta write until the primary is killed.
+The standby acquires the SQLite execution lease after expiry, loads the
+revision published by the primary, and serves through the same proxy URL.
 
 The test correlates every expected write with the provider record, operation
 token and corresponding SQLite journal entry. Committed uncertain writes must
@@ -129,9 +132,10 @@ checked for synthetic PII and bearer leakage.
 
 See `.state/v1-soak/latest.log` for the Git SHA, traffic counts, p95 and maximum
 client latency by traffic class, measured recovery windows and verified write
-totals. This profile uses one Regate replica and loopback proxies. Cross-replica
-quotas, tenant data isolation and sustained production-scale capacity remain
-in [#10](https://github.com/burkostya/regate/issues/10).
+totals. This profile covers two same-host processes with one leader eligible
+to serve at a time and loopback proxies. Cross-replica quotas, tenant data
+isolation and production topology remain in
+[#10](https://github.com/burkostya/regate/issues/10).
 
 ## Running the three processes by hand
 

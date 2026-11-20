@@ -4,6 +4,9 @@ set -euo pipefail
 report_dir=.state/v1-soak
 mkdir -p "$report_dir"
 export REGATE_SOAK_DURATION="${REGATE_SOAK_DURATION:-6m}"
+scratch=$(mktemp -d)
+trap 'rm -rf "$scratch"' EXIT
+export REGATE_SOAK_GATEWAY_BINARY="$scratch/regate"
 
 run() {
     local commit changes
@@ -15,6 +18,7 @@ run() {
     else
         printf 'worktree=clean\n'
     fi
+    go build -race -o "$REGATE_SOAK_GATEWAY_BINARY" ./cmd/regate || return
     go test -race ./internal/server -run '^TestV1Soak$' -count=1 -timeout 20m -v
 }
 

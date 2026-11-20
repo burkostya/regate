@@ -62,11 +62,11 @@ This gate applies to explicitly pinned tools and validates the advertised
 contract per call. See the
 [stand, evidence and remaining release gates](testing/two-mcp-stand.md#composed-v1-scenario-on-the-same-providers).
 
-Run `make test-v1-soak` for sustained mixed traffic with beta and Regate
-process failures. The same graph is used behind loopback proxies with
-independent OAuth identities and persisted state. The test checks lease
-takeover, protected side effects and audited reconciliation under this local
-profile. [Soak profile and report](testing/two-mcp-stand.md#sustained-mixed-traffic-and-process-failures)
+Run `make test-v1-soak` for sustained mixed traffic behind loopback proxies
+with independent OAuth identities. Two Regate CLI processes share same-host
+SQLite. The test checks standby promotion on the latest active revision,
+protected side effects and audited reconciliation after beta and primary
+process failures. [Soak profile and report](testing/two-mcp-stand.md#sustained-mixed-traffic-and-process-failures)
 
 #### Compiler milestone: port schemas and source-safe graph edits
 

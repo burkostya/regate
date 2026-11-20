@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -40,42 +39,6 @@ surface "soak_read" {
 `
 
 const soakSeed = "public-soak-seed"
-
-// The child exercises the production HTTP handler and SQLite lease. A hard
-// kill bypasses cleanup. The replacement waits for the real lease to expire.
-func TestV1SoakGatewayProcess(t *testing.T) {
-	sourcePath := os.Getenv("REGATE_SOAK_GATEWAY_SOURCE")
-	if sourcePath == "" {
-		return
-	}
-	source, err := os.ReadFile(sourcePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(35 * time.Second)
-	var gateway *Service
-	for {
-		gateway, err = New(os.Getenv("REGATE_SOAK_GATEWAY_STATE"), string(source))
-		if !errors.Is(err, storage.ErrExecutionLeaseHeld) || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer gateway.Store.Close()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	fmt.Printf("READY http://%s/mcp\n", listener.Addr())
-	server := &http.Server{Handler: gateway.Handler(), ReadHeaderTimeout: 8 * time.Second, IdleTimeout: 75 * time.Second}
-	if err := server.Serve(listener); err != nil {
-		t.Fatal(err)
-	}
-}
 
 type soakProxy struct {
 	*httptest.Server
@@ -252,6 +215,10 @@ func TestV1Soak(t *testing.T) {
 	if rawDuration == "" {
 		t.Skip("run make test-v1-soak to set a sustained load profile")
 	}
+	gatewayBinary := os.Getenv("REGATE_SOAK_GATEWAY_BINARY")
+	if gatewayBinary == "" || !filepath.IsAbs(gatewayBinary) {
+		t.Fatal("run make test-v1-soak to build the race-enabled Regate CLI")
+	}
 	duration, err := time.ParseDuration(rawDuration)
 	if err != nil || duration < 9*time.Second || duration > 15*time.Minute {
 		t.Fatal("REGATE_SOAK_DURATION must be between 9s and 15m")
@@ -287,13 +254,35 @@ func TestV1Soak(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(source), 0600); err != nil {
 		t.Fatal(err)
 	}
-	startGateway := func() *standProcess {
-		cmd := exec.Command(os.Args[0], "-test.run=^TestV1SoakGatewayProcess$", "-test.v")
-		cmd.Env = append(os.Environ(), "REGATE_SOAK_GATEWAY_SOURCE="+configPath, "REGATE_SOAK_GATEWAY_STATE="+statePath)
-		return startStandChild(t, cmd, "gateway", statePath, 40*time.Second)
+	launchGateway := func(extraArgs ...string) *standProcess {
+		args := append([]string{"-config", configPath, "-state", statePath, "-listen", "127.0.0.1:0"}, extraArgs...)
+		cmd := exec.Command(gatewayBinary, args...)
+		return launchStandChild(t, cmd, statePath, true)
 	}
-	gateway := startGateway()
+	gateway := launchGateway()
+	gateway.awaitReady(t, "primary gateway", 8*time.Second)
 	gatewayProxy.directTo(t, gateway, nil)
+	standby := launchGateway("-wait-for-leader")
+	select {
+	case <-standby.waiting:
+	case <-standby.ready:
+		t.Fatal("standby started serving or exited while primary still held the lease")
+	case <-time.After(8 * time.Second):
+		t.Fatal("standby did not report waiting for the primary")
+	}
+	standbyStarted := time.Now()
+	draft := acceptanceAdminTool(t, gatewayProxy.URL, admin, "regate_draft_create", nil)
+	draft = acceptanceAdminTool(t, gatewayProxy.URL, admin, "regate_draft_patch", map[string]any{
+		"draft_id": draft["id"], "expected_source_digest": draft["source_digest"],
+		"source": source + "\n# Revision activated after standby launch\n",
+	})
+	activated := acceptanceAdminTool(t, gatewayProxy.URL, admin, "regate_activate", map[string]any{
+		"draft_id": draft["id"], "expected_source_digest": draft["source_digest"],
+	})
+	active := acceptanceAdminTool(t, gatewayProxy.URL, admin, "regate_config_get", nil)
+	if active["revision"] == "" || active["revision"] != activated["id"] {
+		t.Fatal("could not pin the revision published after standby launch")
+	}
 	idleClient := &http.Client{Timeout: 20 * time.Second}
 
 	const workers = 8
@@ -395,6 +384,12 @@ func TestV1Soak(t *testing.T) {
 	go func() { crashedRequest <- execute(crash) }()
 	waitFor(barrier.committed, "beta's committed write before crashing gateway")
 	wave([]soakJob{makeJob(soakRead, 1), makeJob(soakDeny, 2), makeJob(soakScrub, 3)})
+	select {
+	case <-standby.ready:
+		t.Fatal("standby started serving or exited before the primary was killed")
+	default:
+	}
+	t.Logf("primary_and_standby_overlap=%s", time.Since(standbyStarted).Round(time.Millisecond))
 	stopped = time.Now()
 	gateway.stop()
 	record(<-crashedRequest)
@@ -423,16 +418,20 @@ func TestV1Soak(t *testing.T) {
 			<-probed
 		}
 	}()
-	gateway = startGateway()
+	standby.awaitReady(t, "promoted gateway", 40*time.Second)
 	close(stopProbes)
 	probes := <-probed
 	stopProbes = nil
 	for _, result := range probes {
 		record(result)
 	}
-	gatewayProxy.directTo(t, gateway, nil)
+	gatewayProxy.directTo(t, standby, nil)
 	t.Logf("gateway_hard_kill_recovery=%s", time.Since(stopped).Round(time.Millisecond))
-	phase("after_gateway_restart")
+	promoted := acceptanceAdminTool(t, gatewayProxy.URL, admin, "regate_config_get", nil)
+	if promoted["revision"] != active["revision"] || promoted["source"] != draft["source"] {
+		t.Fatal("promoted gateway is serving a stale revision")
+	}
+	phase("after_standby_promotion")
 	checkSoakState(t, gatewayProxy.URL, admin, beta.url, cfg, results, append(tokens[:], reader), hooks)
 }
 

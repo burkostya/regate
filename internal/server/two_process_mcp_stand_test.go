@@ -55,10 +55,12 @@ func TestMCPStandHelperProcess(t *testing.T) {
 }
 
 type standProcess struct {
-	cmd  *exec.Cmd
-	url  string
-	dir  string
-	once sync.Once
+	cmd     *exec.Cmd
+	url     string
+	dir     string
+	once    sync.Once
+	ready   <-chan string
+	waiting <-chan struct{}
 }
 
 func (p *standProcess) stop() {
@@ -80,36 +82,63 @@ func startStandProcess(t *testing.T, instance, dir string) *standProcess {
 
 func startStandChild(t *testing.T, cmd *exec.Cmd, instance, dir string, timeout time.Duration) *standProcess {
 	t.Helper()
+	proc := launchStandChild(t, cmd, dir, false)
+	proc.awaitReady(t, instance, timeout)
+	return proc
+}
+
+func launchStandChild(t *testing.T, cmd *exec.Cmd, dir string, gateway bool) *standProcess {
+	t.Helper()
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
 	}
 	// stderr is diagnostic only. No credentials or arbitrary remote inputs
 	// are ever passed to this fixture.
-	cmd.Stderr = os.Stderr
+	if gateway {
+		cmd.Stderr = cmd.Stdout
+	} else {
+		cmd.Stderr = os.Stderr
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	proc := &standProcess{cmd: cmd, dir: dir}
-	t.Cleanup(proc.stop)
 	ready := make(chan string, 1)
-	failed := make(chan error, 1)
+	waiting := make(chan struct{})
+	proc := &standProcess{cmd: cmd, dir: dir, ready: ready, waiting: waiting}
+	t.Cleanup(proc.stop)
 	go func() {
+		defer close(ready)
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
 			line := scanner.Text()
-			if strings.HasPrefix(line, "READY ") {
+			switch {
+			case !gateway && strings.HasPrefix(line, "READY "):
 				ready <- strings.TrimPrefix(line, "READY ")
-				return
+			case gateway && strings.HasSuffix(line, " regate waiting for execution lease"):
+				close(waiting)
+			case gateway && strings.Contains(line, " regate listening on "):
+				_, addr, _ := strings.Cut(line, " regate listening on ")
+				ready <- "http://" + addr + "/mcp"
+			default:
+				if gateway {
+					fmt.Fprintln(os.Stderr, line)
+				}
 			}
 		}
-		failed <- fmt.Errorf("fixture %s failed before READY: %v", instance, scanner.Err())
 	}()
+	return proc
+}
+
+func (proc *standProcess) awaitReady(t *testing.T, instance string, timeout time.Duration) {
+	t.Helper()
 	select {
-	case proc.url = <-ready:
-	case err := <-failed:
-		proc.stop()
-		t.Fatal(err)
+	case address, open := <-proc.ready:
+		if !open {
+			proc.stop()
+			t.Fatalf("fixture %s exited before readiness", instance)
+		}
+		proc.url = address
 	case <-time.After(timeout):
 		proc.stop()
 		t.Fatalf("fixture %s did not announce readiness", instance)
@@ -126,14 +155,13 @@ func startStandChild(t *testing.T, cmd *exec.Cmd, instance, dir string, timeout 
 		if err == nil {
 			_ = response.Body.Close()
 			if response.StatusCode == http.StatusOK {
-				return proc
+				return
 			}
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
 	proc.stop()
 	t.Fatalf("fixture %s never became healthy", instance)
-	return nil
 }
 
 func standCall(t *testing.T, base, surface, tool string, args map[string]any) map[string]any {
