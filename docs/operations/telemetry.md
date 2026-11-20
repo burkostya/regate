@@ -24,7 +24,12 @@ The shared quota has no per-client metrics labels and covers requests to
 open streams rather than stream duration. See the
 [durability contract](../contracts/sqlite.md#shared-oauth-request-quota-schema-v7).
 
-**Known limits:** HTTP spans do not yet include pipeline/node relationships, effect transitions or end-to-end audit identity. A collector outage can lose traces by design; use the durable SQLite effect journal for write reconciliation, not telemetry. This is an observability/hardening milestone for #9, **not** production v1 acceptance. Full threat review, rate-limit fairness, load/chaos/PII tests, durable audit and approval remain open.
+Use the admin-only effect history to correlate durable transitions with a
+pipeline run and node. Read a specific effect via `regate_effect_history`
+or `/api/effect-history?effect_id=ID`, then filter
+`regate_pipeline_trace` or `/api/traces?run_id=ID` on the returned run ID.
+The journal retains transitions across restart. OTLP exports transport spans
+from a bounded queue and may drop telemetry during a collector outage.
 
 ## Durable administrative audit (SQLite v6)
 

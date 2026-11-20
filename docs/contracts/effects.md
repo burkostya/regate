@@ -184,6 +184,11 @@ attestation remain release gates.
 ## Management surface
 
 - `regate_effects`: list current status projections.
+- `regate_effect_history` and `GET /api/effect-history?effect_id=ID`: view up to
+  200 oldest committed transitions for one operation in journal order, with
+  its run and node IDs for trace correlation. The admin bearer is required.
+  Transition entries contain only status and timestamp. A `truncated` field
+  indicates additional entries.
 - `regate_effect_compensate`: explicitly authorize a one-time inverse through
   `effect_id`, `contract`, original write `intent`, `actor` and `reason`.
 - REST equivalent: `POST /api/effect-compensate` (admin bearer required).

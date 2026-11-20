@@ -48,6 +48,7 @@ var AdminTools = map[string][]Arg{
     "regate_task_resume_grant": {{"task_id","Suspended delegated task ID",true},{"value","Explicit continuation input",false}},
 	"regate_revisions":        {},
 	"regate_effects":          {},
+	"regate_effect_history":   {{"effect_id", "Effect identifier", true}},
     "regate_queue_key_usage": {},
     "regate_queue_rewrap": {},
     "regate_grant_key_usage": {},
@@ -243,6 +244,8 @@ func (s *Service) adminOperation(ctx context.Context, name string, args map[stri
 		return s.Store.History(), nil
 	case "regate_effects":
 		return s.Store.Effects(), nil
+	case "regate_effect_history":
+		return s.getEffectHistory(ctx, str(args, "effect_id"))
     case "regate_queue_key_usage":
         return s.Store.QueueKeyUsage(ctx)
     case "regate_queue_rewrap":

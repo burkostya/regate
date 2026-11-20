@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -126,6 +127,9 @@ func TestV1Acceptance(t *testing.T) {
 			assertAcceptanceTraceRevision(t, base, adminToken, token, effect.RunID, rev, "join")
 			t.Logf("revision=%s run=%s effect=%s status=%s beta_write_attempts=%d", rev, effect.RunID, effect.ID, effect.Status, totalWrites)
 			if !tc.loseReply {
+				var history storage.EffectHistory
+				acceptanceAdminGet(t, base+"/api/effect-history?effect_id="+effect.ID, adminToken, token, &history)
+				assertAcceptanceEffectHistory(t, history, effect, "dispatching", "confirmed")
 				return
 			}
 
@@ -163,6 +167,17 @@ func TestV1Acceptance(t *testing.T) {
 			if len(audit) == 0 || audit[0].Action != "regate_effect_readback" || audit[0].Outcome != "succeeded" {
 				t.Fatal("successful readback is missing from the management audit")
 			}
+			history := acceptanceAdminTool(t, reopened, adminToken, "regate_effect_history", map[string]any{"effect_id": effect.ID})
+			raw, err := json.Marshal(history)
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkAcceptancePrivacy(t, "effect history", raw, token)
+			var timeline storage.EffectHistory
+			if err := json.Unmarshal(raw, &timeline); err != nil {
+				t.Fatal(err)
+			}
+			assertAcceptanceEffectHistory(t, timeline, effect, "dispatching", "unknown", "resolved_applied")
 			assertBetaWrites()
 			t.Logf("effect=%s status=%s beta_write_attempts=%d", final.ID, final.Status, totalWrites)
 		}) {
@@ -328,6 +343,23 @@ func TestV1Acceptance(t *testing.T) {
 		base, rev, _ := startGateway(t)
 		testAcceptanceSchemaDrift(t, base, adminToken, token, rev, calls, alphaConn, betaConn)
 	})
+}
+
+func assertAcceptanceEffectHistory(t *testing.T, history storage.EffectHistory, effect storage.Effect, want ...string) {
+	t.Helper()
+	if history.EffectID != effect.ID || history.RunID != effect.RunID || history.Node != effect.Node || history.Truncated {
+		t.Fatal("effect history cannot be correlated with its pipeline trace")
+	}
+	statuses := make([]string, 0, len(history.Transitions))
+	for _, transition := range history.Transitions {
+		if transition.At.IsZero() {
+			t.Fatal("effect transition is missing its recorded time")
+		}
+		statuses = append(statuses, transition.Status)
+	}
+	if !slices.Equal(statuses, want) {
+		t.Fatalf("effect transitions %v, want %v", statuses, want)
+	}
 }
 
 func acceptanceProviderCall(t *testing.T, conn *mcp.Conn, tool string, args map[string]any) map[string]any {

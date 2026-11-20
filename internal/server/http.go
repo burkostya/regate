@@ -149,6 +149,9 @@ func (s *Service) api(w http.ResponseWriter, r *http.Request) {
 		case "effects":
 			reply(w, 200, s.Store.Effects())
 			return
+		case "effect-history":
+			s.effectHistory(w, r)
+			return
         case "queue-key-usage":
             usage,e:=s.Store.QueueKeyUsage(r.Context())
             if e!=nil {errorJSON(w,400,e)} else {reply(w,200,usage)}
