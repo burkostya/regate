@@ -2,9 +2,25 @@
 
 **Target scope (user-approved):** full first release includes HTTP-only MCP client/server, editable virtual tools/resources/prompts, HCL2 declarative config, typed transformations/CEL, DAG branches and compositions, HTTP/MCP hooks including agents/PII/Decision API, policies, revisioned management MCP and skills, SvelteKit+Svelte Flow visual editor, async tasks, diagnostics, security and tests. **Do not silently split or drop these features.**
 
-**Current deliverable:** a Go engineering prototype with HCL2/CEL typed IR and JSON Schema port contracts (PRs #11 and #12), official-SDK upstream HTTP client (#13) and an incoming SDK migration (#15), plus SvelteKit frontend source. NOT complete v1. This distinction is important when planning installation or deployment.
+## Current acceptance status
 
-## Implemented and locally verified
+Full local v1 acceptance was completed on 2026-11-20. The controlled stand
+used independent alpha and beta HTTP MCP processes with separate persisted
+state. [Closed acceptance issue #10](https://github.com/burkostya/regate/issues/10)
+
+The [v1.0.0-rc.1 prerelease](https://github.com/burkostya/regate/releases/tag/v1.0.0-rc.1)
+contains the tested Linux x86-64 archive, its checksum and the
+[local acceptance report](https://github.com/burkostya/regate/releases/download/v1.0.0-rc.1/regate-v1-rc-892b6d3-acceptance.json).
+Independent off-host audit signing and retention, the operational threat
+review, and security and PII sign-off remain open in
+[#113](https://github.com/burkostya/regate/issues/113).
+
+## Implementation history
+
+The following prototype status and milestone entries record progress at
+the time of each entry.
+
+### Prototype implementation and local verification
 
 | Area | Status | Evidence |
 |---|---|---|
@@ -27,7 +43,7 @@
 | SvelteKit + Svelte Flow editor | Functional console acceptance (#8), not full v1 | Production Node build, Chromium browser E2E against Go + demo MCP, typed graph and HCL CAS/activation/rollback checks; #9/#10 security and release gates remain |
 | Go race tests, vet, build | **Passed** | `go test -race ./...`, `go vet ./...`, `go build ...` |
 
-## Unfinished functionality required for full v1
+### Prototype backlog
 
 1. Finish HCL2/CEL/typed-IR acceptance (#3): cross-port JSON Schema typing, runtime validation and opaque-draft source-safe patches exist, but arbitrary JSON Schema subsumption and browser-level editor round trips remain future work.
 2. Verify end-to-end protocol conformance and extensions against real servers and clients. Incoming public/admin standard MCP requests use the official SDK in PR #15; only versionless `server/discover` and task-start `resultType: task` remain narrow compatibility bridges. OAuth, long-lived upstream subscriptions, cross-process task/skill interoperability and robust upstream/session reuse remain open.
@@ -59,13 +75,13 @@ separate HTTP MCP processes with independent persisted state. Third-party
 durable-write attestation is outside the v1 release criteria.
 [Acceptance decision](https://github.com/burkostya/regate/issues/106)
 
-The shared local #10 scenario is runnable with `make test-v1-full`. It covers
-confirmed and uncertain writes, policy and privacy refusals, task recovery,
-revision isolation and subscription delivery, management and Chromium
-authoring, and schema drift isolation before dispatch for a pinned agent.
+Run `make test-v1-full` to reproduce the local acceptance scenario from #10.
+It covers confirmed and uncertain writes, policy and privacy refusals, task
+recovery, revision isolation and subscription delivery, management and
+Chromium authoring, and schema drift isolation before dispatch for a pinned agent.
 This gate applies to explicitly pinned tools and validates the advertised
 contract per call. See the
-[stand, evidence and remaining release gates](testing/two-mcp-stand.md#composed-v1-scenario-on-the-same-providers).
+[stand and acceptance evidence](testing/two-mcp-stand.md#composed-v1-scenario-on-the-same-providers).
 
 Run `make test-v1-soak` for sustained mixed traffic behind loopback proxies
 with independent OAuth identities. Two Regate CLI processes share same-host
@@ -88,8 +104,8 @@ local NGINX TLS ingress with a separately running, two-realm Keycloak IdP.
 The test signs a verified SQLite audit checkpoint with a disposable
 Ed25519 key and verifies that a later snapshot extends it. The controlled
 local topology is the accepted environment for the end-to-end scenario.
-Security and PII sign-off and independent off-host audit custody are the
-remaining [#10 gates](https://github.com/burkostya/regate/issues/10).
+Security and PII sign-off and independent off-host audit custody are tracked in
+[#113](https://github.com/burkostya/regate/issues/113).
 [Controlled topology and evidence](testing/two-mcp-stand.md#controlled-local-topology)
 
 The [v1.0.0-rc.1 security and PII review](operations/threat-review.md#v100-rc1-security-and-pii-review)
@@ -106,6 +122,10 @@ ingresses. Beta committed 827 writes with zero replays. Verified readback
 resolved 166 uncertain outcomes with corresponding audit records. Three
 offline writes remained unknown. Beta recovered in 4.871 seconds and the
 standby began serving the active revision 28.895 seconds after primary loss.
+
+## Engineering milestones
+
+The issue status in each entry reflects that milestone.
 
 #### Compiler milestone: port schemas and source-safe graph edits
 
@@ -1552,5 +1572,4 @@ standby began serving the active revision 28.895 seconds after primary loss.
   official MCP SDK. The dedicated race gate covers both scenarios.
 - On 2026-11-20 the user accepted alpha and beta for v1 durable-write
   acceptance and retired third-party durable-write attestation in #106.
-  Provider-specific guarantees depend on the provider's contract. Target
-  deployment, audit custody and security/PII acceptance remain in #10.
+  Provider-specific guarantees depend on the provider's contract.

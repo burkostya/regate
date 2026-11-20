@@ -43,15 +43,15 @@ record IDs. See the [controlled topology](../testing/two-mcp-stand.md#controlled
 The [security boundaries](../security.md) describe the RC's defaults and
 sensitive state. The security and privacy reviewer records approved settings,
 data categories, residual risks and the approval decision in
-[#10](https://github.com/burkostya/regate/issues/10). Results with synthetic
+[#113](https://github.com/burkostya/regate/issues/113). Results with synthetic
 data support that review.
 
 ## Independent audit custody
 
 The RC verified that a later SQLite snapshot extended a signed checkpoint.
 After RustFS restarted, deletion of the locked version returned HTTP 403.
-The test retrieved that version and verified its signature. For #10, the
+The test retrieved that version and verified its signature. The
 independent custodian provides evidence of signing key custody, retention
 settings, off-host storage and verified retrieval. Follow the
 [off-host checkpoint procedure](telemetry.md#off-host-audit-checkpoints)
-and attach the result to [#10](https://github.com/burkostya/regate/issues/10).
+and attach the result to [#113](https://github.com/burkostya/regate/issues/113).

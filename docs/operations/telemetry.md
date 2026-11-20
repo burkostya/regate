@@ -75,5 +75,6 @@ regate -verify-backup /secure/backups/candidate.sqlite \
 
 For exact restoration of the checkpointed snapshot, also compare the
 candidate's `sha256` in the returned manifest with the signed file.
-For production acceptance, attach evidence of independent key custody, the
-chosen retention settings and an exercised restore to #10.
+For operational acceptance, attach evidence of independent key custody, the
+chosen retention settings and an exercised restore to
+[#113](https://github.com/burkostya/regate/issues/113).

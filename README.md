@@ -2,7 +2,13 @@
 
 **Regate** is an experimental, HTTP-only **MCP gateway and virtual-tool composition engine** written in Go, with a declarative HCL2 configuration, programmable HTTP/MCP hooks, a management MCP endpoint and a SvelteKit + Svelte Flow console.
 
-> **Release status: engineering prototype (v0.1), not production-ready and not the complete agreed v1.** The compiler parses **HCL2/cty** into a typed, bounded **CEL**-based IR; MCP client and inbound public/admin endpoints use the official Go SDK with narrow documented compatibility routes. SQLite stores revisions, effects, grants and bounded encrypted asynchronous queues. OAuth verification and RFC 8693 exchange, signed/typed effect reconciliation and explicitly authorized compensation are implemented in stages, but real-provider attestations, full JSON Schema interoperability, upstream idempotency/fencing, secure operational key lifecycle and browser end-to-end testing remain incomplete. See [Implemented and missing](docs/release-status.md) before deployment.
+**Release status.** The full v1 functional scope passed local acceptance on
+the controlled alpha/beta stand. The
+[v1.0.0-rc.1 prerelease](https://github.com/burkostya/regate/releases/tag/v1.0.0-rc.1)
+contains the tested archive and report. Independent audit custody and
+operational security and privacy approval are pending in
+[#113](https://github.com/burkostya/regate/issues/113).
+[Release status and evidence](docs/release-status.md)
 
 ## What you can experiment with now
 
@@ -108,7 +114,9 @@ npm run build
 REGATE_PROXY=http://127.0.0.1:8080 HOST=127.0.0.1 PORT=5173 node build
 ```
 
-> **Frontend CI:** npm type checks, graph guard/unit tests, production Node build and Chromium E2E against the real Go gateway and disposable SQLite state pass. This is functional console acceptance, **not** a production security/a11y/browser-matrix audit or completion of #9/#10.
+**Frontend CI.** Checks include npm type checks, graph guard and unit tests,
+a production Node build and Chromium E2E against the Go gateway and
+disposable SQLite state.
 
 ## Optional container image (for controlled local experiments)
 
