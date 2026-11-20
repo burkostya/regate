@@ -2,6 +2,7 @@ package storage
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -43,5 +44,11 @@ func TestVerifiedBackupAuditAnchorRejectsRewritesAndTruncation(t *testing.T) {
 	forkPath, _ := capture(rewrite, "fork.sqlite", "different_history")
 	if _, err := VerifyAnchoredBackup(forkPath, anchor); !errors.Is(err, ErrAuditAnchorMismatch) {
 		t.Fatalf("independently valid chain was not refused: %v", err)
+	}
+	if err := os.WriteFile(nextPath+"-wal", nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyAnchoredBackup(nextPath, anchor); !errors.Is(err, ErrInvalidBackup) {
+		t.Fatalf("snapshot with a WAL sidecar was not refused: %v", err)
 	}
 }

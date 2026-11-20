@@ -13,8 +13,10 @@ acquire the single `default` lease before exposing MCP endpoints. An
 independent process opening the same state directory cannot become execution
 leader while that lease is alive; it may inspect stored state but cannot
 dispatch external writes. Leases have a 30-second deadline renewed every
-5 seconds. Each takeover increments a monotonic `epoch`; an old worker's
-late heartbeat, stale `Close` and subsequent external effects are fenced.
+5 seconds. Promotion after expiry increments the expired lease's `epoch`.
+Regate fences late heartbeats and stale `Close` calls by owner and epoch.
+An expired or replaced worker cannot publish a revision or admit a new
+external effect.
 
 A database observer must **not** convert another worker's live
 `dispatching` effects into `unknown`, nor fail its running tasks. Startup

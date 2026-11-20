@@ -133,6 +133,11 @@ func (s *Store) LockSuspendedRun(runID string) func() {
 const databaseName = "regate.sqlite"
 
 func New(dir,initial string) (*Store,error) {
+    absolute, err := filepath.Abs(dir)
+    if err != nil {
+        return nil, err
+    }
+    dir = absolute
     // Do not even open a quarantined restore: initialization can otherwise
     // migrate state or reconcile interrupted work before operator review.
     if err:=checkRestoreQuarantine(dir);err!=nil{return nil,err}
@@ -443,6 +448,9 @@ func (s *Store) activateDraft(id string, expectedSource *string)(Revision,error)
     tx,err:=s.db.BeginTx(context.Background(),nil)
     if err!=nil{return Revision{},err}
     defer tx.Rollback()
+    if err := s.checkExecutionLeaseTx(tx); err != nil {
+        return Revision{}, err
+    }
     var base,source,active string
     err=tx.QueryRow("SELECT base,source FROM drafts WHERE id=?",id).Scan(&base,&source)
     if err!=nil{return Revision{},err}
@@ -464,6 +472,9 @@ func (s *Store) Rollback(target string)(Revision,error) {
     tx,err:=s.db.BeginTx(context.Background(),nil)
     if err!=nil{return Revision{},err}
     defer tx.Rollback()
+    if err := s.checkExecutionLeaseTx(tx); err != nil {
+        return Revision{}, err
+    }
     var source,parent string
     err=tx.QueryRow("SELECT source FROM revisions WHERE id=?",target).Scan(&source)
     if err!=nil{return Revision{},err}

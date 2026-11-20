@@ -71,7 +71,13 @@ func verifyBackup(path string, anchor *AuditAnchor) (BackupManifest, error) {
     }
     absolute,err:=filepath.Abs(path)
     if err!=nil{return manifest,err}
-    uri:=(&url.URL{Scheme:"file",Path:absolute}).String()+"?mode=ro"
+	for _, suffix := range []string{"-wal", "-journal"} {
+		if _, err := os.Lstat(absolute + suffix); !errors.Is(err, os.ErrNotExist) {
+			return manifest, ErrInvalidBackup
+		}
+	}
+	// Inspect only the standalone bytes covered by the manifest's SHA-256.
+    uri:=(&url.URL{Scheme:"file",Path:absolute}).String()+"?mode=ro&immutable=1"
     db,err:=sql.Open("sqlite3",uri)
     if err!=nil{return manifest,ErrInvalidBackup}
     defer db.Close()

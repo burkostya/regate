@@ -171,9 +171,8 @@ func (s *Store) RequireExecutionLeader(ctx context.Context) error {
     return s.CheckExecutionLease(ctx)
 }
 
-// checkExecutionLeaseTx is the same barrier while an effect is being inserted
-// transactionally. This prevents a dethroned leader from admitting new writes
-// even if another Regate instance is concurrently promoting a new lease.
+// checkExecutionLeaseTx guards external effect admission and revision
+// publication in the transaction that records the change.
 func (s *Store) checkExecutionLeaseTx(tx *sql.Tx)error {
     if err:=checkRestoreQuarantine(s.Dir);err!=nil{return err}
     s.mu.RLock()
