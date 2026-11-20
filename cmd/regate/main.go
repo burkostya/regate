@@ -17,10 +17,18 @@ import (
     "github.com/burkostya/regate/internal/storage"
 )
 
-func verifyBackupToWriter(path string,w io.Writer)error {
-    manifest,err:=storage.VerifyBackup(path)
-    if err!=nil{return err}
-    return json.NewEncoder(w).Encode(manifest)
+func verifyBackupToWriter(path string, w io.Writer, anchor *storage.AuditAnchor) error {
+	var manifest storage.BackupManifest
+	var err error
+	if anchor == nil {
+		manifest, err = storage.VerifyBackup(path)
+	} else {
+		manifest, err = storage.VerifyAnchoredBackup(path, *anchor)
+	}
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(w).Encode(manifest)
 }
 
 func verifyBackupKeysToWriter(path string, w io.Writer) error {
@@ -51,6 +59,8 @@ func main() {
 	listen := flag.String("listen", "", "override HTTP listen address")
 	waitForLeader := flag.Bool("wait-for-leader", false, "wait for the existing worker to release the shared SQLite execution lease")
     verifyBackup:=flag.String("verify-backup","","verify standalone SQLite backup and print non-secret JSON manifest")
+	anchorSequence := flag.Int64("audit-anchor-sequence", -1, "sequence from an independently verified audit checkpoint")
+	anchorSHA := flag.String("audit-anchor-sha256", "", "audit chain head SHA-256 from the same verified checkpoint")
     restoreBackup:=flag.String("restore-backup","","restore a verified snapshot into a pre-existing empty private -state directory")
     verifyBackupKeys:=flag.String("verify-backup-keys","","authenticate encrypted queued inputs and grants in a standalone backup using environment keyrings")
     ackRestore:=flag.Bool("acknowledge-restore",false,"OFFLINE: discard historical executable work and lift restored-state quarantine (irreversible)")
@@ -58,6 +68,13 @@ func main() {
     ackActor:=flag.String("operator","","identity of the responsible recovery operator")
     ackEvidence:=flag.String("fence-evidence","","operator statement of old-worker and upstream isolation; stored as digest only")
 	flag.Parse()
+	var anchor *storage.AuditAnchor
+	if *anchorSequence != -1 || *anchorSHA != "" {
+		if *verifyBackup == "" || *anchorSequence < 0 || *anchorSHA == "" {
+			log.Fatal("audit checkpoint verification requires -verify-backup, -audit-anchor-sequence and -audit-anchor-sha256")
+		}
+		anchor = &storage.AuditAnchor{Sequence: *anchorSequence, SHA256: *anchorSHA}
+	}
     commands:=0
     for _,path:=range []string{*verifyBackup,*restoreBackup,*verifyBackupKeys}{
         if path!="" {commands++}
@@ -97,7 +114,7 @@ func main() {
     if *verifyBackup!="" {
         // Verification is intentionally read-only and works without a
         // running Regate service, admin bearer or live configuration.
-        if err:=verifyBackupToWriter(*verifyBackup,os.Stdout);err!=nil {
+        if err:=verifyBackupToWriter(*verifyBackup,os.Stdout,anchor);err!=nil {
             log.Fatal(err)
         }
         return
