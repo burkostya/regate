@@ -13,7 +13,7 @@ import (
 var blockAttributes = map[string]map[string]string{
 	"regate":      {"listen": "string", "max_active_tasks": "positive-int", "max_queued_tasks": "nonnegative-int", "max_queued_per_owner": "positive-int"},
     "oauth":        {"issuer": "string", "audience": "string", "jwks_url": "string", "introspection_url": "string", "client_id_env": "string", "client_secret_env": "string", "token_endpoint": "string", "exchange_client_id_env": "string", "exchange_client_secret_env": "string"},
-	"upstream":    {"url": "string", "auth_env": "string", "timeout_ms": "positive-int", "trust_level": "string", "oauth_exchange": "string", "oauth_audience": "string", "oauth_scopes": "string-list"},
+	"upstream":    {"url": "string", "auth_env": "string", "timeout_ms": "positive-int", "trust_level": "string", "oauth_exchange": "string", "oauth_audience": "string", "oauth_scopes": "string-list", "tool_schema_pins": "object"},
 	"hook":        {"transport": "string", "url": "string", "upstream": "string", "tool": "string", "auth_env": "string", "contract": "string", "on_error": "string", "timeout_ms": "positive-int", "trust_level": "string", "oauth_exchange": "string", "oauth_audience": "string", "oauth_scopes": "string-list"},
 	"policy":      {"decision_hook": "string", "scope": "string"},
     "readback":    {"write_operation":"string","upstream":"string","read_tool":"string","intent_pointer":"string","read_argument":"string","result_pointer":"string","match_intent_pointer":"string","match_result_pointer":"string","write_token_argument":"string","result_token_pointer":"string","safe_read":"bool"},

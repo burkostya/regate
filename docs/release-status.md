@@ -57,7 +57,9 @@
 The shared local #10 scenario is runnable with `make test-v1-full`. It covers
 confirmed and uncertain writes, policy and privacy refusals, task recovery,
 revision isolation and subscription delivery, management and Chromium
-authoring, and rejection of an incompatible agent response. See the
+authoring, and schema drift isolation before dispatch for a pinned agent.
+This gate applies to explicitly pinned tools and validates the advertised
+contract per call. See the
 [stand, evidence and remaining release gates](testing/two-mcp-stand.md#composed-v1-scenario-on-the-same-providers).
 
 Run `make test-v1-soak` for sustained mixed traffic with beta and Regate

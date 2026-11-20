@@ -48,9 +48,19 @@ func (r *Runtime) CompensateMCP(ctx context.Context,cfg *config.Config,
     conn,err:=r.connFor(ctx,cfg,upstream)
     if err!=nil{return storage.Effect{},err}
     args:=map[string]any{rule.Argument:identity}
-    attempt,err:=r.Store.BeginCompensation(originalID,rule.ForOperation,
-        target,upstream.Name+"."+rule.Tool,wireIntent,args,actor,reason)
-    if err!=nil{return storage.Effect{},err}
+    var attempt storage.Effect
+    admit := func(ctx context.Context) error {
+        if err := r.checkMCPDispatch(ctx); err != nil {
+            return err
+        }
+        var err error
+        attempt, err = r.Store.BeginCompensation(originalID, rule.ForOperation,
+            target, upstream.Name+"."+rule.Tool, wireIntent, args, actor, reason)
+        if err != nil {
+            return err
+        }
+        return r.checkMCPDispatch(ctx)
+    }
     complete:=func(state string,cause error)(storage.Effect,error) {
         explanation:=""
         if cause!=nil {explanation=expr.RedactDiagnostic(cause.Error())}
@@ -61,10 +71,16 @@ func (r *Runtime) CompensateMCP(ctx context.Context,cfg *config.Config,
         if e!=nil {return storage.Effect{},e}
         return saved,cause
     }
-    if err=r.Store.RequireExecutionLeader(ctx);err!=nil {
-        return complete("unknown",err)
+    var raw map[string]any
+    var e error
+    if pin := upstream.ToolSchemaPins[rule.Tool]; pin != "" {
+        raw, e = conn.CallPinnedTool(ctx, rule.Tool, args, pin, admit)
+    } else if e = admit(ctx); e == nil {
+        raw, e = conn.CallTool(ctx, rule.Tool, args)
     }
-    raw,e:=conn.CallTool(ctx,rule.Tool,args)
+    if attempt.ID == "" {
+        return storage.Effect{}, e
+    }
     if e==nil && (raw==nil || raw["isError"]==true) {
         e=fmt.Errorf("compensation remote result not confirmed")
     }

@@ -82,10 +82,12 @@ management diagnostics.
   label is activated. An existing OAuth subscription receives
   `tools/list_changed`. The waiting call writes under the original revision;
   a subsequent call uses the new label and revision.
-- **Schema drift:** After a deliberate agent output schema change, explicit
-  catalog refresh returns the new descriptor. The agent transport succeeds
-  but the typed node rejects the incompatible result before any beta write.
-  A fresh call succeeds once the fixture restores its contract.
+- **Schema drift:** The unpinned typed node rejects a changed agent output
+  before the beta write. The management client then activates a revision
+  with the reviewed agent schema pin. When the provider changes its schema
+  again, two invocations stop before calling the agent or admitting its
+  effect, even with an earlier matching management catalog. A fresh call
+  succeeds as soon as the fixture restores its schema.
 
 The combined run writes `.state/v1-acceptance/latest.log` with the commit SHA,
 worktree status, case results and synthetic run, task, revision and effect IDs.
@@ -95,9 +97,8 @@ browser job exercise their respective cases. Set
 `REGATE_E2E_CHROMIUM_EXECUTABLE` to use an installed Chromium executable;
 set `CC` if the host's compiler is named differently.
 
-The stand verifies explicit discovery and runtime contract rejection.
-Automatic detection and quarantine of incompatible upstream schemas before
-dispatch, and production acceptance, remain in
+The stand verifies runtime contract rejection and pre-dispatch isolation
+for pinned MCP tools. Wider production acceptance remains in
 [#10](https://github.com/burkostya/regate/issues/10). Independent writable
 provider attestation remains in
 [#106](https://github.com/burkostya/regate/issues/106).

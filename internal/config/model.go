@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/hex"
 	"fmt"
 	"net/url"
 	"sort"
@@ -49,6 +50,7 @@ type Upstream struct {
     OAuthExchange string `json:"oauth_exchange,omitempty"`
     OAuthAudience string `json:"oauth_audience,omitempty"`
     OAuthScopes []string `json:"oauth_scopes,omitempty"`
+	ToolSchemaPins map[string]string `json:"tool_schema_pins,omitempty"`
 }
 type Hook struct {
 	Name      string `json:"name"`
@@ -232,6 +234,12 @@ func Decode(src string) (*Config, error) {
 		case "upstream":
 			u := Upstream{Name:name,URL:b.String("url"),AuthEnv:b.String("auth_env"),TimeoutMS:b.Int("timeout_ms",15000),
                 TrustLevel:b.String("trust_level"),OAuthExchange:b.String("oauth_exchange"),OAuthAudience:b.String("oauth_audience"),OAuthScopes:stringList(b.Attrs["oauth_scopes"])}
+			if raw, present := b.Attrs["tool_schema_pins"].(map[string]any); present {
+				u.ToolSchemaPins, err = decodeToolSchemaPins(raw)
+				if err != nil {
+					return nil, fmt.Errorf("upstream %s: %w", name, err)
+				}
+			}
 			c.Upstreams[name] = u
 		case "hook":
 			h := Hook{Name:name,Transport:b.String("transport"),URL:b.String("url"),Upstream:b.String("upstream"),Tool:b.String("tool"),AuthEnv:b.String("auth_env"),Contract:b.String("contract"),OnError:b.String("on_error"),TimeoutMS:b.Int("timeout_ms",10000),
@@ -314,6 +322,22 @@ func Decode(src string) (*Config, error) {
 	}
 	return c, nil
 }
+func decodeToolSchemaPins(raw map[string]any) (map[string]string, error) {
+	pins := make(map[string]string, len(raw))
+	for name, value := range raw {
+		if name == "" || strings.TrimSpace(name) != name {
+			return nil, fmt.Errorf("tool_schema_pins requires non-empty tool names without surrounding whitespace")
+		}
+		pin, _ := value.(string)
+		digest, err := hex.DecodeString(pin)
+		if err != nil || len(digest) != 32 || pin != strings.ToLower(pin) {
+			return nil, fmt.Errorf("tool_schema_pins[%q] requires a lowercase SHA-256 digest", name)
+		}
+		pins[name] = pin
+	}
+	return pins, nil
+}
+
 func stringList(v any) []string {
     raw,_:=v.([]any)
     out:=make([]string,0,len(raw))

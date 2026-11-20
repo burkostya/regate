@@ -152,6 +152,14 @@ proxy) or `pipeline = "named_pipeline"`. `input_schema` and `output_schema`
 are native HCL object values published with the tool. Full JSON Schema
 validation of remote content is a separate v1 requirement.
 
+### Pinning an upstream MCP tool schema
+
+`upstream` accepts the optional `tool_schema_pins` object. Its keys are
+upstream tool names and its values are reviewed lowercase SHA-256 hashes from
+`regate_upstream_refresh`. Regate verifies a pin before calling that tool.
+See [the MCP dispatch contract](mcp.md#tool-schema-pins) for discovery,
+runtime behavior and limits.
+
 ### Positive-only MCP reconciliation declarations
 
 A top-level `readback` declaration binds an effectful MCP operation to a

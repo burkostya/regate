@@ -3,6 +3,7 @@ package server
 import (
     "context"
     "errors"
+    "maps"
     "net/http"
     "net/http/httptest"
     "os"
@@ -125,17 +126,41 @@ func TestTwoProcessMCPDurableProviderContracts(t *testing.T) {
                     t.Fatalf("cross-provider inverse accepted: HTTP %d",cross.StatusCode)
                 }
             }
-            applied:=decode(t,jsonPost(t,base+"/api/effect-readback",
-                "two-mcp-safety-admin",map[string]any{
-                    "effect_id":source.ID,"adapter":name+"_record","intent":lost}))
-            if applied["status"]!="resolved_applied" {
-                t.Fatalf("provider-native token readback failed: %v",applied)
-            }
+            liveCfg,_:=svc.Current()
+			guardedCfg := *liveCfg
+			guardedCfg.Upstreams = maps.Clone(liveCfg.Upstreams)
+			upstream := guardedCfg.Upstreams[name]
+			tools, err := direct.ListTools(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pins := mcp.ToolSchemaFingerprints(tools)
+			if len(pins["get_record"]) != 64 || len(pins["revoke_record"]) != 64 {
+				t.Fatal("fixture did not advertise readback and compensation schemas")
+			}
+			wrongPin := strings.Repeat("0", 64)
+			upstream.ToolSchemaPins = map[string]string{"get_record": wrongPin, "revoke_record": wrongPin}
+			guardedCfg.Upstreams[name] = upstream
+			priorReads := standStats(t, base, name)["reads"].(float64)
+			if _, err := svc.Engine.ReconcileMCP(ctx, &guardedCfg, source.ID, name+"_record", lost); err == nil {
+				t.Fatal("mismatched pin admitted a provider readback")
+			}
+			assertStandCount(t, standStats(t, base, name), "reads", priorReads)
+			upstream.ToolSchemaPins["get_record"] = pins["get_record"]
+			applied, err := svc.Engine.ReconcileMCP(ctx, &guardedCfg, source.ID, name+"_record", lost)
+			if err != nil || applied.Status != "resolved_applied" {
+				t.Fatalf("readback under the reviewed schema failed: %v", err)
+			}
+			if _, err := svc.Engine.CompensateMCP(ctx, &guardedCfg, source.ID, name+"_undo", lost, "test-operator", "schema mismatch test"); err == nil {
+				t.Fatal("mismatched pin admitted compensation")
+			}
+			if _, err := svc.Store.EffectGet(storage.CompensationID(source.ID)); err == nil {
+				t.Fatal("mismatched pin created a compensation effect")
+			}
             // The provider record is authentic, but the current HCL
             // could be maliciously changed before compensation. Deriving
             // the write token with a drifted adapter must NOT authorize
             // the old effect under new semantics or dispatch any inverse.
-            liveCfg,_:=svc.Current()
             drifted:=*liveCfg
             drifted.Readbacks=make(map[string]config.Readback,len(liveCfg.Readbacks))
             for key,definition:=range liveCfg.Readbacks {drifted.Readbacks[key]=definition}
@@ -157,11 +182,11 @@ func TestTwoProcessMCPDurableProviderContracts(t *testing.T) {
             }
             assertStandCount(t,standStats(t,base,name),"compensations_received",0)
 
-            inverse:=decode(t,jsonPost(t,base+"/api/effect-compensate",
-                "two-mcp-safety-admin",inverseArgs))
-            if inverse["status"]!="confirmed" || inverse["compensates"]!=source.ID {
-                t.Fatalf("approved inverse did not reach provider: %v",inverse)
-            }
+			upstream.ToolSchemaPins["revoke_record"] = pins["revoke_record"]
+			inverse, err := svc.Engine.CompensateMCP(ctx, &guardedCfg, source.ID, name+"_undo", lost, "test-operator", "verified remote record and approved compensating tombstone")
+			if err != nil || inverse.Status != "confirmed" || inverse.Compensates != source.ID {
+				t.Fatalf("approved inverse under the reviewed schema failed: %v", err)
+			}
             persisted,err:=svc.Store.EffectGet(storage.CompensationID(source.ID))
             if err!=nil || persisted.Status!="confirmed" ||
                 persisted.Compensates!=source.ID || persisted.TargetDigest!=source.TargetDigest ||

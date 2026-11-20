@@ -159,7 +159,7 @@ func (c *Conn) connect(ctx context.Context) (*sdk.ClientSession, error) {
 	return session, nil
 }
 
-func withSession[T any](c *Conn, ctx context.Context, invoke func(*sdk.ClientSession) (T, error)) (T, error) {
+func withSession[T any](c *Conn, ctx context.Context, invoke func(context.Context, *sdk.ClientSession) (T, error)) (T, error) {
 	var zero T
 	// Bound the entire operation, including negotiation and all list pages.
 	// The HTTP client timeout alone would only limit individual requests.
@@ -173,14 +173,14 @@ func withSession[T any](c *Conn, ctx context.Context, invoke func(*sdk.ClientSes
 		return zero, err
 	}
 	defer session.Close()
-	return invoke(session)
+	return invoke(ctx, session)
 }
 
 // ListTools collects all pages, not just the first page. Repeated cursors and
 // unexpectedly large page sequences are rejected to avoid infinite loops when
 // an upstream violates pagination rules.
 func (c *Conn) ListTools(ctx context.Context) ([]map[string]any, error) {
-    return withSession(c, ctx, func(session *sdk.ClientSession) ([]map[string]any,error) {
+    return withSession(c, ctx, func(ctx context.Context, session *sdk.ClientSession) ([]map[string]any,error) {
         return allTools(ctx,session)
     })
 }
@@ -194,7 +194,37 @@ func remarshal(value any, out any) error {
 }
 
 func (c *Conn) CallTool(ctx context.Context, name string, args map[string]any) (map[string]any, error) {
-	return withSession(c, ctx, func(session *sdk.ClientSession) (map[string]any, error) {
+	return c.callTool(ctx, name, args, "", nil)
+}
+
+// CallPinnedTool checks the advertised schema in the session used for the
+// call. admit runs only after a matching observation; a write caller uses it
+// for its durable barrier and final authorization checks.
+func (c *Conn) CallPinnedTool(ctx context.Context, name string, args map[string]any, pin string, admit func(context.Context) error) (map[string]any, error) {
+	if pin == "" {
+		return nil, errors.New("upstream tool schema pin is required")
+	}
+	return c.callTool(ctx, name, args, pin, admit)
+}
+
+func (c *Conn) callTool(ctx context.Context, name string, args map[string]any, pin string, admit func(context.Context) error) (map[string]any, error) {
+	return withSession(c, ctx, func(ctx context.Context, session *sdk.ClientSession) (map[string]any, error) {
+		if pin != "" {
+			if err := verifyToolSchemaPin(ctx, session, name, pin); err != nil {
+				return nil, err
+			}
+			if admit != nil {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				if err := admit(ctx); err != nil {
+					return nil, err
+				}
+			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		if args == nil {
 			args = map[string]any{}
 		}
@@ -215,7 +245,7 @@ func (c *Conn) CallTool(ctx context.Context, name string, args map[string]any) (
 // Unknown custom methods are rejected until explicitly registered with the
 // SDK rather than falling back to a second hand-written JSON-RPC transport.
 func (c *Conn) Call(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
-	return withSession(c, ctx, func(session *sdk.ClientSession) (json.RawMessage, error) {
+	return withSession(c, ctx, func(ctx context.Context, session *sdk.ClientSession) (json.RawMessage, error) {
 		var result any
 		var err error
 		switch method {

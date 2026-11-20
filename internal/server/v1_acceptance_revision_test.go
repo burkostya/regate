@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -150,9 +151,12 @@ func activateAcceptanceLabel(t *testing.T, base, token, expression string) strin
 func testAcceptanceSchemaDrift(t *testing.T, base, adminToken, token, rev string, calls *acceptanceCalls, alpha, beta *mcp.Conn) {
 	t.Helper()
 	const id = "agent_schema_drift"
-	acceptanceProviderCall(t, alpha, "put_record", map[string]any{"record_id": id, "value": acceptanceNotes})
+	const pinnedID = "agent_schema_pinned"
+	for _, recordID := range []string{id, pinnedID} {
+		acceptanceProviderCall(t, alpha, "put_record", map[string]any{"record_id": recordID, "value": acceptanceNotes})
+	}
 	priorWrites := acceptanceProviderCall(t, beta, "stats", nil)["writes_received"].(float64)
-	refresh := func(field string) {
+	refresh := func(field string) string {
 		t.Helper()
 		catalog := acceptanceAdminTool(t, base, adminToken, "regate_upstream_refresh", map[string]any{"name": "agent"})
 		items, ok := catalog["items"].([]any)
@@ -165,13 +169,21 @@ func testAcceptanceSchemaDrift(t *testing.T, base, adminToken, token, rev string
 		if tool["name"] != "summarize" || len(properties) != 1 || properties[field] == nil {
 			t.Fatalf("refreshed agent schema did not expose %s", field)
 		}
+		fingerprints, _ := catalog["tool_schema_fingerprints"].(map[string]any)
+		pin, _ := fingerprints["summarize"].(string)
+		if len(pin) != 64 {
+			t.Fatal("catalog did not expose the agent's schema fingerprint")
+		}
+		return pin
 	}
-	refresh("notes")
+	originalPin := refresh("notes")
 	var before []storage.Effect
 	acceptanceAdminGet(t, base+"/api/effects", adminToken, token, &before)
 	calls.setDrift(true)
 	defer calls.setDrift(false)
-	refresh("overview")
+	if refresh("overview") == originalPin {
+		t.Fatal("changed schema retained the original fingerprint")
+	}
 
 	if result := acceptancePublish(t, base, token, id, false); result["isError"] != true || result["structuredContent"] != nil {
 		t.Fatal("typed graph accepted the incompatible agent payload")
@@ -203,4 +215,51 @@ func testAcceptanceSchemaDrift(t *testing.T, base, adminToken, token, rev string
 	}
 	assertStandCount(t, acceptanceProviderCall(t, beta, "stats", nil), "writes_received", priorWrites+1)
 	t.Logf("incompatible_schema=overview rejected_run=%s revision=%s rejected_beta_write_attempts=0", agentEffect.RunID, rev)
+
+	// Accept only the reviewed descriptor in a new immutable HCL revision.
+	previousRev := rev
+	t.Cleanup(func() {
+		acceptanceAdminTool(t, base, adminToken, "regate_rollback", map[string]any{"revision": previousRev})
+	})
+	draft := acceptanceAdminTool(t, base, adminToken, "regate_draft_create", nil)
+	edit := acceptanceAdminTool(t, base, adminToken, "regate_attribute_add", map[string]any{
+		"draft_id": draft["id"], "expected_source_digest": draft["source_digest"],
+		"path": "upstream/agent", "attribute": "tool_schema_pins", "expression": fmt.Sprintf(`{ summarize = %q }`, originalPin),
+	})
+	revision := acceptanceAdminTool(t, base, adminToken, "regate_activate", map[string]any{
+		"draft_id": edit["id"], "expected_source_digest": edit["source_digest"],
+	})
+	rev, _ = revision["id"].(string)
+	if rev == "" || rev == previousRev || refresh("notes") != originalPin {
+		t.Fatal("schema pin did not produce the expected new configuration revision")
+	}
+	agentCalls := calls.agent.Load()
+	acceptanceAdminGet(t, base+"/api/effects", adminToken, token, &before)
+	calls.setDrift(true)
+	// Leave the management catalog on the healthy snapshot. Live dispatch
+	// must observe the new descriptor independently of that cached result.
+	for i := 0; i < 2; i++ {
+		if result := acceptancePublish(t, base, token, pinnedID, false); result["isError"] != true || result["structuredContent"] != nil {
+			t.Fatal("pinned graph accepted an incompatible agent descriptor")
+		}
+	}
+	acceptanceAdminGet(t, base+"/api/effects", adminToken, token, &after)
+	if len(after)-len(before) != 4 || calls.agent.Load() != agentCalls {
+		t.Fatal("schema mismatch should yield only Decision and redaction effects per run")
+	}
+	for _, effect := range after[:len(after)-len(before)] {
+		if effect.Node != "run/node:authorize" && effect.Node != "run/node:redact" {
+			t.Fatal("schema mismatch admitted an unexpected effect")
+		}
+	}
+	assertStandCount(t, acceptanceProviderCall(t, beta, "stats", nil), "writes_received", priorWrites+1)
+	if refresh("overview") == originalPin {
+		t.Fatal("management refresh failed to show the incompatible schema")
+	}
+	calls.setDrift(false)
+	if result := acceptancePublish(t, base, token, pinnedID, false); standContent(t, result)["record_id"] != pinnedID {
+		t.Fatal("pinned invocation failed after restoring the provider schema")
+	}
+	assertStandCount(t, acceptanceProviderCall(t, beta, "stats", nil), "writes_received", priorWrites+2)
+	t.Logf("revision=%s incompatible_descriptor_calls=0 incompatible_descriptor_beta_writes=0", rev)
 }

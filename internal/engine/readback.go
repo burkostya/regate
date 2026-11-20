@@ -24,6 +24,7 @@ type MCPReadback struct {
     Upstream config.Upstream
     Conn *mcp.Conn
     Intent map[string]any
+    beforeDispatch func(context.Context) error
 }
 
 func (v *MCPReadback) ReadBack(ctx context.Context,effect storage.Effect)(storage.ReadbackObservation,error) {
@@ -51,8 +52,13 @@ func (v *MCPReadback) ReadBack(ctx context.Context,effect storage.Effect)(storag
             return storage.ReadbackObservation{},storage.ErrInvalidEvidence
         }
     }
-    response,err:=v.Conn.CallTool(ctx,v.Definition.ReadTool,
-        map[string]any{v.Definition.ReadArgument:expected})
+    args := map[string]any{v.Definition.ReadArgument: expected}
+    var response map[string]any
+    if pin := v.Upstream.ToolSchemaPins[v.Definition.ReadTool]; pin != "" {
+        response, err = v.Conn.CallPinnedTool(ctx, v.Definition.ReadTool, args, pin, v.beforeDispatch)
+    } else {
+        response, err = v.Conn.CallTool(ctx, v.Definition.ReadTool, args)
+    }
     if err!=nil{return storage.ReadbackObservation{},err}
     if response==nil || response["isError"]==true {
         return storage.ReadbackObservation{},storage.ErrInvalidEvidence
@@ -131,7 +137,7 @@ func (r *Runtime) ReconcileMCP(ctx context.Context,cfg *config.Config,
     if err=checkOutbound(u.URL);err!=nil{return storage.Effect{},err}
     conn,err:=r.connFor(ctx,cfg,u)
     if err!=nil{return storage.Effect{},err}
-    verifier:=&MCPReadback{Definition:rule,Upstream:u,Conn:conn,Intent:intent}
+    verifier:=&MCPReadback{Definition:rule,Upstream:u,Conn:conn,Intent:intent,beforeDispatch:r.checkMCPDispatch}
     return r.Store.ResolveWithReadback(ctx,effectID,verifier)
 }
 
@@ -143,6 +149,9 @@ func ReadbackOperationToken(effectID string,rule config.Readback,u config.Upstre
         rule.WriteOperation=="" || rule.Upstream!=u.Name || u.URL=="" {
         return "",storage.ErrInvalidEvidence
     }
+    // Schema pins govern future dispatch. They do not change the identity
+    // recovered from an already attempted write for readback or compensation.
+    u.ToolSchemaPins = nil
     binding:=struct{
         Domain string `json:"domain"`
         EffectID string `json:"effect_id"`

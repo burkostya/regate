@@ -11,6 +11,7 @@ import (
 
 	"github.com/burkostya/regate/internal/config"
 	"github.com/burkostya/regate/internal/engine"
+	"github.com/burkostya/regate/internal/mcp"
 	"github.com/burkostya/regate/internal/storage"
 )
 
@@ -31,6 +32,7 @@ type Service struct {
 type catalogEntry struct {
     // Items retains the original management API tools-only contract.
 	Items []map[string]any `json:"items"`
+    ToolSchemaFingerprints map[string]string `json:"tool_schema_fingerprints,omitempty"`
     Resources []map[string]any `json:"resources"`
     ResourceTemplates []map[string]any `json:"resourceTemplates"`
     Prompts []map[string]any `json:"prompts"`
@@ -169,6 +171,7 @@ func (s *Service) Discover(ctx context.Context, name string, refresh bool) (cata
     items, err := s.Engine.DiscoverCatalog(ctx, cfg, name)
     e = catalogEntry{
         Items:items.Tools, Resources:items.Resources,
+        ToolSchemaFingerprints:mcp.ToolSchemaFingerprints(items.Tools),
         ResourceTemplates:items.ResourceTemplates, Prompts:items.Prompts,
         Revision:revision.ID, At:time.Now().UTC(),
     }
