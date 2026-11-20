@@ -16,12 +16,11 @@ trap cleanup EXIT
 
 export REGATE_CONTROLLED_NGINX="${REGATE_CONTROLLED_NGINX:-nginx}"
 export REGATE_E2E_CHROMIUM_EXECUTABLE="${REGATE_E2E_CHROMIUM_EXECUTABLE:-$(command -v chromium || true)}"
-export REGATE_CONTROLLED_AUDIT_DIR="$scratch/snapshots"
 export REGATE_CONTROLLED_CLIENT_SECRET
 REGATE_CONTROLLED_CLIENT_SECRET=$(openssl rand -hex 32)
 export REGATE_CONTROLLED_TLS_CERT="$scratch/ingress.pem"
 export REGATE_CONTROLLED_TLS_KEY="$scratch/ingress.key"
-mkdir "$scratch/import" "$REGATE_CONTROLLED_AUDIT_DIR"
+mkdir "$scratch/import"
 
 make_realm() {
     local realm=$1
@@ -52,23 +51,6 @@ make_realm() {
           }))
       }' >"$scratch/import/$realm-realm.json"
     chmod 0444 "$scratch/import/$realm-realm.json"
-}
-
-verify_audit() {
-    local evidence
-    evidence=$(mktemp -d "$report_dir/audit-XXXXXX")
-    go build -o "$scratch/regate" ./cmd/regate
-    openssl genpkey -algorithm ED25519 -out "$scratch/signer.key"
-    openssl pkey -in "$scratch/signer.key" -pubout -out "$evidence/public.pem"
-    "$scratch/regate" -verify-backup "$REGATE_CONTROLLED_AUDIT_DIR/checkpoint.sqlite" >"$evidence/checkpoint.json"
-    openssl pkeyutl -sign -inkey "$scratch/signer.key" -rawin -in "$evidence/checkpoint.json" -out "$evidence/checkpoint.sig"
-    openssl pkeyutl -verify -pubin -inkey "$evidence/public.pem" -rawin -in "$evidence/checkpoint.json" -sigfile "$evidence/checkpoint.sig"
-    "$scratch/regate" -verify-backup "$REGATE_CONTROLLED_AUDIT_DIR/final.sqlite" \
-        -audit-anchor-sequence "$(jq -er '.audit_events' "$evidence/checkpoint.json")" \
-        -audit-anchor-sha256 "$(jq -er '.audit_head_sha256' "$evidence/checkpoint.json")" >"$evidence/final.json"
-    jq -e --slurp '.[0].audit_events > 0 and .[1].audit_events > .[0].audit_events' \
-        "$evidence/checkpoint.json" "$evidence/final.json" >/dev/null
-    printf 'signed_audit_evidence=%s\n' "$evidence"
 }
 
 run() {
@@ -105,7 +87,6 @@ run() {
     export SSL_CERT_FILE="$REGATE_CONTROLLED_TLS_CERT"
     export NODE_EXTRA_CA_CERTS="$REGATE_CONTROLLED_TLS_CERT"
     bash scripts/test-v1-full.sh
-    verify_audit
     bash scripts/test-v1-soak.sh
 }
 

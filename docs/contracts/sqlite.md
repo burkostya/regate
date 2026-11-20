@@ -157,9 +157,10 @@ backup. The staging directory and final path must share a filesystem.
 `VerifyBackup(path)` checks SQLite `PRAGMA integrity_check` and
 `foreign_key_check`, the expected current schema, nonempty and
 digest-consistent immutable HCL revision history, effect-current to
-latest-event projection consistency, and basic task/queue/grant table
-presence. It returns a non-secret manifest (revision ID, table counts,
-verified audit head SHA-256, file size and snapshot SHA-256). It neither runs migrations nor invokes task
+latest-event projection consistency, the management audit digest chain, and
+basic task/queue/grant table presence. It returns a non-secret manifest
+(revision ID, table counts, verified audit head SHA-256, file size and snapshot
+SHA-256). It neither runs migrations nor invokes task
 recovery. Files with unsafe permissions or symlinks are refused.
 
 Offline verification is available without a running Regate service or admin
@@ -170,10 +171,6 @@ go run ./cmd/regate -verify-backup /secure/backups/regate.sqlite
 ```
 
 Store the reported SHA-256 in an independently protected backup inventory.
-To require an exact audit ancestor during backup verification, provide the
-authenticated checkpoint's sequence and digest with
-`-audit-anchor-sequence` and `-audit-anchor-sha256`. See
-[off-host audit checkpoints](../operations/telemetry.md#off-host-audit-checkpoints).
 A verified SQLite file is **not** proof that remote effects were reconciled,
 or that the external `REGATE_GRANT_KEYS_JSON` /
 `REGATE_QUEUE_KEYS_JSON` encryption keys are available for restore.

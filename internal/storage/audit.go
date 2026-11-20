@@ -12,8 +12,7 @@ import (
 
 // AuditRecord intentionally has no payload, credentials, remote address,
 // principal name, arbitrary message or error text. The digest chain detects
-// accidental/offline record tampering, deletion, reordering and partial
-// snapshots. It does NOT replace external signed/WORM audit anchoring.
+// record corruption, invalid digests and gaps in the stored sequence.
 type AuditRecord struct {
     Sequence int64 `json:"sequence"`
     At string `json:"at"`
