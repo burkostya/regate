@@ -78,6 +78,13 @@ issuers with the same subject string and overlapping record IDs. It
 checks credentials, provider routing, suspended task ownership and PII in
 failures and management views. [Tenant and load profile](testing/two-mcp-stand.md#sustained-mixed-traffic-and-process-failures)
 
+Run `make test-v1-controlled` for the same full and sustained suites behind
+local NGINX TLS ingress with a separately running, two-realm Keycloak IdP.
+The target signs a verified SQLite audit checkpoint with a disposable
+Ed25519 key and verifies that a later snapshot extends it. Approval for the
+target deployment, security and PII signoff, and off-host immutable audit
+custody remain in #10. [Controlled topology and evidence](testing/two-mcp-stand.md#controlled-local-topology)
+
 #### Compiler milestone: port schemas and source-safe graph edits
 
 - JSON Schema 2020-12 input/output contracts are compiled before activation.

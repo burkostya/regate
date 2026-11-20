@@ -96,6 +96,7 @@ func TestV1TenantBoundaries(t *testing.T) {
 	for _, proxy := range []*soakProxy{first, second} {
 		proxy.directTo(t, &standProcess{url: server.URL + "/mcp"}, nil)
 	}
+	firstURL, secondURL := v1Ingress(t, first.URL), v1Ingress(t, second.URL)
 	private := func(t *testing.T, body []byte) {
 		t.Helper()
 		for _, domain := range tenants {
@@ -141,19 +142,19 @@ func TestV1TenantBoundaries(t *testing.T) {
 			"io.modelcontextprotocol/clientCapabilities": map[string]any{
 				"extensions": map[string]any{"io.modelcontextprotocol/tasks": map[string]any{}},
 			}}
-		reply := call(t, first.URL+domain.path, domain.token, "tools/call", params, http.StatusOK)
+		reply := call(t, firstURL+domain.path, domain.token, "tools/call", params, http.StatusOK)
 		result, _ := reply["result"].(map[string]any)
 		domain.task, _ = result["taskId"].(string)
 		if domain.task == "" {
 			t.Fatal("no task handle for the tenant")
 		}
-		waitAcceptanceTask(t, first.URL+domain.path, domain.token, domain.task, "input_required")
+		waitAcceptanceTask(t, firstURL+domain.path, domain.token, domain.task, "input_required")
 	}
 	for i, active := range tenants {
 		other := tenants[1-i]
 		t.Run(active.name, func(t *testing.T) {
 			t.Parallel()
-			endpoint := second.URL + active.path
+			endpoint := secondURL + active.path
 			call(t, endpoint, other.token, "tools/call", tool(sharedID, false), http.StatusUnauthorized)
 			for _, method := range []string{"tasks/get", "tasks/update", "tasks/cancel"} {
 				params := map[string]any{"taskId": other.task}
@@ -191,7 +192,7 @@ func TestV1TenantBoundaries(t *testing.T) {
 	t.Cleanup(func() {
 		for _, path := range []string{"traces", "effects", "audit", "metrics"} {
 			var raw json.RawMessage
-			acceptanceAdminGet(t, first.URL+"/api/"+path, admin, tenants[0].token, &raw)
+			acceptanceAdminGet(t, firstURL+"/api/"+path, admin, tenants[0].token, &raw)
 			private(t, raw)
 		}
 	})

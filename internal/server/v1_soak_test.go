@@ -258,12 +258,13 @@ func TestV1Soak(t *testing.T) {
 	betaProxy := newSoakProxy(t)
 	betaProxy.directTo(t, beta, nil)
 	gatewayProxies := []*soakProxy{newSoakProxy(t), newSoakProxy(t)}
-	gatewayProxy := gatewayProxies[0]
 
 	support, private, hooks := startAcceptanceSupport(t)
 	secondarySupport, secondaryKeys, _ := startAcceptanceSupport(t)
 	const secondaryIssuer = "https://second-issuer.test"
 	const secondaryAudience = "https://regate.test/mcp/soak-second-read"
+	oauth := newV1OAuthFixture(t, acceptanceIssuer, acceptanceAudience, support.URL+"/jwks", "regate-primary", private)
+	secondaryOAuth := newV1OAuthFixture(t, secondaryIssuer, secondaryAudience, secondarySupport.URL+"/jwks", "regate-secondary", secondaryKeys)
 	template, err := os.ReadFile("../../examples/v1-acceptance.hcl")
 	if err != nil {
 		t.Fatal(err)
@@ -271,7 +272,9 @@ func TestV1Soak(t *testing.T) {
 	source := strings.NewReplacer(
 		"http://127.0.0.1:9201", strings.TrimSuffix(alpha.url, "/mcp"),
 		"http://127.0.0.1:9202", betaProxy.URL,
+		"http://127.0.0.1:9203/jwks", oauth.jwks,
 		"http://127.0.0.1:9203", support.URL,
+		acceptanceIssuer, oauth.issuer, acceptanceAudience, oauth.audience,
 	).Replace(string(template)) + soakReadSurface + fmt.Sprintf(`
 oauth "soak_second" {
   issuer = %q
@@ -290,7 +293,7 @@ surface "soak_second_read" {
     source = "secondary_alpha.get_record"
   }
 }
-`, secondaryIssuer, secondaryAudience, secondarySupport.URL+"/jwks", secondaryAlpha.url)
+`, secondaryOAuth.issuer, secondaryOAuth.audience, secondaryOAuth.jwks, secondaryAlpha.url)
 	cfg, err := config.Decode(source)
 	if err != nil {
 		t.Fatal(err)
@@ -309,6 +312,10 @@ surface "soak_second_read" {
 	for _, proxy := range gatewayProxies {
 		proxy.directTo(t, gateway, nil)
 	}
+	ingress := make([]string, 0, len(gatewayProxies))
+	for _, proxy := range gatewayProxies {
+		ingress = append(ingress, v1Ingress(t, proxy.URL))
+	}
 	standby := launchGateway("-wait-for-leader")
 	select {
 	case <-standby.waiting:
@@ -318,15 +325,15 @@ surface "soak_second_read" {
 		t.Fatal("standby did not report waiting for the primary")
 	}
 	standbyStarted := time.Now()
-	draft := acceptanceAdminTool(t, gatewayProxy.URL, admin, "regate_draft_create", nil)
-	draft = acceptanceAdminTool(t, gatewayProxy.URL, admin, "regate_draft_patch", map[string]any{
+	draft := acceptanceAdminTool(t, ingress[0], admin, "regate_draft_create", nil)
+	draft = acceptanceAdminTool(t, ingress[0], admin, "regate_draft_patch", map[string]any{
 		"draft_id": draft["id"], "expected_source_digest": draft["source_digest"],
 		"source": source + "\n# Revision activated after standby launch\n",
 	})
-	activated := acceptanceAdminTool(t, gatewayProxy.URL, admin, "regate_activate", map[string]any{
+	activated := acceptanceAdminTool(t, ingress[0], admin, "regate_activate", map[string]any{
 		"draft_id": draft["id"], "expected_source_digest": draft["source_digest"],
 	})
-	active := acceptanceAdminTool(t, gatewayProxy.URL, admin, "regate_config_get", nil)
+	active := acceptanceAdminTool(t, ingress[0], admin, "regate_config_get", nil)
 	if active["revision"] == "" || active["revision"] != activated["id"] {
 		t.Fatal("could not pin the revision published after standby launch")
 	}
@@ -335,13 +342,10 @@ surface "soak_second_read" {
 	const workers = 8
 	var tokens [workers]string
 	for i := range tokens {
-		tokens[i] = signedTestJWTSubject(t, private, acceptanceIssuer, acceptanceAudience,
-			"acceptance:access summary:read summary:write", fmt.Sprintf("soak-principal-%d", i))
+		tokens[i] = oauth.mint(t, "acceptance:access summary:read summary:write", fmt.Sprintf("soak-principal-%d", i))
 	}
-	reader := signedTestJWTSubject(t, private, acceptanceIssuer, acceptanceAudience,
-		"acceptance:access summary:read", "soak-reader")
-	secondaryReader := signedTestJWTSubject(t, secondaryKeys, secondaryIssuer, secondaryAudience,
-		"acceptance:access summary:read", "soak-principal-1")
+	reader := oauth.mint(t, "acceptance:access summary:read", "soak-reader")
+	secondaryReader := secondaryOAuth.mint(t, "acceptance:access summary:read", "soak-principal-1")
 	sequence := 0
 	makeJob := func(kind soakTraffic, worker int) soakJob {
 		sequence++
@@ -370,7 +374,7 @@ surface "soak_second_read" {
 		results = append(results, result)
 	}
 	execute := func(job soakJob) soakResult {
-		return runSoakJob(t, idleClient, gatewayProxies[job.proxy].URL, alphaConn, job)
+		return runSoakJob(t, idleClient, ingress[job.proxy], alphaConn, job)
 	}
 	wave := func(jobs []soakJob) {
 		replies := make([]soakResult, len(jobs))
@@ -486,12 +490,12 @@ surface "soak_second_read" {
 		proxy.directTo(t, standby, nil)
 	}
 	t.Logf("gateway_hard_kill_recovery=%s", time.Since(stopped).Round(time.Millisecond))
-	promoted := acceptanceAdminTool(t, gatewayProxy.URL, admin, "regate_config_get", nil)
+	promoted := acceptanceAdminTool(t, ingress[0], admin, "regate_config_get", nil)
 	if promoted["revision"] != active["revision"] || promoted["source"] != draft["source"] {
 		t.Fatal("promoted gateway is serving a stale revision")
 	}
 	phase("after_standby_promotion")
-	checkSoakState(t, gatewayProxy.URL, admin, beta.url, cfg, results, append(tokens[:], reader, secondaryReader), hooks)
+	checkSoakState(t, ingress[0], admin, beta.url, cfg, results, append(tokens[:], reader, secondaryReader), hooks)
 }
 
 func checkSoakState(t *testing.T, base, admin, betaURL string, cfg *config.Config, results []soakResult, tokens []string, hooks *acceptanceCalls) {

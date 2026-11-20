@@ -44,7 +44,8 @@ func TestV1Acceptance(t *testing.T) {
 	alpha := startStandProcess(t, "alpha", filepath.Join(root, "alpha"))
 	beta := startStandProcess(t, "beta", filepath.Join(root, "beta"))
 	support, private, calls := startAcceptanceSupport(t)
-	token := signedTestJWT(t, private, acceptanceIssuer, acceptanceAudience, "acceptance:access summary:write")
+	oauth := newV1OAuthFixture(t, acceptanceIssuer, acceptanceAudience, support.URL+"/jwks", "regate-primary", private)
+	token := oauth.mint(t, "acceptance:access summary:write", "test-user")
 
 	template, err := os.ReadFile("../../examples/v1-acceptance.hcl")
 	if err != nil {
@@ -53,7 +54,9 @@ func TestV1Acceptance(t *testing.T) {
 	source := strings.NewReplacer(
 		"http://127.0.0.1:9201", strings.TrimSuffix(alpha.url, "/mcp"),
 		"http://127.0.0.1:9202", strings.TrimSuffix(beta.url, "/mcp"),
+		"http://127.0.0.1:9203/jwks", oauth.jwks,
 		"http://127.0.0.1:9203", support.URL,
+		acceptanceIssuer, oauth.issuer, acceptanceAudience, oauth.audience,
 	).Replace(string(template))
 
 	state := filepath.Join(root, "gateway")
@@ -76,7 +79,7 @@ func TestV1Acceptance(t *testing.T) {
 			}
 		}
 		t.Cleanup(closeGateway)
-		return api.URL, rev.ID, closeGateway
+		return v1Ingress(t, api.URL), rev.ID, closeGateway
 	}
 
 	alphaConn := mcp.NewConn(alpha.url, "", 5*time.Second)
@@ -178,6 +181,7 @@ func TestV1Acceptance(t *testing.T) {
 				t.Fatal(err)
 			}
 			assertAcceptanceEffectHistory(t, timeline, effect, "dispatching", "unknown", "resolved_applied")
+			v1AuditSnapshot(t, state, source, "checkpoint")
 			assertBetaWrites()
 			t.Logf("effect=%s status=%s beta_write_attempts=%d", final.ID, final.Status, totalWrites)
 		}) {
@@ -187,7 +191,7 @@ func TestV1Acceptance(t *testing.T) {
 
 	t.Run("refusals", func(t *testing.T) {
 		base, _, _ := startGateway(t)
-		limited := signedTestJWT(t, private, acceptanceIssuer, acceptanceAudience, "acceptance:access")
+		limited := oauth.mint(t, "acceptance:access", "test-user")
 		for _, tc := range []struct {
 			name, id, notes, bearer string
 			alphaReads, scrubs      int
@@ -274,8 +278,7 @@ func TestV1Acceptance(t *testing.T) {
 			"taskId":         taskID,
 			"inputResponses": map[string]any{"resume": map[string]any{"action": "accept", "content": true}},
 		}
-		other := signedTestJWTSubject(t, private, acceptanceIssuer, acceptanceAudience,
-			"acceptance:access summary:write", "another-test-user")
+		other := oauth.mint(t, "acceptance:access summary:write", "another-test-user")
 		denied := latestCall(t, base+"/mcp/acceptance", other, "tasks/update", 1, update)
 		var refusal struct {
 			Error struct {
@@ -287,12 +290,11 @@ func TestV1Acceptance(t *testing.T) {
 		if err != nil || denied.StatusCode < 400 || refusal.Error.Message != "task not found" {
 			t.Fatalf("another OAuth subject could address the task: HTTP %d (%v)", denied.StatusCode, err)
 		}
-		limited := signedTestJWT(t, private, acceptanceIssuer, acceptanceAudience, "acceptance:access")
+		limited := oauth.mint(t, "acceptance:access", "test-user")
 		if got := acceptanceRPC(t, base+"/mcp/acceptance", limited, "tasks/update", update); got["error"] == nil {
 			t.Fatal("owner without the original tool scope could resume the task")
 		}
-		fresh := signedTestJWT(t, private, acceptanceIssuer, acceptanceAudience,
-			"acceptance:access summary:write extra:read")
+		fresh := oauth.mint(t, "acceptance:access summary:write extra:read", "test-user")
 		waitAcceptanceTask(t, base+"/mcp/acceptance", fresh, taskID, "input_required")
 		assertStandCount(t, providerCall(t, betaConn, "stats", nil), "writes_received", betaWrites)
 
@@ -343,6 +345,9 @@ func TestV1Acceptance(t *testing.T) {
 		base, rev, _ := startGateway(t)
 		testAcceptanceSchemaDrift(t, base, adminToken, token, rev, calls, alphaConn, betaConn)
 	})
+	if !t.Failed() {
+		v1AuditSnapshot(t, state, source, "final")
+	}
 }
 
 func assertAcceptanceEffectHistory(t *testing.T, history storage.EffectHistory, effect storage.Effect, want ...string) {

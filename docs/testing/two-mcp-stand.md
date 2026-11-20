@@ -141,9 +141,38 @@ to serve at a time and loopback proxies. For two independent write paths, run
 `make test-v1-full`. The tenant test gives each issuer separate provider
 state, Decision, PII scrubber and agent endpoints, then checks overlapping
 record IDs, foreign task lookup/update/cancel, refusal paths and redacted
-diagnostics. External IdP, proxy/TLS deployment, and workload and tenant
-isolation checks in the target topology remain in
-[#10](https://github.com/burkostya/regate/issues/10).
+diagnostics.
+
+## Controlled local topology
+
+Run `make test-v1-controlled` from the repository root with Go and a C
+compiler, installed web dependencies, Docker, NGINX with SSL support,
+OpenSSL, jq, curl and Chromium. Set `REGATE_CONTROLLED_NGINX` to the absolute
+path of the NGINX binary if the default is a privileged wrapper. Set
+`REGATE_E2E_CHROMIUM_EXECUTABLE` if Chromium is outside PATH. To shorten the
+run while setting up the environment, use
+`REGATE_SOAK_DURATION=9s make test-v1-controlled`.
+
+The target starts a digest-pinned Keycloak container in development mode with
+two disposable realms and service-account clients. Regate verifies their
+signed JWTs against Keycloak's JWKS. Independent NGINX processes terminate TLS
+on loopback ports. The Go test controls when the ingress route switches to the
+ready standby, so the process crash and recovery are reproducible. The same
+stand runs the built web console in Chromium and exercises Decision, PII
+scrubber and agent hooks with the disposable alpha/beta MCP processes. A
+separate tenant case uses synthetic tokens to deliberately exercise an
+identical subject string across issuers.
+
+After effect reconciliation, an OpenSSL process signs the verified audit
+checkpoint with a disposable Ed25519 key. The script verifies the signature and
+checks that a later SQLite snapshot extends that checkpoint. The report lives
+at `.state/v1-controlled/latest.log`. Its `signed_audit_evidence` entry points
+to the retained public key, signed checkpoint manifest and later manifest.
+Temporary fixtures, private keys and database snapshots are removed at exit.
+
+This profile covers one host and a single execution leader. Target deployment
+testing, external key custody, off-host immutable audit retention and security
+and PII signoff remain tracked in [#10](https://github.com/burkostya/regate/issues/10).
 
 ## Running the three processes by hand
 
