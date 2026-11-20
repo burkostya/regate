@@ -65,7 +65,7 @@ main() {
     printf 'user = "%s:%s"\naws-sigv4 = "aws:amz:us-east-1:s3"\nnoproxy = "*"\nsilent\nshow-error\nmax-time = 10\n' "$access" "$secret" >"$scratch/client"
     container=$(docker run -d --rm --memory 512m --publish 127.0.0.1::9000 --volume /data --env-file "$scratch/storage.env" "$image")
     base=$(storage_url)
-    wait_for_storage "$base/health"
+    wait_for_storage "$base/"
     object="$base/regate-audit/checkpoint.tar"
     s3 --fail -X PUT -H 'x-amz-bucket-object-lock-enabled: true' -o /dev/null "$base/regate-audit"
     retain_until=$(date -u -d '1 day' '+%Y-%m-%dT%H:%M:%SZ')

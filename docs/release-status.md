@@ -89,6 +89,13 @@ custody remain in #10. [Controlled topology and evidence](testing/two-mcp-stand.
 signed manifest bundle. It checks deletion denial and verifies the downloaded
 signature after storage restart. [Local retention check](testing/two-mcp-stand.md#controlled-local-topology)
 
+The controlled 2026-11-20 run on `320a02c` passed the Chromium and OAuth
+scenarios and completed 2,023 calls across two issuer realms and two TLS
+ingresses. Beta committed 827 writes with zero replays. Verified readback
+resolved 166 uncertain outcomes with corresponding audit records. Three
+offline writes remained unknown. Beta recovered in 4.871 seconds and the
+standby began serving the active revision 28.895 seconds after primary loss.
+
 #### Compiler milestone: port schemas and source-safe graph edits
 
 - JSON Schema 2020-12 input/output contracts are compiled before activation.
