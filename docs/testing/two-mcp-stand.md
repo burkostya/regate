@@ -109,8 +109,12 @@ Run `make test-v1-soak` to exercise the same OAuth-protected graph over six
 minutes of steady traffic plus outage and recovery windows. Eight parallel
 clients issue read-only MCP calls, normal publishes, publishes with a lost
 post-commit reply, and calls refused by tool scope, Decision or the scrubber.
-The run uses nine synthetic OAuth identities and a disposable SQLite database.
-It raises the disposable providers' record limit to 4096 for this profile.
+The run uses ten synthetic OAuth principals across two issuers, two
+independent loopback ingress proxies and a disposable SQLite database with
+shared OAuth quotas enabled. The second issuer reads its own alpha instance
+using one of the same subject strings. The test checks that each issuer gets
+its own value for the same record ID, and that a request with the wrong
+issuer is refused. It raises the disposable providers' limit to 4096 records.
 Use `REGATE_SOAK_DURATION=9s make test-v1-soak` for a shorter profile or set a
 duration up to `15m`. The profile runs with Go's race detector.
 
@@ -133,8 +137,12 @@ checked for synthetic PII and bearer leakage.
 See `.state/v1-soak/latest.log` for the Git SHA, traffic counts, p95 and maximum
 client latency by traffic class, measured recovery windows and verified write
 totals. This profile covers two same-host processes with one leader eligible
-to serve at a time and loopback proxies. Cross-replica quotas, tenant data
-isolation and production topology remain in
+to serve at a time and loopback proxies. For two independent write paths, run
+`make test-v1-full`. The tenant test gives each issuer separate provider
+state, Decision, PII scrubber and agent endpoints, then checks overlapping
+record IDs, foreign task lookup/update/cancel, refusal paths and redacted
+diagnostics. External IdP, proxy/TLS deployment, and workload and tenant
+isolation checks in the target topology remain in
 [#10](https://github.com/burkostya/regate/issues/10).
 
 ## Running the three processes by hand

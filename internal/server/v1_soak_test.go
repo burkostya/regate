@@ -39,6 +39,7 @@ surface "soak_read" {
 `
 
 const soakSeed = "public-soak-seed"
+const soakSecondaryValue = "independent domain sample"
 
 type soakProxy struct {
 	*httptest.Server
@@ -73,21 +74,24 @@ func (p *soakProxy) directTo(t *testing.T, child *standProcess, inspect func(*ht
 type soakTraffic string
 
 const (
-	soakRead    soakTraffic = "read"
-	soakPublish soakTraffic = "publish"
-	soakLost    soakTraffic = "lost_reply"
-	soakDeny    soakTraffic = "decision_deny"
-	soakScope   soakTraffic = "missing_scope"
-	soakScrub   soakTraffic = "scrubber_error"
-	soakOffline soakTraffic = "beta_offline"
-	soakCrash   soakTraffic = "gateway_crash"
-	soakDown    soakTraffic = "gateway_offline"
+	soakRead          soakTraffic = "read"
+	soakSecondaryRead soakTraffic = "read_second_domain"
+	soakCrossTrust    soakTraffic = "wrong_oauth_domain"
+	soakPublish       soakTraffic = "publish"
+	soakLost          soakTraffic = "lost_reply"
+	soakDeny          soakTraffic = "decision_deny"
+	soakScope         soakTraffic = "missing_scope"
+	soakScrub         soakTraffic = "scrubber_error"
+	soakOffline       soakTraffic = "beta_offline"
+	soakCrash         soakTraffic = "gateway_crash"
+	soakDown          soakTraffic = "gateway_offline"
 )
 
 type soakJob struct {
 	kind  soakTraffic
 	id    string
 	token string
+	proxy int
 }
 
 type soakResult struct {
@@ -149,8 +153,11 @@ func runSoakJob(t *testing.T, client *http.Client, base string, alpha *mcp.Conn,
 
 	endpoint, tool := base+"/mcp/acceptance", "publish_summary"
 	args := map[string]any{"record_id": job.id, "lose_reply": job.kind == soakLost}
-	if job.kind == soakRead || job.kind == soakDown {
+	if job.kind == soakRead || job.kind == soakDown || job.kind == soakCrossTrust {
 		endpoint, tool = base+"/mcp/soak-read", "read_seed"
+		args = map[string]any{"record_id": soakSeed}
+	} else if job.kind == soakSecondaryRead {
+		endpoint, tool = base+"/mcp/soak-second-read", "read_seed"
 		args = map[string]any{"record_id": soakSeed}
 	}
 	started := time.Now()
@@ -179,6 +186,12 @@ func checkSoakReply(client *http.Client, req *http.Request, job soakJob) error {
 		}
 		return nil
 	}
+	if job.kind == soakCrossTrust {
+		if resp.StatusCode != http.StatusUnauthorized {
+			return fmt.Errorf("wrong OAuth domain: HTTP %d, want 401", resp.StatusCode)
+		}
+		return nil
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP %d, want 200", resp.StatusCode)
 	}
@@ -193,9 +206,13 @@ func checkSoakReply(client *http.Client, req *http.Request, job soakJob) error {
 		return errors.New("expected a tool result over MCP")
 	}
 	switch job.kind {
-	case soakRead:
+	case soakRead, soakSecondaryRead:
 		record, _ := reply.Result.StructuredContent["record"].(map[string]any)
-		if reply.Result.IsError || record["record_id"] != soakSeed || record["value"] != "public sample" {
+		want := "public sample"
+		if job.kind == soakSecondaryRead {
+			want = soakSecondaryValue
+		}
+		if reply.Result.IsError || record["record_id"] != soakSeed || record["value"] != want {
 			return errors.New("unexpected read result")
 		}
 	case soakPublish:
@@ -227,16 +244,26 @@ func TestV1Soak(t *testing.T) {
 	t.Setenv("REGATE_ADMIN_TOKEN", admin)
 	t.Setenv("REGATE_OTLP_TRACES_URL", "")
 	t.Setenv("REGATE_MCP_STAND_RECORD_LIMIT", "4096")
+	t.Setenv("REGATE_OAUTH_QUOTA_KEY", strings.Repeat("01", 32))
+	t.Setenv("REGATE_OAUTH_QUOTA_RPM", "120")
+	t.Setenv("REGATE_OAUTH_QUOTA_BURST", "32")
 	root := t.TempDir()
 	alpha := startStandProcess(t, "alpha", filepath.Join(root, "alpha"))
 	beta := startStandProcess(t, "beta", filepath.Join(root, "beta"))
 	alphaConn := mcp.NewConn(alpha.url, "", 5*time.Second)
 	acceptanceProviderCall(t, alphaConn, "put_record", map[string]any{"record_id": soakSeed, "value": "public sample"})
+	secondaryAlpha := startStandProcess(t, "alpha", filepath.Join(root, "secondary-alpha"))
+	secondaryConn := mcp.NewConn(secondaryAlpha.url, "", 5*time.Second)
+	acceptanceProviderCall(t, secondaryConn, "put_record", map[string]any{"record_id": soakSeed, "value": soakSecondaryValue})
 	betaProxy := newSoakProxy(t)
 	betaProxy.directTo(t, beta, nil)
-	gatewayProxy := newSoakProxy(t)
+	gatewayProxies := []*soakProxy{newSoakProxy(t), newSoakProxy(t)}
+	gatewayProxy := gatewayProxies[0]
 
 	support, private, hooks := startAcceptanceSupport(t)
+	secondarySupport, secondaryKeys, _ := startAcceptanceSupport(t)
+	const secondaryIssuer = "https://second-issuer.test"
+	const secondaryAudience = "https://regate.test/mcp/soak-second-read"
 	template, err := os.ReadFile("../../examples/v1-acceptance.hcl")
 	if err != nil {
 		t.Fatal(err)
@@ -245,7 +272,25 @@ func TestV1Soak(t *testing.T) {
 		"http://127.0.0.1:9201", strings.TrimSuffix(alpha.url, "/mcp"),
 		"http://127.0.0.1:9202", betaProxy.URL,
 		"http://127.0.0.1:9203", support.URL,
-	).Replace(string(template)) + soakReadSurface
+	).Replace(string(template)) + soakReadSurface + fmt.Sprintf(`
+oauth "soak_second" {
+  issuer = %q
+  audience = %q
+  jwks_url = %q
+}
+upstream "secondary_alpha" {
+  url = %q
+  trust_level = "restricted"
+}
+surface "soak_second_read" {
+  path = "/mcp/soak-second-read"
+  oauth = "soak_second"
+  required_scopes = ["acceptance:access", "summary:read"]
+  tool "read_seed" {
+    source = "secondary_alpha.get_record"
+  }
+}
+`, secondaryIssuer, secondaryAudience, secondarySupport.URL+"/jwks", secondaryAlpha.url)
 	cfg, err := config.Decode(source)
 	if err != nil {
 		t.Fatal(err)
@@ -261,7 +306,9 @@ func TestV1Soak(t *testing.T) {
 	}
 	gateway := launchGateway()
 	gateway.awaitReady(t, "primary gateway", 8*time.Second)
-	gatewayProxy.directTo(t, gateway, nil)
+	for _, proxy := range gatewayProxies {
+		proxy.directTo(t, gateway, nil)
+	}
 	standby := launchGateway("-wait-for-leader")
 	select {
 	case <-standby.waiting:
@@ -293,6 +340,8 @@ func TestV1Soak(t *testing.T) {
 	}
 	reader := signedTestJWTSubject(t, private, acceptanceIssuer, acceptanceAudience,
 		"acceptance:access summary:read", "soak-reader")
+	secondaryReader := signedTestJWTSubject(t, secondaryKeys, secondaryIssuer, secondaryAudience,
+		"acceptance:access summary:read", "soak-principal-1")
 	sequence := 0
 	makeJob := func(kind soakTraffic, worker int) soakJob {
 		sequence++
@@ -304,7 +353,13 @@ func TestV1Soak(t *testing.T) {
 		if kind == soakScope {
 			token = reader
 		}
-		return soakJob{kind: kind, id: id, token: token}
+		if kind == soakRead && worker%2 != 0 {
+			kind = soakSecondaryRead
+		}
+		if kind == soakSecondaryRead || kind == soakCrossTrust {
+			token = secondaryReader
+		}
+		return soakJob{kind: kind, id: id, token: token, proxy: worker % len(gatewayProxies)}
 	}
 	var results []soakResult
 	record := func(result soakResult) {
@@ -315,7 +370,7 @@ func TestV1Soak(t *testing.T) {
 		results = append(results, result)
 	}
 	execute := func(job soakJob) soakResult {
-		return runSoakJob(t, idleClient, gatewayProxy.URL, alphaConn, job)
+		return runSoakJob(t, idleClient, gatewayProxies[job.proxy].URL, alphaConn, job)
 	}
 	wave := func(jobs []soakJob) {
 		replies := make([]soakResult, len(jobs))
@@ -335,6 +390,7 @@ func TestV1Soak(t *testing.T) {
 		start := time.Now()
 		deadline := start.Add(duration / 3)
 		nextProgress := start.Add(30 * time.Second)
+		record(execute(makeJob(soakCrossTrust, 1)))
 		for time.Now().Before(deadline) {
 			roundStart := time.Now()
 			jobs := make([]soakJob, workers)
@@ -363,7 +419,8 @@ func TestV1Soak(t *testing.T) {
 		}
 	}
 
-	t.Logf("steady_duration=%s concurrent_clients=%d oauth_subjects=%d wave_interval=1s", duration, workers, workers+1)
+	t.Logf("steady_duration=%s concurrent_clients=%d oauth_principals=%d oauth_issuers=2 ingress_proxies=%d wave_interval=1s",
+		duration, workers, workers+2, len(gatewayProxies))
 	phase("before_faults")
 	stopped := time.Now()
 	beta.stop()
@@ -425,14 +482,16 @@ func TestV1Soak(t *testing.T) {
 	for _, result := range probes {
 		record(result)
 	}
-	gatewayProxy.directTo(t, standby, nil)
+	for _, proxy := range gatewayProxies {
+		proxy.directTo(t, standby, nil)
+	}
 	t.Logf("gateway_hard_kill_recovery=%s", time.Since(stopped).Round(time.Millisecond))
 	promoted := acceptanceAdminTool(t, gatewayProxy.URL, admin, "regate_config_get", nil)
 	if promoted["revision"] != active["revision"] || promoted["source"] != draft["source"] {
 		t.Fatal("promoted gateway is serving a stale revision")
 	}
 	phase("after_standby_promotion")
-	checkSoakState(t, gatewayProxy.URL, admin, beta.url, cfg, results, append(tokens[:], reader), hooks)
+	checkSoakState(t, gatewayProxy.URL, admin, beta.url, cfg, results, append(tokens[:], reader, secondaryReader), hooks)
 }
 
 func checkSoakState(t *testing.T, base, admin, betaURL string, cfg *config.Config, results []soakResult, tokens []string, hooks *acceptanceCalls) {
@@ -489,7 +548,7 @@ func checkSoakState(t *testing.T, base, admin, betaURL string, cfg *config.Confi
 	for _, result := range results {
 		counts[result.kind] = append(counts[result.kind], result.elapsed)
 		switch result.kind {
-		case soakRead, soakDown:
+		case soakRead, soakSecondaryRead, soakCrossTrust, soakDown:
 			continue
 		case soakOffline:
 			unavailable = append(unavailable, result.soakJob)
@@ -585,7 +644,7 @@ func checkSoakState(t *testing.T, base, admin, betaURL string, cfg *config.Confi
 	if len(audits) != resolved {
 		t.Fatalf("audited resolutions=%d, want %d", len(audits), resolved)
 	}
-	for _, kind := range []soakTraffic{soakRead, soakPublish, soakLost, soakDeny, soakScope, soakScrub, soakOffline, soakCrash, soakDown} {
+	for _, kind := range []soakTraffic{soakRead, soakSecondaryRead, soakCrossTrust, soakPublish, soakLost, soakDeny, soakScope, soakScrub, soakOffline, soakCrash, soakDown} {
 		samples := counts[kind]
 		if len(samples) == 0 {
 			t.Fatalf("missing traffic class %s", kind)

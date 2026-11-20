@@ -15,7 +15,7 @@ run() {
         printf 'worktree=clean\n'
     fi
     npm --prefix web run build || return
-    REGATE_V1_ACCEPTANCE_BROWSER=1 go test -race ./internal/server -run '^TestV1Acceptance$' -count=1 -v
+    REGATE_V1_ACCEPTANCE_BROWSER=1 go test -race ./internal/server -run '^TestV1(Acceptance|TenantBoundaries)$' -count=1 -v
 }
 
 printf 'Acceptance report: %s/latest.log\n' "$report_dir"

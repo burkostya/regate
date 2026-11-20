@@ -73,6 +73,11 @@ across proxy changes and same-host standby promotion. Go race tests cover
 concurrent requests through independent proxies, token replacement, and
 unchanged capacity for a separate principal. [Quota settings](operations/telemetry.md#http-admission-telemetry-and-privacy-boundaries)
 
+The full local suite also exercises two independently configured OAuth
+issuers with the same subject string and overlapping record IDs. It
+checks credentials, provider routing, suspended task ownership and PII in
+failures and management views. [Tenant and load profile](testing/two-mcp-stand.md#sustained-mixed-traffic-and-process-failures)
+
 #### Compiler milestone: port schemas and source-safe graph edits
 
 - JSON Schema 2020-12 input/output contracts are compiled before activation.

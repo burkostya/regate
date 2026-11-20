@@ -246,7 +246,7 @@ func TestV1Acceptance(t *testing.T) {
 		if taskID == "" {
 			t.Fatalf("async MCP call did not start a task: %v", created["error"])
 		}
-		waitAcceptanceTask(t, base, token, taskID, "input_required")
+		waitAcceptanceTask(t, base+"/mcp/acceptance", token, taskID, "input_required")
 		assertStandCount(t, providerCall(t, alphaConn, "stats", nil), "reads", alphaReads)
 		assertStandCount(t, providerCall(t, betaConn, "stats", nil), "writes_received", betaWrites)
 
@@ -278,7 +278,7 @@ func TestV1Acceptance(t *testing.T) {
 		}
 		fresh := signedTestJWT(t, private, acceptanceIssuer, acceptanceAudience,
 			"acceptance:access summary:write extra:read")
-		waitAcceptanceTask(t, base, fresh, taskID, "input_required")
+		waitAcceptanceTask(t, base+"/mcp/acceptance", fresh, taskID, "input_required")
 		assertStandCount(t, providerCall(t, betaConn, "stats", nil), "writes_received", betaWrites)
 
 		activeRev := activateAcceptanceLabel(t, base, adminToken, `"literal:New summary for "`)
@@ -294,7 +294,7 @@ func TestV1Acceptance(t *testing.T) {
 		if updated["error"] != nil {
 			t.Fatalf("owner could not resume task after restart: %v", updated["error"])
 		}
-		completed := waitAcceptanceTask(t, base, fresh, taskID, "completed")
+		completed := waitAcceptanceTask(t, base+"/mcp/acceptance", fresh, taskID, "completed")
 		if result, ok := completed["result"].(map[string]any); !ok || standContent(t, result)["record_id"] != recordID {
 			t.Fatal("resumed OAuth task did not return its published record ID")
 		}
@@ -378,11 +378,11 @@ func acceptanceAdminTool(t *testing.T, base, token, name string, args map[string
 	return standContent(t, result)
 }
 
-func waitAcceptanceTask(t *testing.T, base, token, taskID, status string) map[string]any {
+func waitAcceptanceTask(t *testing.T, endpoint, token, taskID, status string) map[string]any {
 	t.Helper()
 	var actual any
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
-		reply := acceptanceRPC(t, base+"/mcp/acceptance", token, "tasks/get", map[string]any{"taskId": taskID})
+		reply := acceptanceRPC(t, endpoint, token, "tasks/get", map[string]any{"taskId": taskID})
 		result, ok := reply["result"].(map[string]any)
 		if !ok {
 			t.Fatalf("task lookup returned no result: %v", reply["error"])
@@ -421,6 +421,11 @@ type acceptanceCalls struct {
 
 func startAcceptanceSupport(t *testing.T) (*httptest.Server, *rsa.PrivateKey, *acceptanceCalls) {
 	t.Helper()
+	return startAcceptanceSupportForNotes(t, "Contact ", acceptanceEmail)
+}
+
+func startAcceptanceSupportForNotes(t *testing.T, prefix, email string) (*httptest.Server, *rsa.PrivateKey, *acceptanceCalls) {
+	t.Helper()
 	private, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -432,7 +437,7 @@ func startAcceptanceSupport(t *testing.T) (*httptest.Server, *rsa.PrivateKey, *a
 	agent := sdk.NewServer(&sdk.Implementation{Name: "acceptance-summary-agent", Version: "1"}, nil)
 	handleNotes := func(ctx context.Context, input notes) error {
 		calls.agent.Add(1)
-		if input.Notes != acceptanceRedacted {
+		if input.Notes != prefix+"[REDACTED]" {
 			return errors.New("agent expected scrubbed notes")
 		}
 		if pause := calls.pause.Swap(nil); pause != nil {
@@ -482,15 +487,15 @@ func startAcceptanceSupport(t *testing.T) (*httptest.Server, *rsa.PrivateKey, *a
 			http.Error(w, "invalid scrubber input", http.StatusBadRequest)
 			return
 		}
-		if body.Input.Notes == acceptanceScrubFailure {
-			http.Error(w, "synthetic failure for "+acceptanceEmail, http.StatusServiceUnavailable)
+		if body.Input.Notes == "Fail scrubber for "+email {
+			http.Error(w, "synthetic failure for "+email, http.StatusServiceUnavailable)
 			return
 		}
-		if body.Input.Notes != acceptanceNotes {
+		if body.Input.Notes != prefix+email {
 			http.Error(w, "expected synthetic source notes", http.StatusBadRequest)
 			return
 		}
-		safe := notes{Notes: strings.ReplaceAll(body.Input.Notes, acceptanceEmail, "[REDACTED]")}
+		safe := notes{Notes: strings.ReplaceAll(body.Input.Notes, email, "[REDACTED]")}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"action": "replace", "value": safe})
 	})
