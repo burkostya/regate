@@ -2,12 +2,11 @@
 
 **Regate** is an experimental, HTTP-only **MCP gateway and virtual-tool composition engine** written in Go, with a declarative HCL2 configuration, programmable HTTP/MCP hooks, a management MCP endpoint and a SvelteKit + Svelte Flow console.
 
-**Release status.** The full v1 functional scope passed local acceptance on
-the controlled alpha/beta stand. The
-[v1.0.0-rc.1 prerelease](https://github.com/burkostya/regate/releases/tag/v1.0.0-rc.1)
-contains the tested archive and report.
-Operational security and data handling approval are pending in
-[#113](https://github.com/burkostya/regate/issues/113).
+**Release status.** The
+[v1.0.0 release](https://github.com/burkostya/regate/releases/tag/v1.0.0)
+includes the Linux x86-64 archive, checksum and acceptance report. The full
+v1 functional scope and the operational security and data handling review
+passed on the controlled alpha/beta stand.
 [Release status and evidence](docs/release-status.md)
 
 ## What you can experiment with now

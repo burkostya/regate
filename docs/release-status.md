@@ -8,11 +8,13 @@ Full local v1 acceptance was completed on 2026-11-20. The controlled stand
 used independent alpha and beta HTTP MCP processes with separate persisted
 state. [Closed acceptance issue #10](https://github.com/burkostya/regate/issues/10)
 
-The [v1.0.0-rc.1 prerelease](https://github.com/burkostya/regate/releases/tag/v1.0.0-rc.1)
-contains the tested Linux x86-64 archive, its checksum and the
-[local acceptance report](https://github.com/burkostya/regate/releases/download/v1.0.0-rc.1/regate-v1-rc-892b6d3-acceptance.json).
-The operational security and data handling review remains open in
-[#113](https://github.com/burkostya/regate/issues/113).
+The [v1.0.0 release](https://github.com/burkostya/regate/releases/tag/v1.0.0)
+includes the Linux x86-64 archive, its checksum and the acceptance report
+for the released revision. The operational security and data handling
+decision applies to the controlled local stand. [Closed review #113](https://github.com/burkostya/regate/issues/113#issuecomment-7046247622)
+
+The earlier [v1.0.0-rc.1 acceptance report](https://github.com/burkostya/regate/releases/download/v1.0.0-rc.1/regate-v1-rc-892b6d3-acceptance.json)
+records the prerelease run on `892b6d3`.
 
 ## Implementation history
 
