@@ -110,7 +110,7 @@ func allPrompts(ctx context.Context, session *sdk.ClientSession) ([]map[string]a
 // guard optional families; tools/list stays callable for older deployments
 // that implement it but omit the tools capability in server/discover.
 func (c *Conn) DiscoverCatalog(ctx context.Context) (Catalog,error) {
-    return withSession(c,ctx,func(ctx context.Context,session *sdk.ClientSession)(Catalog,error) {
+    return withSession(c,ctx,true,func(ctx context.Context,session *sdk.ClientSession)(Catalog,error) {
         cat:=Catalog{
             Tools:[]map[string]any{},
             Resources:[]map[string]any{},

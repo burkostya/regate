@@ -17,13 +17,24 @@ The management `regate_upstream_refresh` method returns:
 - `revision`: immutable Regate configuration revision used for this discovery;
 - `at` and optional `error`: time and failure diagnostics.
 
-The upstream client opens **one** official SDK session for a complete catalog.
+The upstream client uses one official SDK session per catalog attempt.
 It collects all supported pages of all advertised collections, with a maximum
 of 100 pages and 10,000 objects per collection. A repeated cursor, invalid
 entry, oversized result, timeout or network failure fails closed. Resources
 and prompts are requested only when the upstream advertises the relevant
 capability; tools/list is also attempted for older, incompletely advertising
-servers. An SDK session is always closed after the operation.
+servers. Each SDK session is closed after use.
+
+HTTP 404 on an upstream request carrying `Mcp-Session-Id` signals a lost
+legacy session, regardless of whether the body is plain text or JSON-RPC.
+Regate reports `upstream MCP session expired` without including the ID or
+response body. A catalog refresh can open one replacement session within its
+original timeout. It then reads every collection from the beginning and
+discards any earlier pages and cursors.
+
+Tool calls use the [explicit HCL read retry policy](hcl.md#operator-attested-bounded-mcp-read-retry-pr-53)
+for session recovery. Once an external write has been dispatched, loss of
+its response leaves an unknown outcome in the effect journal for reconciliation.
 
 An upstream may lie about its descriptors. Discovery is **not** a security
 attestation: listed descriptions, JSON Schemas and annotations are untrusted.
@@ -76,10 +87,13 @@ schema pins.
 | Inbound body-size rejection | Raw HTTP payload > 4 MiB -> 413 |
 | Outbound request body budget | 4 MiB fully encoded HTTP body accepted; one-byte excess blocked before network/tool dispatch |
 | Upstream pagination | Official SDK small pages across tools/resources/templates/prompts |
+| Upstream session lost during pagination | Restart before page two, no old cursor or partial catalog survives |
+| Session loss during tool calls | One policy-approved read recovery; dispatched write stays unknown |
 | Malicious repeated cursor / excessive items | Unit tests for bounded collector |
 | Unknown result on interrupted write | Official SDK no-blind-retry test |
 | Request cancellation | HTTP cancellation while policy is pending, assert no protected call |
 | SSE catalog changes | SDK subscription stream notified on activation |
+| Regate restart | Public and admin calls at the same URL with the same SQLite state; reconnect SSE and refresh |
 | Revision-scoped cache and in-flight requests | Activation tests |
 
 ## Remaining release gates
@@ -87,9 +101,16 @@ schema pins.
 This is not a substitute for production OAuth, issuer/audience/scope checks
 (issue #5), SQLite event durability, effect reconciliation and event replay
 (issue #6), full task/skill cross-process interoperability, stress/fault tests
-and independent external-server conformance (issue #9). Stateless HTTP does
-not imply replayable SSE sessions: disconnected listeners must reconnect and
-refresh their catalog until a durable event store is implemented and tested.
+and independent external-server conformance (issue #9).
+
+Public and administrative MCP HTTP requests are stateless. Clients can send
+new requests once Regate is listening again, using the same endpoint and
+credentials. After an abrupt exit, the previous SQLite execution lease can
+remain active for up to 30 seconds. Starting Regate with `-wait-for-leader`
+lets it wait for the lease on the same state directory.
+An existing SSE connection closes when Regate stops. Clients must open a
+new `subscriptions/listen` stream, wait for acknowledgment, and refresh
+their catalog. Events missed during the disconnect are unavailable for replay.
 
 ## Outbound MCP request boundary (#9)
 
