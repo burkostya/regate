@@ -1,12 +1,12 @@
 # Security and operational boundaries
 
-The [v1.0.0-rc.1 prerelease](https://github.com/burkostya/regate/releases/tag/v1.0.0-rc.1)
-passed local acceptance with synthetic data. The
-[operational security and data handling review](operations/threat-review.md#operational-security-and-data-handling-review)
-sets out the evidence needed for sign-off.
-[Issue #113](https://github.com/burkostya/regate/issues/113) tracks that
-decision. Use the prerelease on isolated stands with synthetic data pending
-sign-off.
+The operational security and data handling review for v1.0.0 applies to the
+controlled alpha/beta stand with synthetic data, a trusted host and trusted
+administrators. [Acceptance decision](https://github.com/burkostya/regate/issues/113#issuecomment-7046247622)
+
+For another deployment, review the owner's approved recipients, configured
+data mappings, access to diagnostics and retention before processing real
+data. [Operational review](operations/threat-review.md#operational-security-and-data-handling-review)
 
 ## Identity and management
 
