@@ -66,6 +66,9 @@ func verifyToolSchemaPin(ctx context.Context, session *sdk.ClientSession, name, 
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, sdk.ErrSessionMissing) {
+			return ErrSessionExpired
+		}
 		return errors.New("could not verify upstream tool schema")
 	}
 	if count != 1 || matched != pin {

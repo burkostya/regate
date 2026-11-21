@@ -53,6 +53,15 @@ func flakyReadUpstream(t *testing.T, drops int64, onDrop func()) (*httptest.Serv
 }
 
 func readRetryPipeline(url string, attempts int, delayMS int) string {
+	retry := ""
+	if attempts > 0 {
+		retry = fmt.Sprintf(`
+    retry = {
+      max_attempts = %d
+      delay_ms = %d
+      safe_read = true
+    }`, attempts, delayMS)
+	}
 	return fmt.Sprintf(`upstream "crm" {
   url = %q
   timeout_ms = 5000
@@ -64,12 +73,7 @@ pipeline "reader" {
     upstream = "crm"
     tool = "lookup"
     effect = "read"
-    arguments = "input"
-    retry = {
-      max_attempts = %d
-      delay_ms = %d
-      safe_read = true
-    }
+    arguments = "input"%s
   }
   node "done" {
     kind = "output"
@@ -87,7 +91,7 @@ surface "test" {
     read_only = true
   }
 }
-`,url,attempts,delayMS)
+`, url, retry)
 }
 
 func TestBoundedReadRetryAfterLostTransportResponses(t *testing.T) {

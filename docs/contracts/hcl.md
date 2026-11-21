@@ -856,15 +856,19 @@ and `safe_read=true` constitute **an assertion of read-only repeat safety**;
 Regate does not derive or verify that property from a provider's tool name
 or an untrusted MCP metadata field.
 
-The retry loop is restricted to transient network/connection failures
-(EOF, connection reset, and Go network errors). It does not retry an MCP
+The retry loop handles transient network/connection failures (EOF, connection
+reset, and Go network errors) and loss of a legacy upstream session (HTTP 404
+on a request carrying `Mcp-Session-Id`). Session loss can use one remaining
+attempt. That attempt opens a new session and is the last attempt for the
+node, even if the configured budget is higher. The retry loop does not retry an MCP
 application-level error response, schema failure, denied policy, OAuth
 exchange failure, malformed output, HTTP hook or external write. Before each
 new dispatch it waits for the configured delay with cancellation support,
 then checks queued-task cancellation, delegated-grant revocation and the
-execution leader lease again. Every SDK request gets a fresh MCP session; SDK
-automatic retries remain disabled. The parent pipeline context bounds total
-duration. No backoff is interpreted as a license to replay an unknown write.
+execution leader lease again. Each attempt uses a fresh MCP session with SDK
+automatic retries disabled. The parent pipeline context bounds the retry
+window. Session recovery, including its delay and negotiation, also uses the
+time remaining from the upstream timeout at the start of the node's calls.
 
 This milestone is **not** generic workflow retry nodes, compensating writes,
 idempotent-write verification, attested provider semantics or an automatic

@@ -7,6 +7,8 @@ import (
 	"net"
 	"syscall"
 	"time"
+
+	"github.com/burkostya/regate/internal/mcp"
 )
 
 // readRetryPolicy is private to a single MCP read node. A retry is only
@@ -36,7 +38,7 @@ func retryableReadTransportError(err error) bool {
 	return errors.As(err, &network)
 }
 
-func (r *Runtime) callReadWithRetry(ctx context.Context,
+func (r *Runtime) callReadWithRetry(ctx context.Context, timeout time.Duration,
 	call func(context.Context) (map[string]any, error)) (map[string]any, error) {
 	policy, ok := ctx.Value(readRetryKey{}).(readRetryPolicy)
 	if !ok || policy.maxAttempts < 2 {
@@ -48,6 +50,8 @@ func (r *Runtime) callReadWithRetry(ctx context.Context,
 		policy.delay > 2*time.Second {
 		return nil, errors.New("invalid bounded read retry policy")
 	}
+	started := time.Now()
+	recoveringSession := false
 	for attempt := 1; attempt <= policy.maxAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -67,9 +71,18 @@ func (r *Runtime) callReadWithRetry(ctx context.Context,
 			}
 		}
 		raw, err := call(ctx)
-		if err == nil || attempt == policy.maxAttempts ||
-			!retryableReadTransportError(err) {
+		if err == nil || attempt == policy.maxAttempts || recoveringSession {
 			return raw, err
+		}
+		recoveringSession = errors.Is(err, mcp.ErrSessionExpired)
+		if !recoveringSession && !retryableReadTransportError(err) {
+			return raw, err
+		}
+		if recoveringSession && timeout > 0 {
+			// A replacement session uses what remains of the original timeout.
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithDeadline(ctx, started.Add(timeout))
+			defer cancel()
 		}
 	}
 	return nil, errors.New("unreachable read retry state")

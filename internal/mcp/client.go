@@ -29,6 +29,9 @@ const MaxRequest = 4 << 20
 const MaxResponse = 8 << 20
 const maxToolPages = 100
 
+// ErrSessionExpired reports HTTP 404 on a request carrying a legacy session ID.
+var ErrSessionExpired = errors.New("upstream MCP session expired")
+
 type RPCError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
@@ -111,6 +114,15 @@ func (t credentialTransport) RoundTrip(req *http.Request) (*http.Response, error
 	if err != nil {
 		return nil, err
 	}
+	if response.StatusCode == http.StatusNotFound && clone.Header.Get("Mcp-Session-Id") != "" {
+		// The SDK decodes JSON-RPC errors before checking for a missing
+		// session. Keep the HTTP status and discard the body so it detects
+		// session loss consistently and skips DELETE for the expired session.
+		_ = response.Body.Close()
+		response.Body = http.NoBody
+		response.ContentLength = 0
+		return response, nil
+	}
 	response.Body = &limitedBody{ReadCloser: response.Body}
 	return response, nil
 }
@@ -159,8 +171,9 @@ func (c *Conn) connect(ctx context.Context) (*sdk.ClientSession, error) {
 	return session, nil
 }
 
-func withSession[T any](c *Conn, ctx context.Context, invoke func(context.Context, *sdk.ClientSession) (T, error)) (T, error) {
-	var zero T
+// Catalog collectors can restart from their first page in a fresh session.
+// Tool calls leave the retry decision to the engine's effect policy.
+func withSession[T any](c *Conn, ctx context.Context, retryCatalog bool, invoke func(context.Context, *sdk.ClientSession) (T, error)) (T, error) {
 	// Bound the entire operation, including negotiation and all list pages.
 	// The HTTP client timeout alone would only limit individual requests.
 	if c.Timeout > 0 {
@@ -168,21 +181,33 @@ func withSession[T any](c *Conn, ctx context.Context, invoke func(context.Contex
 		ctx, cancel = context.WithTimeout(ctx, c.Timeout)
 		defer cancel()
 	}
-	session, err := c.connect(ctx)
-	if err != nil {
-		return zero, err
+	result, err := runSession(c, ctx, invoke)
+	if retryCatalog && errors.Is(err, ErrSessionExpired) && ctx.Err() == nil {
+		return runSession(c, ctx, invoke)
 	}
-	defer session.Close()
-	return invoke(ctx, session)
+	return result, err
+}
+
+func runSession[T any](c *Conn, ctx context.Context, invoke func(context.Context, *sdk.ClientSession) (T, error)) (T, error) {
+	var result T
+	session, err := c.connect(ctx)
+	if err == nil {
+		defer session.Close()
+		result, err = invoke(ctx, session)
+	}
+	if errors.Is(err, sdk.ErrSessionMissing) {
+		// The SDK error includes the expired session ID.
+		var zero T
+		return zero, ErrSessionExpired
+	}
+	return result, err
 }
 
 // ListTools collects all pages, not just the first page. Repeated cursors and
 // unexpectedly large page sequences are rejected to avoid infinite loops when
 // an upstream violates pagination rules.
 func (c *Conn) ListTools(ctx context.Context) ([]map[string]any, error) {
-    return withSession(c, ctx, func(ctx context.Context, session *sdk.ClientSession) ([]map[string]any,error) {
-        return allTools(ctx,session)
-    })
+	return withSession(c, ctx, true, allTools)
 }
 
 func remarshal(value any, out any) error {
@@ -208,7 +233,7 @@ func (c *Conn) CallPinnedTool(ctx context.Context, name string, args map[string]
 }
 
 func (c *Conn) callTool(ctx context.Context, name string, args map[string]any, pin string, admit func(context.Context) error) (map[string]any, error) {
-	return withSession(c, ctx, func(ctx context.Context, session *sdk.ClientSession) (map[string]any, error) {
+	return withSession(c, ctx, false, func(ctx context.Context, session *sdk.ClientSession) (map[string]any, error) {
 		if pin != "" {
 			if err := verifyToolSchemaPin(ctx, session, name, pin); err != nil {
 				return nil, err
@@ -245,7 +270,7 @@ func (c *Conn) callTool(ctx context.Context, name string, args map[string]any, p
 // Unknown custom methods are rejected until explicitly registered with the
 // SDK rather than falling back to a second hand-written JSON-RPC transport.
 func (c *Conn) Call(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
-	return withSession(c, ctx, func(ctx context.Context, session *sdk.ClientSession) (json.RawMessage, error) {
+	return withSession(c, ctx, false, func(ctx context.Context, session *sdk.ClientSession) (json.RawMessage, error) {
 		var result any
 		var err error
 		switch method {

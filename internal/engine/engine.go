@@ -1226,7 +1226,7 @@ func (r *Runtime) mcpCall(ctx context.Context, cfg *config.Config, u config.Upst
 		if err := r.checkMCPDispatch(ctx); err != nil {
 			return nil, err
 		}
-		return r.callReadWithRetry(ctx, func(ctx context.Context) (map[string]any, error) {
+		return r.callReadWithRetry(ctx, conn.Timeout, func(ctx context.Context) (map[string]any, error) {
 			if pin != "" {
 				return conn.CallPinnedTool(ctx, tool, args, pin, r.checkMCPDispatch)
 			}
