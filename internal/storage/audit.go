@@ -100,6 +100,11 @@ func (s *Store) AppendAudit(category,action,outcome string) error {
     tx,err:=s.db.BeginTx(context.Background(),nil)
     if err!=nil{return err}
     defer tx.Rollback()
+    if err=appendAuditTx(tx,category,action,outcome);err!=nil{return err}
+    return tx.Commit()
+}
+
+func appendAuditTx(tx *sql.Tx,category,action,outcome string) error {
     rows,err:=tx.Query(auditSelect+" ORDER BY seq")
     if err!=nil{return err}
     last,previous,err:=verifyAuditRows(rows)
@@ -112,8 +117,7 @@ func (s *Store) AppendAudit(category,action,outcome string) error {
     _,err=tx.Exec(`INSERT INTO audit_events(seq,at,category,action,outcome,prev_digest,digest)
         VALUES(?,?,?,?,?,?,?)`,
         e.Sequence,e.At,e.Category,e.Action,e.Outcome,e.PrevDigest,e.Digest)
-    if err!=nil{return err}
-    return tx.Commit()
+    return err
 }
 
 // AuditTail is a bounded, newest-first read for authenticated operators.

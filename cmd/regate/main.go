@@ -48,7 +48,8 @@ func restoreBackupToWriter(archive, stateDir string, w io.Writer) error {
 }
 
 func main() {
-	file := flag.String("config", "examples/regate.hcl", "HCL configuration source")
+	file := flag.String("config", "examples/regate.hcl", "initial HCL for an empty state directory")
+	staticFile := flag.String("static-config", "", "deployment-owned HCL fragment merged with the active dynamic HCL")
 	state := flag.String("state", ".state", "persistent state directory")
 	listen := flag.String("listen", "", "override HTTP listen address")
 	waitForLeader := flag.Bool("wait-for-leader", false, "wait for the existing worker to release the shared SQLite execution lease")
@@ -104,10 +105,6 @@ func main() {
         }
         return
     }
-	b, e := os.ReadFile(*file)
-	if e != nil {
-		log.Fatal(e)
-	}
     // Fail before acquiring SQLite execution leadership if essential admin
     // authentication is not configured. log.Fatal calls os.Exit and bypasses
     // defer, so fatal paths after startup must release the lease explicitly.
@@ -116,13 +113,16 @@ func main() {
     }
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	start := server.New
-	if *waitForLeader {
-		start = func(state, source string) (*server.Service, error) {
-			return server.WaitForLeader(ctx, state, source)
+	initialPath := ""
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "config" {
+			initialPath = *file
 		}
+	})
+	if *staticFile == "" {
+		initialPath = *file
 	}
-	srv, e := start(*state, string(b))
+	srv, e := server.OpenConfigFiles(ctx, *state, server.ConfigFiles{Initial: initialPath, Static: *staticFile}, *waitForLeader)
 	if e != nil {
 		if errors.Is(e, context.Canceled) && ctx.Err() != nil {
 			return

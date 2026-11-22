@@ -33,7 +33,7 @@ type BackupManifest struct {
     SHA256 string `json:"sha256"`
 }
 
-const latestSQLiteVersion = 7
+const latestSQLiteVersion = 8
 
 // VerifyBackup inspects a standalone SQLite snapshot without ever calling
 // Store.New (which could run recovery/migrations). It refuses symlinks,
@@ -77,6 +77,15 @@ func VerifyBackup(path string) (BackupManifest, error) {
     if version >= 7 {
         var principals int
         if err=db.QueryRow("SELECT count(*) FROM oauth_quota").Scan(&principals);err!=nil || principals>maxOAuthQuotaPrincipals {
+            return BackupManifest{},ErrInvalidBackup
+        }
+    }
+    if version >= 8 {
+        var prefix, active string
+        var since, activeSeq int64
+        err=db.QueryRow(`SELECT prefix,since_seq,source,seq FROM static_config CROSS JOIN revisions
+            WHERE static_config.id=1 ORDER BY seq DESC LIMIT 1`).Scan(&prefix,&since,&active,&activeSeq)
+        if err!=nil || since<0 || since>activeSeq || !strings.HasPrefix(active,prefix) {
             return BackupManifest{},ErrInvalidBackup
         }
     }

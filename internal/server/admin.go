@@ -184,7 +184,7 @@ func (s *Service) adminOperation(ctx context.Context, name string, args map[stri
 	case "regate_inspect":
 		return s.Inspect(str(args, "name")), nil
 	case "regate_config_get":
-		return map[string]any{"revision": rev.ID, "source": cfg.Source}, nil
+		return s.configView(cfg, rev.ID), nil
 	case "regate_draft_create":
 		return s.Store.DraftCreate()
 	case "regate_draft_get":

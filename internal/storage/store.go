@@ -18,6 +18,7 @@ import (
     "os"
     "path/filepath"
     "sort"
+    "strings"
     "sync"
     "time"
 
@@ -133,6 +134,12 @@ func (s *Store) LockSuspendedRun(runID string) func() {
 const databaseName = "regate.sqlite"
 
 func New(dir,initial string) (*Store,error) {
+    return Open(dir, func() (string, string, error) { return initial, "", nil })
+}
+
+// Open calls bootstrap only when the database has no current or legacy revision.
+// The callback returns the effective HCL and its static prefix, if any.
+func Open(dir string, bootstrap func() (source, staticPrefix string, err error)) (*Store,error) {
     absolute, err := filepath.Abs(dir)
     if err != nil {
         return nil, err
@@ -154,7 +161,7 @@ func New(dir,initial string) (*Store,error) {
     queueKeys,err:=LoadTaskQueueKeyRing()
     if err!=nil {_=db.Close();return nil,fmt.Errorf("task queue key configuration: %w",err)}
     s:=&Store{Dir:dir,db:db,grantKeys:keys,queueKeys:queueKeys}
-    if err=s.initialize(initial);err!=nil {
+    if err=s.initialize(bootstrap);err!=nil {
         _=db.Close()
         return nil,err
     }
@@ -165,7 +172,7 @@ func (s *Store) Close() error {
     return s.db.Close()
 }
 
-func (s *Store) initialize(initial string) error {
+func (s *Store) initialize(bootstrap func() (string, string, error)) error {
     for _,statement:=range []string{
         "PRAGMA journal_mode=WAL",
         "PRAGMA synchronous=FULL",
@@ -323,6 +330,15 @@ func (s *Store) initialize(initial string) error {
             }
         }
     }
+    if version<8 {
+        if _,err=tx.Exec(`CREATE TABLE IF NOT EXISTS static_config (
+            id INTEGER PRIMARY KEY CHECK(id=1),
+            prefix TEXT NOT NULL,
+            since_seq INTEGER NOT NULL CHECK(since_seq>=0)
+        )`);err!=nil{return err}
+        if _,err=tx.Exec("INSERT OR IGNORE INTO static_config(id,prefix,since_seq) VALUES(1,'',0)");err!=nil{return err}
+        if _,err=tx.Exec("PRAGMA user_version=8");err!=nil{return err}
+    }
     // Refuse to open a modified or truncated historical audit chain.
     if err=verifyAuditTx(tx);err!=nil{return fmt.Errorf("audit integrity: %w",err)}
     var count int
@@ -331,8 +347,15 @@ func (s *Store) initialize(initial string) error {
         found,err:=importLegacy(tx,s.Dir)
         if err!=nil{return fmt.Errorf("legacy migration: %w",err)}
         if !found {
+            initial,prefix,err:=bootstrap()
+            if err!=nil{return err}
             if initial=="" {return fmt.Errorf("empty initial configuration")}
-            if _,err=activateTx(tx,initial,"");err!=nil{return err}
+            if !strings.HasPrefix(initial,prefix) {return ErrStaticConfigConflict}
+            revision,err:=activateTx(tx,initial,"")
+            if err!=nil{return err}
+            if prefix!="" {
+                if err=recordStaticConfig(tx,prefix,revision.ID);err!=nil{return err}
+            }
         }
     }
     // Inspect the lease and recover within the same write transaction. A
@@ -462,6 +485,7 @@ func (s *Store) activateDraft(id string, expectedSource *string)(Revision,error)
     if active!=base {
         return Revision{},fmt.Errorf("revision conflict: draft based on %s, current %s",base,active)
     }
+    if err=checkStaticSource(tx,source);err!=nil{return Revision{},err}
     rev,err:=activateTx(tx,source,active)
     if err!=nil{return Revision{},err}
     if _,err=tx.Exec("DELETE FROM drafts WHERE id=?",id);err!=nil{return Revision{},err}
@@ -476,8 +500,13 @@ func (s *Store) Rollback(target string)(Revision,error) {
         return Revision{}, err
     }
     var source,parent string
-    err=tx.QueryRow("SELECT source FROM revisions WHERE id=?",target).Scan(&source)
+    var seq, since int64
+    var prefix string
+    err=tx.QueryRow(`SELECT revisions.source, revisions.seq, static_config.prefix, static_config.since_seq
+        FROM revisions CROSS JOIN static_config WHERE revisions.id=? AND static_config.id=1`,target).
+        Scan(&source,&seq,&prefix,&since)
     if err!=nil{return Revision{},err}
+    if seq<since || !strings.HasPrefix(source,prefix) {return Revision{},ErrStaticConfigConflict}
     err=tx.QueryRow("SELECT id FROM revisions ORDER BY seq DESC LIMIT 1").Scan(&parent)
     if err!=nil{return Revision{},err}
     rev,err:=activateTx(tx,source,parent)
