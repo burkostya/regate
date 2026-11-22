@@ -130,7 +130,7 @@ func (s *Service) api(w http.ResponseWriter, r *http.Request) {
 			reply(w, 200, s.Status())
 			return
 		case "config":
-			reply(w, 200, map[string]any{"revision": rev.ID, "source": cfg.Source})
+			reply(w, 200, s.configView(cfg, rev.ID))
 			return
 		case "catalog":
 			reply(w, 200, map[string]any{"upstreams": cfg.Upstreams, "surfaces": cfg.Surfaces, "pipelines": cfg.Pipelines, "hooks": cfg.Hooks, "policies": cfg.Policies, "interceptors": cfg.Interceptors})

@@ -364,9 +364,6 @@ func (c *Config) Validate() error {
     if c.MaxActiveTasks<1 || c.MaxActiveTasks>1024 {
         return fmt.Errorf("regate max_active_tasks must be between 1 and 1024")
     }
-	if len(c.Pipelines) == 0 && len(c.Surfaces) == 0 {
-		return fmt.Errorf("no surfaces or pipelines")
-	}
 	paths := map[string]bool{}
     for name,provider := range c.OAuth {
         if provider.Issuer=="" || provider.Audience=="" {return fmt.Errorf("oauth %s: issuer and audience required",name)}

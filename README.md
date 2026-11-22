@@ -143,6 +143,9 @@ The Go tests cover parser and expression safety, HTTP MCP end-to-end flow, decis
 
 See [HCL2/CEL compiler contract](docs/contracts/hcl.md) and [architecture](docs/architecture/overview.md). Example: [examples/regate.hcl](examples/regate.hcl).
 
+For system-owned HCL blocks alongside persistent console and MCP edits, see
+the [NixOS module and block promotion workflow](docs/operations/nixos.md).
+
 Configuration has two representations:
 
 1. **Source**: HCL2 text, saved as immutable revisions and editable drafts. Initial `-config` file bootstraps a *new* state directory; later restarts use persisted active revision.

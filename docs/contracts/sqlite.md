@@ -1,10 +1,16 @@
-# Regate SQLite durability contract (schema version 7)
+# Regate SQLite durability contract (schema version 8)
 
 SQLite is the authoritative on-disk store for revisions, active selection,
 drafts, graph layouts, MCP task records, suspended run checkpoints, execution
 traces and the append-only effect event journal. The database is stored at
 `<stateDir>/regate.sqlite`, with WAL journaling and
 `PRAGMA synchronous=FULL`. The Go driver uses pure Go (no CGO).
+
+Schema v8 stores the deployed static HCL prefix and the earliest revision
+eligible for rollback within that deployment. SQLite publishes a changed
+prefix, its effective HCL revision and the deployment audit entry in one
+transaction. Earlier revisions remain available to pinned runs and for
+inspection. [Static and dynamic configuration](../operations/nixos.md)
 
 ## Execution leadership and fencing
 

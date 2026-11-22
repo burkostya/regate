@@ -31,6 +31,8 @@ type Service struct {
     queueWake chan struct{}
 	subscriptions subscriptionLimiter
 	inbound       *inboundMCP
+	staticPrefix  string
+	staticError   string
 }
 type catalogEntry struct {
     // Items retains the original management API tools-only contract.
@@ -45,25 +47,28 @@ type catalogEntry struct {
 }
 
 func New(stateDir, source string) (*Service, error) {
-	return newService(context.Background(), stateDir, source, false)
+	return startWithSource(context.Background(), stateDir, source, false)
 }
 
 // WaitForLeader starts a service only after it owns the shared execution lease.
 func WaitForLeader(ctx context.Context, stateDir, source string) (*Service, error) {
-	return newService(ctx, stateDir, source, true)
+	return startWithSource(ctx, stateDir, source, true)
 }
 
-func newService(ctx context.Context, stateDir, source string, wait bool) (*Service, error) {
+func startWithSource(ctx context.Context, stateDir, source string, wait bool) (*Service, error) {
+	return newService(ctx, stateDir, func() (string, error) { return source, nil }, nil, wait)
+}
+
+func newService(ctx context.Context, stateDir string, readInitial, readStatic func() (string, error), wait bool) (*Service, error) {
     observability, e := newHTTPObservability()
     if e != nil { return nil, e }
 	quota, e := oauthQuotaFromEnv()
 	if e != nil {
 		return nil, e
 	}
-	if _, e := config.Decode(source); e != nil {
-		return nil, e
-	}
-	store, e := storage.New(stateDir, source)
+	store, e := storage.Open(stateDir, func() (string, string, error) {
+		return bootstrapSource(readInitial, readStatic)
+	})
 	if e != nil {
 		return nil, e
 	}
@@ -99,7 +104,18 @@ func newService(ctx context.Context, stateDir, source string, wait bool) (*Servi
         _=store.Close()
         return nil,fmt.Errorf("queued inputs require keys: %w",storage.ErrTaskQueueKeyUnavailable)
     }
-    if cfg.MaxQueuedTasks>0 || depth>0 {svc.startQueueDispatcher()}
+	svc.staticPrefix, e = store.StaticConfigPrefix()
+	if e != nil || !strings.HasPrefix(active, svc.staticPrefix) {
+		_ = store.Close()
+		return nil, errors.New("persisted static HCL could not be verified")
+	}
+	if readStatic != nil {
+		if err := svc.applyStaticConfig(readStatic); err != nil {
+			_ = store.Close()
+			return nil, err
+		}
+	}
+    if svc.cfg.MaxQueuedTasks>0 || depth>0 {svc.startQueueDispatcher()}
     return svc, nil
 }
 
@@ -139,6 +155,9 @@ func (s *Service) ActivateIfDigest(id, expectedDigest string) (storage.Revision,
 	d, e := s.Store.DraftGet(id)
 	if e != nil {
 		return storage.Revision{}, e
+	}
+	if !strings.HasPrefix(d.Source, s.staticPrefix) {
+		return storage.Revision{}, storage.ErrStaticConfigConflict
 	}
     if expectedDigest!="" && d.SourceDigest!=expectedDigest {
         return storage.Revision{},storage.ErrDraftSourceConflict
@@ -232,6 +251,9 @@ func (s *Service) Status() map[string]any {
         "max_active_tasks":cfg.MaxActiveTasks,"max_queued_tasks":cfg.MaxQueuedTasks,
         "max_queued_per_owner":cfg.MaxQueuedPerOwner,
     }
+	if s.staticError != "" {
+		state["static_config_error"] = s.staticError
+	}
     if active,err:=s.Store.ActiveTaskCount(context.Background());err==nil {
         state["active_tasks"]=active
     }
