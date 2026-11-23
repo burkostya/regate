@@ -108,6 +108,9 @@ type Policy struct {
 type Surface struct {
 	Name      string     `json:"name"`
 	Path      string     `json:"path"`
+	Upstream       string     `json:"upstream,omitempty"`
+	Auth           string     `json:"auth,omitempty"`
+	BearerTokenEnv string     `json:"bearer_token_env,omitempty"`
     OAuth     string     `json:"oauth,omitempty"`
     RequiredScopes []string `json:"required_scopes,omitempty"`
 	Tools     []Tool     `json:"tools"`
@@ -289,6 +292,17 @@ func Decode(src string) (*Config, error) {
 			c.Pipelines[name] = p
 		case "surface":
 			s := Surface{Name:name,Path:b.String("path"),OAuth:b.String("oauth"),RequiredScopes:stringList(b.Attrs["required_scopes"])}
+			s.Upstream = b.String("upstream")
+			s.Auth = b.String("auth")
+			s.BearerTokenEnv = b.String("bearer_token_env")
+			if _, declared := b.Attrs["path"]; !declared && s.Upstream != "" {
+				s.Path = "/mcp/" + name
+			}
+			for _, key := range []string{"upstream", "auth", "bearer_token_env"} {
+				if v, declared := b.Attrs[key]; declared && v == "" {
+					return nil, fmt.Errorf("surface %s: %s cannot be empty", name, key)
+				}
+			}
 			for _, ch := range b.Children {
 				n, e := ch.Label()
 				if e != nil {
@@ -779,6 +793,15 @@ func (c *Config) Validate() error {
 		if s.Path == "/mcp/admin" || strings.HasPrefix(s.Path, "/api/") {
 			return fmt.Errorf("surface %s overlaps reserved path", name)
 		}
+		if s.Upstream != "" {
+			if err := c.validatePublishedUpstream(s); err != nil {
+				return err
+			}
+			continue
+		}
+		if s.Auth != "" || s.BearerTokenEnv != "" {
+			return fmt.Errorf("surface %s: auth and bearer_token_env require upstream publication", name)
+		}
 		names := map[string]bool{}
 		for _, t := range s.Tools {
 			if names[t.Name] {
@@ -828,6 +851,9 @@ func (c *Config) Validate() error {
         }
 	}
 	for _, i := range c.Interceptors {
+		if c.Surfaces[i.Surface].Upstream != "" {
+			return fmt.Errorf("interceptor %s: published upstream surfaces do not run interceptors", i.Name)
+		}
 		if _, ok := c.Hooks[i.Hook]; !ok {
 			return fmt.Errorf("interceptor %s: missing hook %s", i.Name, i.Hook)
 		}

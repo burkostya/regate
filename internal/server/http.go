@@ -32,24 +32,9 @@ func (s *Service) Handler() http.Handler {
 	})
     mux.HandleFunc("/.well-known/oauth-protected-resource/",s.oauthResourceMetadata)
 	mux.Handle("/api/", s.requireAdmin(http.HandlerFunc(s.api)))
-	mux.Handle("/mcp/admin", s.requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.inbound.handle(s, w, r, "", true) })))
+	mux.Handle("/mcp/admin", s.requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.inbound.handle(s, w, r, true) })))
 	mux.HandleFunc("/mcp/", func(w http.ResponseWriter, r *http.Request) {
-        // Snapshot-scoped authentication is enforced by inbound.handle after
-        // selecting the exact active SDK endpoint; an earlier global bearer
-        // check could incorrectly reject valid OIDC credentials.
-		c, _ := s.Current()
-		surface := ""
-		for name, s := range c.Surfaces {
-			if r.URL.Path == s.Path {
-				surface = name
-				break
-			}
-		}
-		if surface == "" {
-			http.NotFound(w, r)
-			return
-		}
-		s.inbound.handle(s, w, r, surface, false)
+		s.inbound.handle(s, w, r, false)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {

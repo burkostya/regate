@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -388,6 +389,7 @@ func (s *Service) adminOperation(ctx context.Context, name string, args map[stri
 }
 func impact(a, b *config.Config, base, current string) map[string]any {
 	changed := []string{}
+	published := []map[string]string{}
 	details := map[string]any{}
 	av, _ := json.Marshal(a)
 	bv, _ := json.Marshal(b)
@@ -408,6 +410,11 @@ func impact(a, b *config.Config, base, current string) map[string]any {
 		}
 	}
 	for name, s := range b.Surfaces {
+		if s.Upstream != "" {
+			published = append(published, map[string]string{
+				"surface": name, "path": s.Path, "upstream": s.Upstream, "auth": s.Auth,
+			})
+		}
 		old, ok := a.Surfaces[name]
 		o, _ := json.Marshal(old)
 		n, _ := json.Marshal(s)
@@ -424,6 +431,8 @@ func impact(a, b *config.Config, base, current string) map[string]any {
 	details["current_revision"] = current
 	details["conflict"] = base != current
 	details["changes"] = changed
+	sort.Slice(published, func(i, j int) bool { return published[i]["surface"] < published[j]["surface"] })
+	details["published_upstreams"] = published
 	semantic, err := config.SemanticDiff(a, b)
 	if err == nil {
 		details["semantic_changes"] = semantic

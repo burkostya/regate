@@ -17,8 +17,9 @@ func TestIncomingSDKCatalogChangesAfterActivation(t *testing.T) {
     // Hold the previous endpoint as an in-flight session would: switching
     // revisions must not mutate its published tool descriptors.
     svc.inbound.mu.RLock()
-    previous := svc.inbound.public["support"]
+    previous := svc.inbound.public["/mcp/support"]
     svc.inbound.mu.RUnlock()
+    if previous == nil { t.Fatal("support endpoint was not published") }
     draft, err := svc.Store.DraftCreate()
     if err != nil { t.Fatal(err) }
     active, _ := svc.Current()

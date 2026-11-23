@@ -16,6 +16,16 @@ decision applies to the controlled local stand. [Closed review #113](https://git
 The earlier [v1.0.0-rc.1 acceptance report](https://github.com/burkostya/regate/releases/download/v1.0.0-rc.1/regate-v1-rc-892b6d3-acceptance.json)
 records the prerelease run on `892b6d3`.
 
+## v1.1.0 upstream publication
+
+The [v1.1.0 release](https://github.com/burkostya/regate/releases/tag/v1.1.0)
+adds explicit publication of a complete upstream Streamable HTTP endpoint.
+Integration tests cover URL-only migration with the official Go MCP SDK,
+stateful upstream restart with an unchanged client session ID, stateless
+MCP, SSE streaming and cursor isolation, OAuth token exchange, Bearer
+access and no replay after a lost write response.
+[Migration contract](contracts/mcp.md#publish-an-existing-mcp-server)
+
 ## Implementation history
 
 The following prototype status and milestone entries record progress at
