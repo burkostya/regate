@@ -146,8 +146,22 @@ func (t outboundTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 // Client constructs an outbound client that pins validated DNS results at
 // connection time and rejects redirects. Hostname and TLS SNI remain unchanged.
 func Client(timeout time.Duration) *http.Client {
+	return newClient(timeout, 0)
+}
+
+// StreamingClient bounds the wait for headers while leaving stream lifetime
+// to the caller's request context.
+func StreamingClient(headerTimeout time.Duration) *http.Client {
+	return newClient(0, headerTimeout)
+}
+
+func newClient(timeout, headerTimeout time.Duration) *http.Client {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.Proxy = nil
+	if headerTimeout > 0 {
+		tr.ResponseHeaderTimeout = headerTimeout
+		tr.DisableCompression = true
+	}
 	tr.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		return guardedDial(ctx, network, address, net.DefaultResolver.LookupIPAddr, (&net.Dialer{}).DialContext)
 	}

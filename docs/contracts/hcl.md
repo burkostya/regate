@@ -152,6 +152,12 @@ proxy) or `pipeline = "named_pipeline"`. `input_schema` and `output_schema`
 are native HCL object values published with the tool. Full JSON Schema
 validation of remote content is a separate v1 requirement.
 
+A surface with `upstream = "name"` publishes the existing MCP server at
+`/mcp/<surface name>` unless it supplies a custom `path`. This form requires
+`auth` and accepts neither local descriptors nor surface-specific
+interceptors. See the [publication and migration contract](mcp.md#publish-an-existing-mcp-server)
+for the authorization forms and session recovery.
+
 ### Pinning an upstream MCP tool schema
 
 `upstream` accepts the optional `tool_schema_pins` object. Its keys are

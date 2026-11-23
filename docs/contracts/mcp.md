@@ -5,6 +5,72 @@ Regate supports HTTP MCP only. Standard inbound public and administrative
 `subscriptions/listen` use the official Go MCP SDK. Older unversioned Regate
 discovery and task-start `resultType: task` are narrow compatibility bridges.
 
+## Publish an existing MCP server
+
+Use a surface with an `upstream` reference to publish the complete Streamable
+HTTP interface. Start from [the migration example](../../examples/publish-upstream.hcl)
+or add the surface to a configuration draft and activate it. Change the
+client's endpoint to the surface URL, which defaults to `/mcp/<surface name>`.
+Use `path` for a different endpoint within `/mcp/`. Declaring an upstream
+alone keeps it available only to Regate's configured callers.
+
+The surface requires an explicit `auth` value:
+
+| `auth` | Regate endpoint | Upstream |
+|---|---|---|
+| `anonymous` | Anonymous access to this explicitly published route | No configured credentials |
+| `bearer` | Checks the secret named by the surface's `bearer_token_env` | Uses the dedicated bearer named by the upstream's `auth_env` |
+| `oauth` | Checks the surface's `oauth` provider, endpoint audience and `required_scopes` | [Exchanges the incoming token](oauth.md#delegated-upstream-credentials-rfc-8693) for the configured upstream audience and scopes |
+
+For static Bearer migration, the operator can set the client-facing
+environment variable to the bearer the client already uses. When moving to
+a new OAuth audience, the client follows the Regate resource metadata and
+can sign in again. The authorization server must support RFC 8693 exchange
+to the upstream audience, and both provider configurations must use the
+same issuer.
+
+The upstream supplies discovery, descriptors, extensions, access to each
+object and execution semantics. Regate forwards JSON-RPC and streams SSE
+as it arrives. Headers tied to the connection or gateway credentials stay
+at their HTTP boundary. Regate rejects upstream HTTP redirects and applies
+the guarded egress configuration, public admission controls, 4 MiB request
+limit, 8 MiB finite response limit, and 30-minute stream lifetime. The
+configured `timeout_ms` bounds the wait for upstream response headers and for
+a finite response body. This mode covers stateful and stateless Streamable
+HTTP. The older two-endpoint HTTP+SSE transport requires a separate migration.
+
+Review the whole upstream catalog before activating the surface. The console
+and `regate_impact_analyze` show its path, upstream and authorization mode.
+Curated surfaces remain the way to apply Regate's graph, per-tool policies,
+schema pins, masking, interceptors and effect journal. A published upstream
+surface cannot mix in local tools, resources or prompts. The proxy emits
+transport diagnostics without recording MCP messages or credentials.
+
+### Session loss and recovery
+
+For stateful Streamable HTTP, Regate maps a client-facing session ID to the
+upstream session and binds it to the authenticated owner and the endpoint
+query. The per-surface cache holds up to 1,024 sessions and 32 MiB of
+initialization messages, with 30-minute idle expiry. State lives in memory.
+Changing the upstream destination or authorization invalidates its session
+IDs. Existing requests finish on the revision they entered.
+
+HTTP `404` on a known session and the upstream error `Invalid session ID`
+trigger recovery, including plain HTTP `400` and a matching JSON-RPC error
+in a finite response or in the first SSE event of a read request.
+Regate initializes one replacement session for overlapping callers and
+keeps the public session ID. A discovery or read request can be sent once
+to the replacement session if the response has yet to start. A stateful
+`tools/call` and other potentially effectful requests are checked with
+`ping` before dispatch. If the session is lost after that check, Regate
+returns an error without sending the operation again.
+
+An SSE cursor is valid for the specific upstream session that issued it.
+After replacing that session, a reconnect can open a fresh stream while
+missed events and upstream application state remain subject to the
+upstream's own durability. A Regate process restart requires the client
+to initialize a new session.
+
 ## Upstream catalog refresh
 
 The management `regate_upstream_refresh` method returns:

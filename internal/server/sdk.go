@@ -27,6 +27,8 @@ import (
 type sdkOwnerKey struct{}
 
 type inboundEndpoint struct {
+    surface string
+    proxy *publishedMCP
     server *sdk.Server
     verifier *identity.Verifier
     requiredScopes []string
@@ -62,10 +64,10 @@ func newInboundMCP(s *Service, cfg *config.Config, revision string) (*inboundMCP
 func (m *inboundMCP) prepare(s *Service, cfg *config.Config) (map[string]*inboundEndpoint, *string, error) {
     next := make(map[string]*inboundEndpoint, len(cfg.Surfaces))
     revision := new(string)
-    for name := range cfg.Surfaces {
+    for name, surface := range cfg.Surfaces {
         ep, err := newInboundEndpoint(s, cfg, revision, name, false)
         if err != nil { return nil, nil, fmt.Errorf("MCP surface %q: %w", name, err) }
-        next[name] = ep
+        next[surface.Path] = ep
     }
     return next, revision, nil
 }
@@ -80,6 +82,12 @@ func (m *inboundMCP) replace(s *Service, cfg *config.Config, revision string) er
 func (m *inboundMCP) publish(next map[string]*inboundEndpoint) {
     m.mu.Lock()
     previous := m.public
+    for path, endpoint := range next {
+        old := previous[path]
+        if old != nil && old.proxy != nil && endpoint.proxy != nil && endpoint.proxy.sameRoute(old.proxy) {
+            endpoint.proxy.sessions = old.proxy.sessions
+        }
+    }
     m.public = next
     m.mu.Unlock()
 
@@ -94,15 +102,20 @@ func (m *inboundMCP) publish(next map[string]*inboundEndpoint) {
 
 // handle preserves the old, unversioned HTTP JSON-RPC client's missing Accept
 // header, while the SDK enforces all other protocol framing and validation.
-func (m *inboundMCP) handle(s *Service, w http.ResponseWriter, r *http.Request, surface string, admin bool) {
+func (m *inboundMCP) handle(s *Service, w http.ResponseWriter, r *http.Request, admin bool) {
     m.mu.RLock()
     ep := m.admin
-    if !admin { ep = m.public[surface] }
+    if !admin { ep = m.public[r.URL.Path] }
     m.mu.RUnlock()
     if ep == nil {
         http.NotFound(w, r)
         return
     }
+    if ep.proxy != nil && r.URL.EscapedPath() != ep.proxy.surface.Path {
+        http.NotFound(w, r)
+        return
+    }
+    surface := ep.surface
     if !admin {
         if ep.verifier!=nil {
             p,err:=ep.verifier.Verify(r.Context(),bearer(r))
@@ -121,11 +134,17 @@ func (m *inboundMCP) handle(s *Service, w http.ResponseWriter, r *http.Request, 
             }
             verified:=identity.WithPrincipal(r.Context(),p)
             r=r.WithContext(identity.WithSubjectToken(verified,bearer(r)))
+        } else if ep.proxy != nil {
+            if !ep.proxy.authorize(w, r) { return }
         } else if !s.authorize(r,false) {
             w.Header().Set("WWW-Authenticate", "Bearer")
             http.Error(w,"unauthorized",http.StatusUnauthorized)
             return
         }
+    }
+    if ep.proxy != nil {
+        ep.proxy.serve(s, w, r)
+        return
     }
 
     // The SDK doesn't expose a task-start result type. Keep precisely this
@@ -227,6 +246,20 @@ func (m *inboundMCP) handle(s *Service, w http.ResponseWriter, r *http.Request, 
 }
 
 func newInboundEndpoint(s *Service, cfg *config.Config, revision *string, surface string, admin bool) (*inboundEndpoint, error) {
+    ep := &inboundEndpoint{surface:surface,config:cfg,revision:revision}
+    surf := cfg.Surfaces[surface]
+    if !admin && surf.OAuth != "" {
+        provider := cfg.OAuth[surf.OAuth]
+        ep.verifier = identity.NewVerifier(provider)
+        ep.resourceMetadata = resourceMetadataURL(provider, surf)
+    }
+    if !admin && surf.Upstream != "" {
+        proxy, err := newPublishedMCP(cfg, surf)
+        if err != nil { return nil, err }
+        ep.proxy = proxy
+        ep.requiredScopes = surf.RequiredScopes
+        return ep, nil
+    }
     caps := &sdk.ServerCapabilities{
         Tools: &sdk.ToolCapabilities{ListChanged: true},
         Resources: &sdk.ResourceCapabilities{ListChanged: true},
@@ -236,17 +269,11 @@ func newInboundEndpoint(s *Service, cfg *config.Config, revision *string, surfac
     if admin { caps.AddExtension("io.modelcontextprotocol/skills", nil) }
     srv := sdk.NewServer(&sdk.Implementation{Name:"regate", Version:"0.1.0"},
         &sdk.ServerOptions{Instructions:discoveryInstructions(admin), Capabilities:caps, PageSize:128})
-    ep := &inboundEndpoint{server:srv,config:cfg,revision:revision}
+    ep.server = srv
     if !admin {
-        surf:=cfg.Surfaces[surface]
         ep.requiredScopes=surf.RequiredScopes
         ep.toolScopes=make(map[string][]string,len(surf.Tools))
         for _,tool:=range surf.Tools {ep.toolScopes[tool.Name]=tool.RequiredScopes}
-        if surf.OAuth!="" {
-            provider:=cfg.OAuth[surf.OAuth]
-            ep.verifier=identity.NewVerifier(provider)
-            ep.resourceMetadata=resourceMetadataURL(provider,surf)
-        }
         registerVisibilityMiddleware(srv,surf)
     }
     if admin {

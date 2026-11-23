@@ -19,7 +19,7 @@ var blockAttributes = map[string]map[string]string{
     "readback":    {"write_operation":"string","upstream":"string","read_tool":"string","intent_pointer":"string","read_argument":"string","result_pointer":"string","match_intent_pointer":"string","match_result_pointer":"string","write_token_argument":"string","result_token_pointer":"string","safe_read":"bool"},
     "compensation":{"for_operation":"string","upstream":"string","tool":"string","intent_pointer":"string","argument":"string","enabled":"bool"},
 	"pipeline":    {"entry": "string", "timeout_ms": "positive-int", "concurrency": "positive-int"},
-	"surface":     {"path": "string", "oauth": "string", "required_scopes": "string-list"},
+	"surface":     {"path": "string", "oauth": "string", "required_scopes": "string-list", "upstream": "string", "auth": "string", "bearer_token_env": "string"},
 	"tool":        {"description": "string", "pipeline": "string", "source": "string", "input_schema": "object", "output_schema": "object", "read_only": "bool", "required_scopes": "string-list", "data_classification": "string", "allow_unmasked": "bool"},
 	"resource":    {"uri": "string", "source": "string", "text": "string", "mime_type": "string", "required_scopes": "string-list"},
 	"prompt":      {"description": "string", "text": "string", "required_scopes": "string-list"},
@@ -50,7 +50,7 @@ var nestedBlocks = map[string]map[string]bool{
 }
 var requiredBlockAttrs = map[string][]string{
 	"oauth": {"issuer", "audience"}, "readback": {"write_operation","upstream","read_tool","intent_pointer","read_argument","result_pointer","safe_read"}, "compensation":{"for_operation","upstream","tool","intent_pointer","argument","enabled"}, "upstream": {"url"}, "hook": {"transport", "contract"}, "pipeline": {"entry"},
-	"surface": {"path"}, "node": {"kind"}, "edge": {"from", "to"},
+	"node": {"kind"}, "edge": {"from", "to"},
 }
 
 func ValidateBlockSchema(blocks []*Block) error {

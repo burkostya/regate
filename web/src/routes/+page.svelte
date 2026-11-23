@@ -357,7 +357,21 @@
             <div class="pane"><h2>{upstreamName || 'Select an upstream'}</h2><p>Refresh tools directly from the upstream MCP endpoint.</p>{#each discovered as t}<div class="tool"><strong>{t.name}</strong><p>{t.description ?? 'No description'}</p><details><summary>Input Schema</summary><pre>{JSON.stringify(t.inputSchema,null,2)}</pre></details></div>{/each}</div></div>
         {:else if tab==='Surfaces'}
           <div class="page-title"><div><p class="eyebrow">PUBLIC INTERFACES</p><h1>MCP surfaces</h1></div></div>
-          <div class="cards">{#each Object.entries(catalog?.surfaces ?? {}) as [name,s]}<section class="pane"><p class="eyebrow">VIRTUAL SERVER</p><h2>{name}</h2><code>{s.path}</code><p>{s.tools?.length??0} tools · {s.resources?.length??0} resources · {s.prompts?.length??0} prompts</p>{#each s.tools ?? [] as t}<div class="tool"><strong>{t.name}</strong><span>{t.pipeline ? `pipeline: ${t.pipeline}` : `source: ${t.source}`}</span></div>{/each}</section>{/each}</div>
+          <div class="cards">
+            {#each Object.entries(catalog?.surfaces ?? {}) as [name, surface]}
+              <section class="pane">
+                <h2>{name}</h2><code>{surface.path}</code>
+                {#if surface.upstream}
+                  <p>Proxies the full <strong>{surface.upstream}</strong> MCP server · {surface.auth}</p>
+                {:else}
+                  <p>{surface.tools?.length ?? 0} tools · {surface.resources?.length ?? 0} resources · {surface.prompts?.length ?? 0} prompts</p>
+                  {#each surface.tools ?? [] as tool}
+                    <div class="tool"><strong>{tool.name}</strong><span>{tool.pipeline ? `pipeline: ${tool.pipeline}` : `source: ${tool.source}`}</span></div>
+                  {/each}
+                {/if}
+              </section>
+            {/each}
+          </div>
         {:else if tab==='Rules'}
           <div class="page-title"><div><p class="eyebrow">GUARDS &amp; TRANSFORMS</p><h1>Hooks and policies</h1></div><button class="secondary" onclick={() => { tab='HCL'; task(createDraft); }}>Edit in HCL</button></div>
           <div class="split-pane"><div class="pane"><h2>Hooks ({Object.keys(catalog?.hooks??{}).length})</h2>{#each Object.entries(catalog?.hooks??{}) as [name, h]}<div class="tool"><strong>{name}</strong><p>{(h as any).transport} · {(h as any).contract}</p><code>{(h as any).url || `${(h as any).upstream}.${(h as any).tool}`}</code><p>Timeout {(h as any).timeout_ms ?? 'default'} ms · failure: {(h as any).on_error || 'deny'}</p></div>{/each}</div>

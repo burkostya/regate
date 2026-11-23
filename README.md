@@ -2,11 +2,10 @@
 
 **Regate** is an experimental, HTTP-only **MCP gateway and virtual-tool composition engine** written in Go, with a declarative HCL2 configuration, programmable HTTP/MCP hooks, a management MCP endpoint and a SvelteKit + Svelte Flow console.
 
-**Release status.** The
-[v1.0.0 release](https://github.com/burkostya/regate/releases/tag/v1.0.0)
-includes the Linux x86-64 archive, checksum and acceptance report. The full
-v1 functional scope and the operational security and data handling review
-passed on the controlled alpha/beta stand.
+**Release status.** [v1.1.0](https://github.com/burkostya/regate/releases/tag/v1.1.0)
+adds complete MCP upstream publication and session recovery. The full v1
+functional scope and the operational security and data handling review
+passed on the controlled alpha/beta stand for v1.0.0.
 [Release status and evidence](docs/release-status.md)
 
 ## What you can experiment with now
@@ -140,6 +139,9 @@ go build ./cmd/regate ./cmd/regate-demo
 The Go tests cover parser and expression safety, HTTP MCP end-to-end flow, decision denial, data redaction, management authentication/revisions/conflicts, original-content proxying, subscriptions, tasks and skills. They do not replace official MCP conformance tests, threat modeling, load tests or deployment testing.
 
 ## Configuration contract
+
+To move an existing Streamable HTTP MCP client to Regate by changing its
+URL, [publish the upstream as a surface](docs/contracts/mcp.md#publish-an-existing-mcp-server).
 
 See [HCL2/CEL compiler contract](docs/contracts/hcl.md) and [architecture](docs/architecture/overview.md). Example: [examples/regate.hcl](examples/regate.hcl).
 
