@@ -77,6 +77,9 @@ func (c *Config) VisitPipelineNodes(root string, visit func(Node) error) error {
 // A writable or unknown destination is never considered read-only.
 func (c *Config) ToolTraits(surface string, tool Tool) (effectful, suspendable bool) {
 	for _, i := range c.Interceptors {
+		if kind, _ := i.ContentTarget(); kind != "" {
+			continue
+		}
 		if (i.Surface == "" || i.Surface == surface) && (i.Tool == "" || i.Tool == tool.Name) &&
 			c.Hooks[i.Hook].Transport != "builtin" {
 			effectful = true

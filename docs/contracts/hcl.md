@@ -166,6 +166,28 @@ A surface with `upstream = "name"` publishes the existing MCP server at
 interceptors. See the [publication and migration contract](mcp.md#publish-an-existing-mcp-server)
 for the authorization forms and session recovery.
 
+### Checks and transformations on resources and prompts
+
+A curated resource uses its published `uri` for `resources/read`, with
+local `text` or the configured upstream. A curated prompt can provide
+local `text` or set `source = "upstream.prompt"`. Prompt
+`arguments = [{ name = "topic", description = "...", required = true }]`
+advertises argument descriptors to MCP clients. All supplied argument
+values must be strings.
+
+Resources and prompts can declare `input_schema` and `output_schema` as
+inline JSON Schema objects. The input schema applies to the initial and
+transformed request objects. The result schema applies to the published
+MCP-shaped result entering and leaving `before_response`, and after final
+protection. It can validate `contents`, `messages`, and the optional
+fields produced by the source or transforms.
+
+Extend an `interceptor` with `resource` or `prompt` and one of `hook`,
+`policy`, CEL `check`, or CEL `transform`. Select at most one kind of
+object per interceptor and scope it to a `surface` when only that surface
+should receive the rule. Use optional CEL `input` to project a hook or
+policy payload. See [stages and trust rules](hooks.md#resource-and-prompt-interceptors).
+
 ### Pinning an upstream MCP tool schema
 
 `upstream` accepts the optional `tool_schema_pins` object. Its keys are

@@ -390,7 +390,7 @@ func (r *Runtime) runTool(ctx context.Context, revision string, cfg *config.Conf
 }
 func (r *Runtime) intercept(ctx context.Context, cfg *config.Config, stage, surface, tool string, value any, dry bool) (any, error) {
 	for _, i := range cfg.Interceptors {
-		if i.Stage != stage || (i.Surface != "" && i.Surface != surface) || (i.Tool != "" && i.Tool != tool) {
+		if kind, _ := i.ContentTarget(); kind != "" || i.Stage != stage || (i.Surface != "" && i.Surface != surface) || (i.Tool != "" && i.Tool != tool) {
 			continue
 		}
 		v, e := r.runHook(withEffectStep(ctx,"interceptor:"+stage+":"+i.Name), cfg.Hooks[i.Hook], cfg, value, dry)
@@ -1296,7 +1296,7 @@ func (r *Runtime) mcpCall(ctx context.Context, cfg *config.Config, u config.Upst
 		reason := ""
 		if e != nil {
 			state = "unknown"
-			reason = expr.RedactDiagnostic(e.Error())
+			reason = effectDiagnostic(ctx, e)
 		} else if outcomeErr := validateMCPToolOutcome(raw); outcomeErr != nil {
 			// A provider can commit a write and subsequently return an MCP
 			// application error. Only a valid non-error tool result confirms
@@ -1374,16 +1374,7 @@ func (r *Runtime) runHook(ctx context.Context, h config.Hook, cfg *config.Config
 		if e != nil {
 			return nil, e
 		}
-		if e = validateMCPToolOutcome(raw); e != nil {
-			return nil, e
-		}
-		if h.Contract == "decision" {
-			return decide(raw)
-		}
-		if v, ok := raw["structuredContent"]; ok {
-			return v, nil
-		}
-		return raw, nil
+		return hookResponseValue(h, raw)
 	case "http":
 		if e := checkOutbound(h.URL); e != nil {
 			return nil, e
@@ -1423,7 +1414,7 @@ func (r *Runtime) runHook(ctx context.Context, h config.Hook, cfg *config.Config
         if err!=nil{return nil,err}
         complete:=func(status string,cause error) error {
             reason:=""
-            if cause!=nil {reason=expr.RedactDiagnostic(cause.Error())}
+            if cause!=nil {reason=effectDiagnostic(ctx, cause)}
             if e:=r.Store.CompleteEffect(attempt.ID,status,reason);e!=nil {
                 return fmt.Errorf("HTTP effect outcome not durable: %w",e)
             }
@@ -1449,19 +1440,39 @@ func (r *Runtime) runHook(ctx context.Context, h config.Hook, cfg *config.Config
         // This confirmation describes the HTTP response, not the policy
         // decision encoded in it. A known "deny" is not a lost effect.
         if e=complete("confirmed",nil);e!=nil {return nil,e}
-		if h.Contract == "decision" {
-			return decide(result)
-		}
-		if act, _ := result["action"].(string); act == "deny" {
-			return nil, ErrDenied
-		}
-		if v, ok := result["value"]; ok {
-			return v, nil
-		}
-		return result, nil
+		return hookResponseValue(h, result)
 	}
 	return nil, fmt.Errorf("unknown hook transport %s", h.Transport)
 }
+
+func hookResponseValue(h config.Hook, response any) (any, error) {
+	result, ok := response.(map[string]any)
+	if !ok || result == nil {
+		return nil, fmt.Errorf("hook response must be an object")
+	}
+	if h.Transport == "mcp" {
+		if err := validateMCPToolOutcome(result); err != nil {
+			return nil, err
+		}
+	}
+	if h.Contract == "decision" {
+		return decide(result)
+	}
+	if h.Transport == "mcp" {
+		if value, ok := result["structuredContent"]; ok {
+			return value, nil
+		}
+	} else {
+		if result["action"] == "deny" {
+			return nil, ErrDenied
+		}
+		if value, ok := result["value"]; ok {
+			return value, nil
+		}
+	}
+	return result, nil
+}
+
 func decide(value any) (any, error) {
 	m, ok := value.(map[string]any)
 	if !ok {
@@ -1875,22 +1886,4 @@ func (r *Runtime) ResumeAt(ctx context.Context, cfg *config.Config, revision str
 		}
 	}
 	return out, err
-}
-
-// ReadResource forwards an MCP resources/read request, preserving the upstream content shape.
-func (r *Runtime) ReadResource(ctx context.Context,cfg *config.Config,u config.Upstream,uri string)(map[string]any,error) {
-    if e:=r.CheckQueuedTaskExecution(ctx);e!=nil{return nil,e}
-    if e:=r.CheckGrantExecution(ctx);e!=nil{return nil,e}
-    if e:=checkOutbound(u.URL);e!=nil{return nil,e}
-    conn,err:=r.connFor(ctx,cfg,u)
-    if err!=nil {return nil,err}
-    raw, e := conn.Call(ctx, "resources/read", map[string]any{"uri": uri})
-	if e != nil {
-		return nil, e
-	}
-	var v map[string]any
-	if e = json.Unmarshal(raw, &v); e != nil {
-		return nil, e
-	}
-	return v, nil
 }

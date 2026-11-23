@@ -398,3 +398,82 @@ test('clearing a loaded active HCL preview cannot be discarded by diff or execut
   await expect(page.locator('#hcl-source')).toHaveValue('');
   expect(mutatingDraftRequests).toHaveLength(0);
 });
+
+test('tests resource and prompt rules in a saved draft and displays them after activation', async ({ page, request }) => {
+  test.skip(process.env.REGATE_E2E_ALLOW_ACTIVATION !== 'true', 'Requires an isolated writable gateway.');
+  const configuration = async () => {
+    const result = await request.get('/api/config', { headers: auth });
+    expect(result.ok()).toBeTruthy();
+    return result.json();
+  };
+  const baseline = await configuration();
+  const source = baseline.source + `
+surface "browser_content" {
+  path = "/mcp/browser-content"
+  resource "guide" {
+    uri = "regate://browser-content/guide"
+    text = "guide"
+  }
+  prompt "review" { text = "review" }
+}
+interceptor "guide_response" {
+  surface = "browser_content"
+  resource = "guide"
+  stage = "before_response"
+  transform = "{'contents': input.contents.map(item, {'uri': item.uri, 'text': item.text + ' transformed'})}"
+}
+interceptor "review_response" {
+  surface = "browser_content"
+  prompt = "review"
+  stage = "before_response"
+  transform = "{'messages': [{'role':'user', 'content':{'type':'text', 'text': request.arguments.topic}}]}"
+}
+`;
+  const tab = (name: string) => page.locator('.sidebar nav').getByRole('button', { name, exact: true }).click();
+  const postFrom = async (button: string, endpoint: string) => {
+    const pending = page.waitForResponse(r => r.url().endsWith(`/api/${endpoint}`) && r.request().method() === 'POST');
+    await page.getByRole('button', { name: button, exact: true }).click();
+    const result = await pending;
+    expect(result.status(), await result.text()).toBe(200);
+    return result.json();
+  };
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveAttribute('data-regate-hydrated', 'true');
+  await page.getByLabel('Admin bearer token').fill(token);
+  await page.getByRole('button', { name: 'Connect' }).click();
+  await expect(page.getByRole('heading', { name: 'Execution graph' })).toBeVisible();
+  await tab('HCL');
+  await page.locator('#hcl-source').fill(source);
+  await postFrom('Save draft', 'draft-update');
+  await page.getByText('Test resource or prompt', { exact: true }).click();
+  await page.getByLabel('Surface name').fill('browser_content');
+  await page.getByLabel('Resource block name').fill('guide');
+  expect((await postFrom('Run content test', 'test')).value.contents[0].text).toBe('guide transformed');
+  await expect(page.getByLabel('Content test result')).toContainText('guide transformed');
+  await page.getByLabel('Object type').selectOption('prompt');
+  await page.getByLabel('Prompt name').fill('review');
+  await page.getByLabel('Prompt arguments (JSON)').fill('{"topic":"safety review"}');
+  expect((await postFrom('Run content test', 'test')).value.messages[0].content.text).toBe('safety review');
+
+  const diff = await postFrom('Diff', 'diff');
+  expect(diff.content_changes).toEqual(expect.arrayContaining([
+    expect.objectContaining({ surface: 'browser_content', kind: 'resource', name: 'guide' }),
+    expect.objectContaining({ surface: 'browser_content', kind: 'prompt', name: 'review' })
+  ]));
+  expect(await configuration()).toEqual(baseline);
+  try {
+    page.once('dialog', dialog => dialog.accept());
+    await postFrom('Activate', 'activate');
+    await tab('Surfaces');
+    const surface = page.locator('section.pane').filter({ has: page.getByRole('heading', { name: 'browser_content', exact: true }) });
+    await expect(surface).toContainText('before_response · guide_response · CEL transform');
+    await expect(surface).toContainText('before_response · review_response · CEL transform');
+    expect((await configuration()).source).toBe(source);
+  } finally {
+    const current = await configuration();
+    if (current.source === source) {
+      const rollback = await request.post('/api/rollback', { headers: auth, data: { revision: baseline.revision } });
+      expect(rollback.status(), await rollback.text()).toBe(200);
+    }
+  }
+});

@@ -408,18 +408,11 @@ func (s *Service) dispatchMCP(ctx context.Context, surface string, admin bool, m
 			return map[string]any{"contents": []any{map[string]any{"uri": uri, "mimeType": "text/markdown", "text": content}}, "ttlMs": 300000, "cacheScope": "private"}, nil
 		}
 		for _, rs := range cfg.Surfaces[surface].Resources {
-			if rs.URI != uri {
-				continue
+			if rs.URI == uri {
+				out, err := s.Engine.ReadPublishedResource(ctx, cfg, rev.ID, surface, rs, nil)
+				value, _ := out.Value.(map[string]any)
+				return value, err
 			}
-			if rs.Source != "" {
-				upstream, _, ok := strings.Cut(rs.Source, ".")
-				if !ok {
-					return nil, fmt.Errorf("invalid resource source")
-				}
-				u := cfg.Upstreams[upstream]
-				return s.Engine.ReadResource(ctx, cfg, u, uri)
-			}
-			return map[string]any{"contents": []any{map[string]any{"uri": uri, "mimeType": rs.MimeType, "text": rs.Text}}}, nil
 		}
 		return nil, &mcp.RPCError{Code: -32602, Message: "unknown resource"}
 	case "prompts/list":
@@ -433,7 +426,9 @@ func (s *Service) dispatchMCP(ctx context.Context, surface string, admin bool, m
 	case "prompts/get":
 		for _, p := range cfg.Surfaces[surface].Prompts {
 			if p.Name == str(params, "name") {
-				return map[string]any{"messages": []any{map[string]any{"role": "user", "content": map[string]any{"type": "text", "text": p.Text}}}}, nil
+				out, err := s.Engine.GetPublishedPrompt(ctx, cfg, rev.ID, surface, p, obj(params, "arguments"), nil)
+				value, _ := out.Value.(map[string]any)
+				return value, err
 			}
 		}
 		return nil, &mcp.RPCError{Code: -32602, Message: "unknown prompt"}

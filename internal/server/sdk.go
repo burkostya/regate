@@ -20,7 +20,6 @@ import (
     "github.com/burkostya/regate/internal/config"
     "github.com/burkostya/regate/internal/engine"
     "github.com/burkostya/regate/internal/identity"
-    "github.com/burkostya/regate/internal/expr"
     sdk "github.com/modelcontextprotocol/go-sdk/mcp"
     "github.com/modelcontextprotocol/go-sdk/jsonrpc"
 )
@@ -352,53 +351,58 @@ func newInboundEndpoint(s *Service, cfg *config.Config, revision *string, surfac
             srv.AddTool(desc, handler)
             ep.notifyTools = func() { srv.AddTool(desc, handler) }
         }
-        for _, resource := range surf.Resources {
-            parsed, err := url.Parse(resource.URI)
-            if err != nil || parsed.Scheme == "" { return nil, fmt.Errorf("resource URI %q must be absolute", resource.URI) }
-            rs := resource
-            descriptor := &sdk.Resource{URI:rs.URI, Name:rs.Name, MIMEType:rs.MimeType}
-            handler := func(ctx context.Context, req *sdk.ReadResourceRequest) (*sdk.ReadResourceResult, error) {
-                    if err:=identity.RequireScopes(ctx,rs.RequiredScopes);err!=nil {return nil,err}
-                    if rs.Source == "" {
-                        text:=rs.Text
-                        if ep.verifier!=nil {text=expr.MaskPII(text).(string)}
-                        return &sdk.ReadResourceResult{Contents:[]*sdk.ResourceContents{{URI:rs.URI, MIMEType:rs.MimeType, Text:text}}}, nil
-                    }
-                    upstream, _, ok := strings.Cut(rs.Source, ".")
-                    if !ok { return nil, fmt.Errorf("invalid resource source") }
-                    ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
-                    defer cancel()
-                    if ep.verifier!=nil && cfg.Upstreams[upstream].TrustLevel!="restricted" {
-                        return nil,fmt.Errorf("untrusted upstream resource boundary")
-                    }
-                    value, err := s.Engine.ReadResource(ctx,cfg,cfg.Upstreams[upstream], rs.URI)
-                    if err != nil { return nil, err }
-                    var out sdk.ReadResourceResult
-                    if err := remarshalSDK(value, &out); err != nil { return nil, err }
-                    if ep.verifier!=nil {
-                        for _,item:=range out.Contents {
-                            if len(item.Blob)>0 {return nil,fmt.Errorf("binary resources require explicit declassification")}
-                            item.Text=expr.MaskPII(item.Text).(string)
-                        }
-                    }
-                    return &out, nil
-                }
-            srv.AddResource(descriptor, handler)
-            ep.notifyResources = func() { srv.AddResource(descriptor, handler) }
-        }
-        for _, prompt := range surf.Prompts {
-            p := prompt
-            descriptor := &sdk.Prompt{Name:p.Name, Description:p.Description}
-            handler := func(ctx context.Context, _ *sdk.GetPromptRequest) (*sdk.GetPromptResult, error) {
-                    if err:=identity.RequireScopes(ctx,p.RequiredScopes);err!=nil {return nil,err}
-                    value:=p.Text
-                    if ep.verifier!=nil {value=expr.MaskPII(value).(string)}
-                    return &sdk.GetPromptResult{Messages:[]*sdk.PromptMessage{{Role:"user", Content:&sdk.TextContent{Text:value}}}}, nil
-                }
-            srv.AddPrompt(descriptor, handler)
-            ep.notifyPrompts = func() { srv.AddPrompt(descriptor, handler) }
-        }
-    }
+		for _, rs := range surf.Resources {
+			parsed, err := url.Parse(rs.URI)
+			if err != nil || !parsed.IsAbs() {
+				return nil, fmt.Errorf("resource URI %q must be absolute", rs.URI)
+			}
+			descriptor := &sdk.Resource{URI: rs.URI, Name: rs.Name, MIMEType: rs.MimeType}
+			handler := func(ctx context.Context, req *sdk.ReadResourceRequest) (*sdk.ReadResourceResult, error) {
+				if req.Params.RequestState != "" || len(req.Params.InputResponses) != 0 {
+					return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: "resource reads require a fresh request"}
+				}
+				out, err := s.Engine.ReadPublishedResource(ctx, cfg, *revision, surface, rs, nil)
+				if err != nil {
+					return nil, err
+				}
+				var result sdk.ReadResourceResult
+				if err := remarshalSDK(out.Value, &result); err != nil {
+					return nil, err
+				}
+				return &result, nil
+			}
+			srv.AddResource(descriptor, handler)
+			ep.notifyResources = func() { srv.AddResource(descriptor, handler) }
+		}
+		for _, p := range surf.Prompts {
+			descriptor := &sdk.Prompt{Name: p.Name, Description: p.Description}
+			for _, argument := range p.Arguments {
+				descriptor.Arguments = append(descriptor.Arguments, &sdk.PromptArgument{
+					Name: argument.Name, Description: argument.Description, Required: argument.Required,
+				})
+			}
+			handler := func(ctx context.Context, req *sdk.GetPromptRequest) (*sdk.GetPromptResult, error) {
+				if req.Params.RequestState != "" || len(req.Params.InputResponses) != 0 {
+					return nil, &jsonrpc.Error{Code: jsonrpc.CodeInvalidParams, Message: "prompt requests require a fresh request"}
+				}
+				args := make(map[string]any, len(req.Params.Arguments))
+				for key, value := range req.Params.Arguments {
+					args[key] = value
+				}
+				out, err := s.Engine.GetPublishedPrompt(ctx, cfg, *revision, surface, p, args, nil)
+				if err != nil {
+					return nil, err
+				}
+				var result sdk.GetPromptResult
+				if err := remarshalSDK(out.Value, &result); err != nil {
+					return nil, err
+				}
+				return &result, nil
+			}
+			srv.AddPrompt(descriptor, handler)
+			ep.notifyPrompts = func() { srv.AddPrompt(descriptor, handler) }
+		}
+	}
     if err := registerTaskMethods(srv, s, surface, admin); err != nil { return nil, err }
     ep.handler = sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return srv },
         &sdk.StreamableHTTPOptions{Stateless:true, JSONResponse:true, MaxRequestBodyBytes:4<<20, PropagateRequestCancellation:true})

@@ -34,7 +34,7 @@ var AdminTools = map[string][]Arg{
 	"regate_draft_patch":      {{"draft_id", "Draft identifier", true}, {"source", "Complete HCL source", true}, {"expected_source_digest", "Optional SHA-256 optimistic edit precondition", false}},
 	"regate_validate":         {{"source", "HCL to validate", false}, {"draft_id", "Existing draft identifier", false}},
 	"regate_diff":             {{"draft_id", "Draft identifier", true}},
-	"regate_test":             {{"draft_id", "Draft to test", false}, {"surface", "Surface name", true}, {"tool", "Tool name", true}, {"arguments", "Input object", false}, {"mocks", "Synthetic tool.call outputs keyed by pipeline.node", false}, {"expected_source_digest", "Reviewed draft SHA-256 digest", false}, {"expected_revision", "Reviewed active revision (without draft_id)", false}},
+	"regate_test":             {{"draft_id", "Draft to test", false}, {"surface", "Surface name", true}, {"tool", "Tool name", false}, {"resource", "Published resource HCL block name", false}, {"prompt", "Published prompt name", false}, {"arguments", "Tool or prompt input object", false}, {"mocks", "Synthetic tool outputs keyed by pipeline.node, or source/hooks fixtures for a resource or prompt", false}, {"expected_source_digest", "Reviewed draft SHA-256 digest", false}, {"expected_revision", "Reviewed active revision (without draft_id)", false}},
 	"regate_simulate":         {{"draft_id", "Draft to simulate", false}, {"surface", "Surface name", true}, {"tool", "Tool name", true}, {"arguments", "Input object", false}, {"mocks", "Synthetic tool.call outputs keyed by pipeline.node", false}, {"expected_source_digest", "Reviewed draft SHA-256 digest", false}, {"expected_revision", "Reviewed active revision (without draft_id)", false}},
 	"regate_activate":         {{"draft_id", "Validated draft", true}, {"expected_source_digest", "Optional exact reviewed source SHA-256", false}},
 	"regate_rollback":         {{"revision", "Revision to restore", true}},
@@ -368,6 +368,17 @@ func (s *Service) adminOperation(ctx context.Context, name string, args map[stri
                 return nil, e
             }
 		}
+		_, resource := args["resource"]
+		_, prompt := args["prompt"]
+		if resource || prompt {
+			if name != "regate_test" {
+				return nil, fmt.Errorf("resources and prompts can only be tested with regate_test")
+			}
+			return s.testPublishedContent(ctx, selected, id, args)
+		}
+		if name == "regate_test" && str(args, "tool") == "" {
+			return nil, fmt.Errorf("exactly one of tool, resource or prompt is required")
+		}
 		dry := name != "regate_run"
 		if raw, present := args["mocks"]; present {
 			mocks, ok := raw.(map[string]any)
@@ -452,6 +463,7 @@ func impact(a, b *config.Config, base, current string) map[string]any {
 	sort.Slice(published, func(i, j int) bool { return published[i]["surface"] < published[j]["surface"] })
 	details["published_upstreams"] = published
 	details["tool_calls"] = composedToolImpact(b)
+	details["content_changes"] = contentImpact(a, b)
 	semantic, err := config.SemanticDiff(a, b)
 	if err == nil {
 		details["semantic_changes"] = semantic

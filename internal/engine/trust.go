@@ -55,54 +55,85 @@ func enforceDataTrust(cfg *config.Config,surfaceName string,tool config.Tool) er
 }
 
 func checkToolTrust(cfg *config.Config, surfaceName string, tool config.Tool, seen map[string]bool) error {
-    if seen[tool.Name] { return nil }
-    seen[tool.Name] = true
-    surface:=cfg.Surfaces[surfaceName]
-    if surface.OAuth=="" {return nil}
-    require:=func(name,level string)error{
-        if level!="restricted" {return fmt.Errorf("%w: %s",ErrUntrustedDestination,name)}
-        return nil
-    }
-    checkHook:=func(h config.Hook)error{
-        if h.Transport=="builtin" {return nil}
-        if err:=require("hook "+h.Name,h.TrustLevel);err!=nil{return err}
-        if h.Transport=="mcp" {
-            u:=cfg.Upstreams[h.Upstream]
-            if err:=require("upstream "+u.Name,u.TrustLevel);err!=nil{return err}
-        }
-        return nil
-    }
-    for _,i:=range cfg.Interceptors {
-        if i.Surface!="" && i.Surface!=surfaceName {continue}
-        if i.Tool!="" && i.Tool!=tool.Name {continue}
-        if err:=checkHook(cfg.Hooks[i.Hook]);err!=nil{return err}
-    }
-    if tool.Pipeline=="" {
-        upstream,_,_:=strings.Cut(tool.Source,".")
-        u:=cfg.Upstreams[upstream]
-        return require("upstream "+u.Name,u.TrustLevel)
-    }
-    return walkExecutionPipeline(cfg,tool.Pipeline,func(n config.Node)error {
-        switch n.Kind {
-        case "tool.call":
-            child, ok := surface.FindTool(n.Str("tool"))
-            if !ok || n.Str("surface") != surfaceName { return ErrUntrustedDestination }
-            return checkToolTrust(cfg, surfaceName, child, seen)
-        case "policy.check":
-            policy:=cfg.Policies[n.Str("policy")]
-            if policy.DecisionHook!="" {
-                if err:=checkHook(cfg.Hooks[policy.DecisionHook]);err!=nil{return err}
-            }
-        case "hook.call":
-            if err:=checkHook(cfg.Hooks[n.Str("hook")]);err!=nil{return err}
-        case "mcp.call":
-            u:=cfg.Upstreams[n.Str("upstream")]
-            if err:=require("upstream "+u.Name,u.TrustLevel);err!=nil{return err}
-        case "http.call":
-            if err:=require("HTTP node "+n.Name,n.Str("trust_level"));err!=nil{return err}
-        }
-        return nil
-    })
+	if seen[tool.Name] {
+		return nil
+	}
+	seen[tool.Name] = true
+	surface := cfg.Surfaces[surfaceName]
+	if surface.OAuth == "" {
+		return nil
+	}
+	for _, i := range cfg.Interceptors {
+		if kind, _ := i.ContentTarget(); kind != "" {
+			continue
+		}
+		if i.Surface != "" && i.Surface != surfaceName {
+			continue
+		}
+		if i.Tool != "" && i.Tool != tool.Name {
+			continue
+		}
+		if err := requireRestrictedHook(cfg, cfg.Hooks[i.Hook]); err != nil {
+			return err
+		}
+	}
+	if tool.Pipeline == "" {
+		upstream, _, _ := strings.Cut(tool.Source, ".")
+		u := cfg.Upstreams[upstream]
+		return requireRestrictedDestination("upstream "+u.Name, u.TrustLevel)
+	}
+	return walkExecutionPipeline(cfg, tool.Pipeline, func(n config.Node) error {
+		switch n.Kind {
+		case "tool.call":
+			child, ok := surface.FindTool(n.Str("tool"))
+			if !ok || n.Str("surface") != surfaceName {
+				return ErrUntrustedDestination
+			}
+			return checkToolTrust(cfg, surfaceName, child, seen)
+		case "policy.check":
+			policy := cfg.Policies[n.Str("policy")]
+			if policy.DecisionHook != "" {
+				if err := requireRestrictedHook(cfg, cfg.Hooks[policy.DecisionHook]); err != nil {
+					return err
+				}
+			}
+		case "hook.call":
+			if err := requireRestrictedHook(cfg, cfg.Hooks[n.Str("hook")]); err != nil {
+				return err
+			}
+		case "mcp.call":
+			u := cfg.Upstreams[n.Str("upstream")]
+			if err := requireRestrictedDestination("upstream "+u.Name, u.TrustLevel); err != nil {
+				return err
+			}
+		case "http.call":
+			if err := requireRestrictedDestination("HTTP node "+n.Name, n.Str("trust_level")); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func requireRestrictedDestination(name, level string) error {
+	if level != "restricted" {
+		return fmt.Errorf("%w: %s", ErrUntrustedDestination, name)
+	}
+	return nil
+}
+
+func requireRestrictedHook(cfg *config.Config, h config.Hook) error {
+	if h.Transport == "builtin" {
+		return nil
+	}
+	if err := requireRestrictedDestination("hook "+h.Name, h.TrustLevel); err != nil {
+		return err
+	}
+	if h.Transport == "mcp" {
+		u := cfg.Upstreams[h.Upstream]
+		return requireRestrictedDestination("upstream "+u.Name, u.TrustLevel)
+	}
+	return nil
 }
 
 // ToolNeedsDelegation means an async tool would need a reusable delegated
@@ -122,6 +153,7 @@ func toolNeedsDelegation(cfg *config.Config, surfaceName string, tool config.Too
         return false
     }
     for _,i:=range cfg.Interceptors {
+        if kind, _ := i.ContentTarget(); kind != "" { continue }
         if i.Surface!="" && i.Surface!=surfaceName {continue}
         if i.Tool!="" && i.Tool!=tool.Name {continue}
         if isHook(cfg.Hooks[i.Hook]) {return true}
