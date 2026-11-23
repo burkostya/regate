@@ -53,6 +53,9 @@ var portRef = regexp.MustCompile(`\b(?:ports|port_present)\.([a-zA-Z_][a-zA-Z0-9
 var portIdentifier = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 func (c *Config) Compile() error {
+	if err := c.compileContent(); err != nil {
+		return err
+	}
 	plans := map[string]*PipelineIR{}
 	toolContracts := map[string]map[string]ToolContract{}
 	for surfaceName, surface := range c.Surfaces {

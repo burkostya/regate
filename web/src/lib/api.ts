@@ -1,13 +1,25 @@
 export type NodeDef = { name: string; kind: string; attrs: Record<string, unknown> };
 export type EdgeDef = { from: string; to: string; when?: string; kind?: 'control' | 'data'; from_port?: string; to_port?: string };
 export type Pipeline = { name: string; entry: string; nodes: Record<string, NodeDef>; edges: EdgeDef[]; timeout_ms: number; concurrency: number };
+export type Interceptor = {
+  name: string;
+  stage: string;
+  surface?: string;
+  tool?: string;
+  resource?: string;
+  prompt?: string;
+  hook?: string;
+  policy?: string;
+  check?: string;
+  transform?: string;
+};
 export type Catalog = {
   upstreams: Record<string, unknown>;
   surfaces: Record<string, any>;
   pipelines: Record<string, Pipeline>;
   hooks: Record<string, unknown>;
   policies: Record<string, unknown>;
-  interceptors: unknown[];
+  interceptors: Interceptor[];
 };
 export type CallChain = {
   id: string;

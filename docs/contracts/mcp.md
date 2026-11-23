@@ -71,6 +71,28 @@ missed events and upstream application state remain subject to the
 upstream's own durability. A Regate process restart requires the client
 to initialize a new session.
 
+## Test a curated resource or prompt
+
+Use management `regate_test` with `surface` and exactly one of `tool`,
+`resource`, or `prompt`. The resource selector is its HCL block name.
+A prompt test can pass `arguments` as an object of string values. Send
+`draft_id` and `expected_source_digest` to test saved draft source, or
+`expected_revision` to test the active revision.
+
+In a resource or prompt test, `mocks.source` represents an upstream
+`resources/read` or `prompts/get` result. `mocks.hooks` maps interceptor
+names to synthetic native hook responses, such as a Decision API response
+`{ "decision": "allow" }` or an MCP tool result with `structuredContent`.
+Provide fixtures for every source, decision and transform reached by the
+test. External error observers run only on real calls. Builtin hooks, CEL, shape validation and response masking run locally.
+Tests use operator-supplied fixtures without using a client bearer, making
+outbound calls, or generating effect records. Test actual OAuth scopes and
+delegation separately on the public surface.
+
+`regate_impact_analyze` and `regate_diff` include `content_changes` with
+the before and after stages, scopes and destinations of affected objects.
+Activation and rollback apply the resulting configuration to new requests.
+
 ## Upstream catalog refresh
 
 The management `regate_upstream_refresh` method returns:

@@ -112,3 +112,57 @@ transformations and before an HTTP write is admitted into the effect
 journal or sent over the network. Oversized payloads therefore cannot
 create an external effect or an ambiguous write outcome. The limit is
 separate from, and equally strict as, the 4 MiB response framing limit.
+
+## Resource and prompt interceptors
+
+An interceptor may select a published `resource` by HCL block name or a
+published `prompt` by MCP name. `surface` limits the match to one assembled
+surface. With no surface selector the rule matches that name on every
+assembled surface. Existing `tool` selectors and interceptors without an
+object selector keep their tool semantics. Transparent upstream surfaces
+and the management surface do not run these interceptors.
+
+Resource and prompt interceptors choose one action.
+
+- `hook` calls a configured builtin, HTTP or MCP hook. A decision hook
+  must return explicit `allow` with no outstanding obligations. A transform
+  replaces the current stage value.
+- `policy` resolves the named policy's external decision hook. A successful
+  decision keeps the original stage value.
+- `check` evaluates a CEL Boolean. False, an evaluation error or an
+  unexpected type stops the operation.
+- `transform` evaluates CEL to produce the next stage value.
+
+An optional `input` CEL projection limits the fields sent to a decision or
+transform hook. CEL receives the stage value as `input` and the effective
+MCP request as `request`. Neither contains request headers, credentials, or
+transport metadata. Rules within a stage run by `order`, then name.
+
+| Stage | Value |
+| --- | --- |
+| `on_request` | `{uri}` for a resource, `{name, arguments}` for a prompt |
+| `before_call` | Same request shape, immediately before a configured upstream read or get |
+| `after_call` | The upstream MCP result object |
+| `before_response` | The final resource `contents` or prompt `messages` result object |
+| `on_error` | Fixed diagnostic fields `status`, `message`, and `run_id` |
+
+`before_call` and `after_call` require an upstream source. The incoming
+resource URI and public prompt name remain fixed through request
+transformations. Sourced prompts call the configured upstream name with the
+transformed string arguments. Surface and object scopes and the trust of
+destinations are checked before dispatching hooks or upstream requests.
+External hooks use the existing token exchange and durable effect boundary.
+A lost response leaves a potentially effectful hook in an unknown state for
+reconciliation. Error observers are best effort; each receives only the
+fixed diagnostic fields. They cannot change the result or authorize an
+operation.
+
+OAuth content is masked after the response stages. Opaque resource blobs,
+embedded blobs, images and audio cannot be returned on OAuth surfaces.
+Intercepted or OAuth-protected resource results advertise a private cache
+scope and zero freshness to require clients to revalidate policy on the
+next read.
+
+The [content interceptors example](../../examples/content-interceptors.hcl)
+shows a resource with masked text and a prompt with validated arguments and
+a generated response.

@@ -34,6 +34,14 @@ drafts. Draft generation supports synchronous source tools. Deployment-owned
 surfaces can collect evidence, with changes published from deployment HCL.
 [Configuration and execution contract](contracts/derive-rules.md)
 
+## v1.3.0 curated resource and prompt checks
+
+Assembled surfaces support request and response interceptors, decision
+policies, CEL and JSON Schema on resources and prompts. The management API
+and web console support fixture-based draft checks and report the effective
+changes in the impact analysis.
+[Lifecycle and security contract](contracts/hooks.md#resource-and-prompt-interceptors)
+
 ## Implementation history
 
 The following prototype status and milestone entries record progress at

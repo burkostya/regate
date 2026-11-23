@@ -21,9 +21,9 @@ var blockAttributes = map[string]map[string]string{
 	"pipeline":    {"entry": "string", "timeout_ms": "positive-int", "concurrency": "positive-int"},
 	"surface":     {"path": "string", "oauth": "string", "required_scopes": "string-list", "upstream": "string", "auth": "string", "bearer_token_env": "string", "derive_rules": "bool", "derive_session_headers": "string-list", "derive_session_meta_keys": "string-list"},
 	"tool":        {"description": "string", "pipeline": "string", "source": "string", "input_schema": "object", "output_schema": "object", "read_only": "bool", "required_scopes": "string-list", "data_classification": "string", "allow_unmasked": "bool"},
-	"resource":    {"uri": "string", "source": "string", "text": "string", "mime_type": "string", "required_scopes": "string-list"},
-	"prompt":      {"description": "string", "text": "string", "required_scopes": "string-list"},
-	"interceptor": {"stage": "string", "hook": "string", "surface": "string", "tool": "string", "order": "int"},
+	"resource":    {"uri": "string", "source": "string", "text": "string", "mime_type": "string", "required_scopes": "string-list", "input_schema": "object", "output_schema": "object"},
+	"prompt":      {"description": "string", "text": "string", "required_scopes": "string-list", "source": "string", "arguments": "object-list", "input_schema": "object", "output_schema": "object"},
+	"interceptor": {"stage": "string", "hook": "string", "surface": "string", "tool": "string", "order": "int", "resource": "string", "prompt": "string", "policy": "string", "input": "string", "check": "string", "transform": "string"},
 	"edge":        {"from": "string", "to": "string", "when": "string", "kind": "string", "from_port": "string", "to_port": "string"},
 }
 var nodeAttributes = map[string]map[string]string{
@@ -194,6 +194,17 @@ func validateAttrType(value any, kind string) error {
 		}
     case "nonnegative-int":
         if n,ok:=value.(int64);ok && n>=0 && n<=math.MaxInt {return nil}
+	case "object-list":
+		items, ok := value.([]any)
+		if !ok {
+			return fmt.Errorf("expected a list of objects")
+		}
+		for _, item := range items {
+			if _, ok := item.(map[string]any); !ok {
+				return fmt.Errorf("expected a list of objects")
+			}
+		}
+		return nil
 	case "object":
 		if _, ok := value.(map[string]any); ok {
 			return nil

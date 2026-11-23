@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+
+	"github.com/burkostya/regate/internal/expr"
 )
 
 type Config struct {
@@ -133,18 +135,22 @@ type Tool struct {
     AllowUnmasked bool `json:"allow_unmasked,omitempty"`
 }
 type Resource struct {
-	Name     string `json:"name"`
-	URI      string `json:"uri"`
-	Source   string `json:"source,omitempty"`
-	Text     string `json:"text,omitempty"`
-	MimeType string `json:"mime_type,omitempty"`
-    RequiredScopes []string `json:"required_scopes,omitempty"`
+	Name           string   `json:"name"`
+	URI            string   `json:"uri"`
+	Source         string   `json:"source,omitempty"`
+	Text           string   `json:"text,omitempty"`
+	MimeType       string   `json:"mime_type,omitempty"`
+	RequiredScopes []string `json:"required_scopes,omitempty"`
+	ContentSchemas
 }
 type Prompt struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Text        string `json:"text"`
-    RequiredScopes []string `json:"required_scopes,omitempty"`
+	Name           string           `json:"name"`
+	Description    string           `json:"description,omitempty"`
+	Text           string           `json:"text"`
+	Source         string           `json:"source,omitempty"`
+	Arguments      []PromptArgument `json:"arguments,omitempty"`
+	RequiredScopes []string         `json:"required_scopes,omitempty"`
+	ContentSchemas
 }
 type Pipeline struct {
 	Name        string          `json:"name"`
@@ -169,12 +175,19 @@ type Edge struct {
 	ToPort   string `json:"to_port,omitempty"`
 }
 type Interceptor struct {
-	Name    string `json:"name"`
-	Stage   string `json:"stage"`
-	Hook    string `json:"hook"`
-	Surface string `json:"surface,omitempty"`
-	Tool    string `json:"tool,omitempty"`
-	Order   int    `json:"order"`
+	Name      string         `json:"name"`
+	Stage     string         `json:"stage"`
+	Hook      string         `json:"hook,omitempty"`
+	Surface   string         `json:"surface,omitempty"`
+	Tool      string         `json:"tool,omitempty"`
+	Resource  string         `json:"resource,omitempty"`
+	Prompt    string         `json:"prompt,omitempty"`
+	Policy    string         `json:"policy,omitempty"`
+	Input     string         `json:"input,omitempty"`
+	Check     string         `json:"check,omitempty"`
+	Transform string         `json:"transform,omitempty"`
+	Program   *expr.Compiled `json:"-"`
+	Order     int            `json:"order"`
 }
 
 // reachableAvoidingNode returns true if an entry-to-target control-flow
@@ -320,16 +333,28 @@ func Decode(src string) (*Config, error) {
 					out, _ := ch.Attrs["output_schema"].(map[string]any)
 					s.Tools = append(s.Tools, Tool{Name: n, Description: ch.String("description"), Pipeline: ch.String("pipeline"), Source: ch.String("source"), InputSchema: schema, OutputSchema: out, ReadOnly: ch.Bool("read_only", false),RequiredScopes:stringList(ch.Attrs["required_scopes"]),DataClassification:ch.String("data_classification"),AllowUnmasked:ch.Bool("allow_unmasked",false)})
 				case "resource":
-					s.Resources = append(s.Resources, Resource{Name: n, URI: ch.String("uri"), Source: ch.String("source"), Text: ch.String("text"), MimeType: ch.String("mime_type"),RequiredScopes:stringList(ch.Attrs["required_scopes"])})
+					s.Resources = append(s.Resources, Resource{
+						Name: n, URI: ch.String("uri"), Source: ch.String("source"),
+						Text: ch.String("text"), MimeType: ch.String("mime_type"),
+						RequiredScopes: stringList(ch.Attrs["required_scopes"]), ContentSchemas: contentSchemas(ch),
+					})
 				case "prompt":
-					s.Prompts = append(s.Prompts, Prompt{Name: n, Description: ch.String("description"), Text: ch.String("text"),RequiredScopes:stringList(ch.Attrs["required_scopes"])})
+					prompt, err := decodePrompt(ch, n)
+					if err != nil {
+						return nil, fmt.Errorf("surface %s: %w", name, err)
+					}
+					s.Prompts = append(s.Prompts, prompt)
 				default:
 					return nil, fmt.Errorf("invalid %s in surface", ch.Type)
 				}
 			}
 			c.Surfaces[name] = s
 		case "interceptor":
-			c.Interceptors = append(c.Interceptors, Interceptor{Name: name, Stage: b.String("stage"), Hook: b.String("hook"), Surface: b.String("surface"), Tool: b.String("tool"), Order: b.Int("order", 100)})
+			i, err := decodeInterceptor(b, name)
+			if err != nil {
+				return nil, err
+			}
+			c.Interceptors = append(c.Interceptors, i)
 		default:
 			return nil, fmt.Errorf("unknown HCL block %s", b.Type)
 		}
@@ -852,18 +877,25 @@ func (c *Config) Validate() error {
             if err:=validateScopeList(res.RequiredScopes);err!=nil {return fmt.Errorf("resource %s: %w",res.Name,err)}
             if len(res.RequiredScopes)>0 && s.OAuth=="" {return fmt.Errorf("resource %s: scopes require surface OAuth",res.Name)}
         }
-        for _,prompt:=range s.Prompts {
-            if err:=validateScopeList(prompt.RequiredScopes);err!=nil {return fmt.Errorf("prompt %s: %w",prompt.Name,err)}
-            if len(prompt.RequiredScopes)>0 && s.OAuth=="" {return fmt.Errorf("prompt %s: scopes require surface OAuth",prompt.Name)}
-        }
+		for _, prompt := range s.Prompts {
+			if err := c.validateContentSource(prompt.Source); err != nil {
+				return fmt.Errorf("prompt %s: %w", prompt.Name, err)
+			}
+			if err := validateScopeList(prompt.RequiredScopes); err != nil {
+				return fmt.Errorf("prompt %s: %w", prompt.Name, err)
+			}
+			if len(prompt.RequiredScopes) > 0 && s.OAuth == "" {
+				return fmt.Errorf("prompt %s: scopes require surface OAuth", prompt.Name)
+			}
+		}
 	}
 	if err := c.validateToolCalls(); err != nil { return err }
 	for _, i := range c.Interceptors {
 		if c.Surfaces[i.Surface].Upstream != "" {
 			return fmt.Errorf("interceptor %s: published upstream surfaces do not run interceptors", i.Name)
 		}
-		if _, ok := c.Hooks[i.Hook]; !ok {
-			return fmt.Errorf("interceptor %s: missing hook %s", i.Name, i.Hook)
+		if err := c.validateContentInterceptor(i); err != nil {
+			return fmt.Errorf("interceptor %s: %w", i.Name, err)
 		}
 		if i.Stage != "on_request" && i.Stage != "before_call" && i.Stage != "after_call" && i.Stage != "before_response" && i.Stage != "on_error" {
 			return fmt.Errorf("interceptor %s: invalid stage", i.Name)

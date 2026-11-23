@@ -31,6 +31,14 @@ type Compiled struct {
 // input/nodes values retain their runtime JSON shapes, but statically known
 // type violations are rejected (e.g. 1 + true or a non-Boolean condition).
 func Compile(source string, expected *cel.Type) (*Compiled, error) {
+	return compile(source, expected, false)
+}
+
+func CompileInterceptor(source string, expected *cel.Type) (*Compiled, error) {
+	return compile(source, expected, true)
+}
+
+func compile(source string, expected *cel.Type, interceptor bool) (*Compiled, error) {
 	if strings.HasPrefix(source, "literal:") {
 		if expected != nil && expected != cel.DynType && expected != cel.StringType {
 			return nil, fmt.Errorf("literal string cannot satisfy %s", expected)
@@ -43,6 +51,12 @@ func Compile(source string, expected *cel.Type) (*Compiled, error) {
 	env, err := makeEnv()
 	if err != nil {
 		return nil, err
+	}
+	if interceptor {
+		env, err = env.Extend(cel.Variable("request", cel.DynType))
+		if err != nil {
+			return nil, err
+		}
 	}
 	ast, issues := env.Compile(source)
 	if issues != nil && issues.Err() != nil {

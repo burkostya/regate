@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import FlowCanvas from '$lib/FlowCanvas.svelte';
-  import { api, setToken, type Catalog, type ChainSearch, type Pipeline, type Draft, type EdgeDef, type Trace } from '$lib/api';
+  import { api, setToken, type Catalog, type ChainSearch, type Pipeline, type Interceptor, type Draft, type EdgeDef, type Trace } from '$lib/api';
   import { pipelineToHCL, createNode } from '$lib/hcl';
   import { assertGraphSnapshot, assertSavedHCL, assertNoPendingEdits, assertRunnableEditor, type GraphSourceSnapshot } from '$lib/draftGuard';
   import { editGraphEdge, removeGraphEdge } from '$lib/graphEditor';
@@ -26,6 +26,12 @@
   let graphSnapshot = $state<GraphSourceSnapshot | null>(null);
   let testArguments = $state('{"customer_id":"C123"}');
   let resultText = $state('');
+  let contentKind = $state<'resource' | 'prompt'>('resource');
+  let contentSurface = $state('');
+  let contentName = $state('');
+  let contentArgs = $state('{}');
+  let contentMocks = $state('{}');
+  let contentResult = $state<{ digest: string; text: string } | null>(null);
   let message = $state('Enter the admin token to connect to Regate.');
   let error = $state('');
   let busy = $state(false);
@@ -219,6 +225,28 @@
     insight = JSON.stringify(await api('diff','POST',{draft_id:d.id}),null,2);
     tab='HCL';
   }
+  function contentRules(surface: string, kind: 'resource' | 'prompt', name: string) {
+    return (catalog?.interceptors ?? []).filter(rule => rule[kind] === name && (!rule.surface || rule.surface === surface));
+  }
+  function ruleAction(rule: Interceptor) {
+    if (rule.policy) return `policy ${rule.policy}`;
+    if (rule.hook) return `hook ${rule.hook}`;
+    return rule.check ? 'CEL check' : 'CEL transform';
+  }
+  async function testContent() {
+    if (!draft) throw new Error('Save a draft before testing.');
+    assertNoPendingEdits(dirty, draft, editorText, graphSnapshot, hclTouched);
+    assertSavedHCL(draft, editorText);
+    const { id, source_digest: digest } = draft;
+    contentResult = null;
+    const output = await api('test', 'POST', {
+      draft_id: id, expected_source_digest: digest,
+      surface: contentSurface.trim(), [contentKind]: contentName.trim(),
+      ...(contentKind === 'prompt' ? { arguments: JSON.parse(contentArgs) } : {}),
+      mocks: JSON.parse(contentMocks)
+    });
+    contentResult = { digest, text: JSON.stringify(output, null, 2) };
+  }
   async function activate() {
     if (!draft) throw new Error('Create and validate a draft first');
     assertNoPendingEdits(dirty, draft, editorText, graphSnapshot, hclTouched);
@@ -403,6 +431,18 @@
                   {#each surface.tools ?? [] as tool}
                     <div class="tool"><strong>{tool.name}</strong><span>{tool.pipeline ? `pipeline: ${tool.pipeline}` : `source: ${tool.source}`}</span></div>
                   {/each}
+                  {#each ['resource', 'prompt'] as kind}
+                    {#each (kind === 'resource' ? surface.resources : surface.prompts) ?? [] as item}
+                      <div class="tool">
+                        <strong>{item.name}</strong><span>{kind === 'resource' ? item.uri : 'Prompt'}</span>
+                        {#if item.source}<p>{item.source}</p>{/if}
+                        {#if item.required_scopes?.length}<p>Scopes · {item.required_scopes.join(', ')}</p>{/if}
+                        {#each contentRules(name, kind === 'resource' ? 'resource' : 'prompt', item.name) as rule}
+                          <p>{rule.stage} · {rule.name} · {ruleAction(rule)}</p>
+                        {/each}
+                      </div>
+                    {/each}
+                  {/each}
                 {/if}
               </section>
             {/each}
@@ -472,7 +512,7 @@
         {:else if tab==='Rules'}
           <div class="page-title"><div><p class="eyebrow">GUARDS &amp; TRANSFORMS</p><h1>Hooks and policies</h1></div><button class="secondary" onclick={() => { tab='HCL'; task(createDraft); }}>Edit in HCL</button></div>
           <div class="split-pane"><div class="pane"><h2>Hooks ({Object.keys(catalog?.hooks??{}).length})</h2>{#each Object.entries(catalog?.hooks??{}) as [name, h]}<div class="tool"><strong>{name}</strong><p>{(h as any).transport} · {(h as any).contract}</p><code>{(h as any).url || `${(h as any).upstream}.${(h as any).tool}`}</code><p>Timeout {(h as any).timeout_ms ?? 'default'} ms · failure: {(h as any).on_error || 'deny'}</p></div>{/each}</div>
-            <div class="pane"><h2>Decision policies</h2>{#each Object.entries(catalog?.policies??{}) as [name, p]}<div class="tool"><strong>{name}</strong><p>Decision hook: {(p as any).decision_hook || 'none'}</p><p>Scope: {(p as any).scope || 'unspecified'}</p></div>{/each}<div class="divider"></div><h2>Interceptors</h2>{#each catalog?.interceptors??[] as i}<div class="tool"><strong>{(i as any).name}</strong><p>{(i as any).stage} · hook {(i as any).hook}</p><p>Scope: {(i as any).surface || 'all surfaces'} / {(i as any).tool || 'all tools'}</p></div>{/each}</div>
+            <div class="pane"><h2>Decision policies</h2>{#each Object.entries(catalog?.policies??{}) as [name, p]}<div class="tool"><strong>{name}</strong><p>Decision hook: {(p as any).decision_hook || 'none'}</p><p>Scope: {(p as any).scope || 'unspecified'}</p></div>{/each}<div class="divider"></div><h2>Interceptors</h2>{#each catalog?.interceptors ?? [] as i}<div class="tool"><strong>{i.name}</strong><p>{i.stage} · {ruleAction(i)}</p><p>{i.surface || 'All surfaces'} / {i.resource ? `resource ${i.resource}` : i.prompt ? `prompt ${i.prompt}` : i.tool || 'all tools'}</p></div>{/each}</div>
           </div>
         {:else if tab==='Pipelines'}
           <div class="page-title"><div><p class="eyebrow">PIPELINE DESIGNER</p><h1>Execution graph</h1></div><div class="actions"><select aria-label="Choose pipeline" bind:value={selected} onchange={() => task(() => selectPipeline(selected))}>{#each Object.keys(catalog?.pipelines ?? {}) as name}<option value={name}>{name}</option>{/each}</select>{#if dirty}<span class="unsaved">Unsaved graph edits</span>{/if}</div></div>
@@ -548,6 +588,33 @@
           <div class="page-title"><div><p class="eyebrow">DECLARATIVE SOURCE</p><h1>HCL editor</h1></div><div class="actions"><button class="secondary" disabled={busy} onclick={() => task(loadActiveHCL)}>Load active</button><button class="secondary" disabled={busy} onclick={() => task(diff)}>Diff</button><button class="secondary" disabled={busy} onclick={() => task(validate)}>Validate</button>{#if draft}<button class="secondary" disabled={busy} onclick={() => task(reloadDraft)}>Reload draft</button>{/if}<button class="primary" disabled={busy} onclick={() => task(saveHCL)}>Save draft</button><button class="primary" disabled={busy} onclick={() => task(activate)}>Activate</button></div></div>
           <div class="pane"><label for="hcl-source">Regate configuration {draft ? '· Draft '+draft.id.slice(0,8) : '· Active preview'}</label><textarea id="hcl-source" class="hcl-editor" spellcheck="false" disabled={busy} bind:value={editorText} oninput={() => { hclTouched = true; }} placeholder="Create a draft or load the active HCL source..."></textarea></div>
           {#if insight}<div class="pane"><h3>Validation / Impact</h3><pre class="output">{insight}</pre></div>{/if}
+          {#if draft}
+            <details class="pane">
+              <summary>Test resource or prompt</summary>
+              <form onsubmit={(event) => { event.preventDefault(); void task(testContent); }}>
+                <label for="content-kind">Object type</label>
+                <select id="content-kind" bind:value={contentKind} disabled={busy}>
+                  <option value="resource">Resource</option>
+                  <option value="prompt">Prompt</option>
+                </select>
+                <label for="content-surface">Surface name</label>
+                <input id="content-surface" bind:value={contentSurface} required disabled={busy} />
+                <label for="content-name">{contentKind === 'resource' ? 'Resource block name' : 'Prompt name'}</label>
+                <input id="content-name" bind:value={contentName} required disabled={busy} />
+                {#if contentKind === 'prompt'}
+                  <label for="content-arguments">Prompt arguments (JSON)</label>
+                  <textarea id="content-arguments" rows="3" bind:value={contentArgs} disabled={busy}></textarea>
+                {/if}
+                <label for="content-mocks">Synthetic responses (JSON)</label>
+                <textarea id="content-mocks" rows="4" bind:value={contentMocks} disabled={busy}
+                  placeholder={'{"source": {...}, "hooks": {"interceptor-name": {...}}}'}></textarea>
+                <button class="secondary" type="submit" disabled={busy}>Run content test</button>
+              </form>
+              {#if contentResult?.digest === draft.source_digest}
+                <pre class="output" aria-label="Content test result">{contentResult.text}</pre>
+              {/if}
+            </details>
+          {/if}
         {:else if tab==='Revisions'}
           <div class="page-title"><div><p class="eyebrow">HISTORY</p><h1>Immutable revisions</h1></div></div>
           <section class="pane">{#each [...revisions].reverse() as rev}<div class="revision"><div><strong><code>{rev.id}</code></strong><p>{new Date(rev.activated).toLocaleString()} {rev.parent ? `· from ${rev.parent.slice(0,8)}` : ''}</p></div><div class="actions">{#if rev.id===status?.revision}<span class="live">ACTIVE</span>{:else}<button class="secondary" onclick={() => task(() => rollback(rev.id))}>Restore</button>{/if}</div></div>{/each}</section>
