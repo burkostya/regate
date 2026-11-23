@@ -106,6 +106,9 @@ type Policy struct {
 	Scope        string `json:"scope,omitempty"`
 }
 type Surface struct {
+	DeriveRules bool `json:"derive_rules,omitempty"`
+	DeriveSessionHeaders []string `json:"derive_session_headers,omitempty"`
+	DeriveSessionMetaKeys []string `json:"derive_session_meta_keys,omitempty"`
 	Name      string     `json:"name"`
 	Path      string     `json:"path"`
 	Upstream       string     `json:"upstream,omitempty"`
@@ -294,6 +297,9 @@ func Decode(src string) (*Config, error) {
 			s := Surface{Name:name,Path:b.String("path"),OAuth:b.String("oauth"),RequiredScopes:stringList(b.Attrs["required_scopes"])}
 			s.Upstream = b.String("upstream")
 			s.Auth = b.String("auth")
+			s.DeriveRules = b.Bool("derive_rules", false)
+			s.DeriveSessionHeaders = stringList(b.Attrs["derive_session_headers"])
+			s.DeriveSessionMetaKeys = stringList(b.Attrs["derive_session_meta_keys"])
 			s.BearerTokenEnv = b.String("bearer_token_env")
 			if _, declared := b.Attrs["path"]; !declared && s.Upstream != "" {
 				s.Path = "/mcp/" + name
@@ -510,7 +516,7 @@ func (c *Config) Validate() error {
 		}
 		for n, node := range p.Nodes {
 			switch node.Kind {
-			case "input", "output", "transform", "filter", "validate", "condition", "parallel", "join", "map", "pipeline.call", "mcp.call", "hook.call", "http.call", "policy.check", "suspend", "mask.pii":
+			case "input", "output", "transform", "filter", "validate", "condition", "parallel", "join", "map", "pipeline.call", "tool.call", "mcp.call", "hook.call", "http.call", "policy.check", "suspend", "mask.pii":
 			default:
 				return fmt.Errorf("pipeline %s node %s: unsupported kind %s", name, n, node.Kind)
 			}
@@ -753,7 +759,7 @@ func (c *Config) Validate() error {
 		observable := make([]string, 0, len(p.Nodes))
 		for nodeName, node := range p.Nodes {
 			switch node.Kind {
-			case "mcp.call", "http.call", "hook.call", "output", "suspend":
+			case "tool.call", "mcp.call", "http.call", "hook.call", "output", "suspend":
 				observable = append(observable, nodeName)
 			case "pipeline.call", "map":
 				if node.Attrs["allow_effects"] == true {
@@ -777,6 +783,7 @@ func (c *Config) Validate() error {
 		return err
 	}
 	for name, s := range c.Surfaces {
+		if err := validateDeriveSettings(s); err != nil { return err }
         if s.OAuth!="" {
             if _,ok:=c.OAuth[s.OAuth];!ok {return fmt.Errorf("surface %s: undefined oauth provider",name)}
         } else if len(s.RequiredScopes)>0 {
@@ -850,6 +857,7 @@ func (c *Config) Validate() error {
             if len(prompt.RequiredScopes)>0 && s.OAuth=="" {return fmt.Errorf("prompt %s: scopes require surface OAuth",prompt.Name)}
         }
 	}
+	if err := c.validateToolCalls(); err != nil { return err }
 	for _, i := range c.Interceptors {
 		if c.Surfaces[i.Surface].Upstream != "" {
 			return fmt.Errorf("interceptor %s: published upstream surfaces do not run interceptors", i.Name)

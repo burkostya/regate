@@ -213,6 +213,7 @@ func TestVaultV2MigrationPreservesExistingTasks(t *testing.T){
     if err!=nil{t.Fatal(err)}
     task:=testGrantTask(t,s)
     if _,err=s.db.Exec("DROP TABLE task_grants");err!=nil{t.Fatal(err)}
+    removeToolObservationSchema(t,s.db)
     if _,err=s.db.Exec("PRAGMA user_version=2");err!=nil{t.Fatal(err)}
     if err=s.Close();err!=nil{t.Fatal(err)}
     up,err:=New(dir,initSource())

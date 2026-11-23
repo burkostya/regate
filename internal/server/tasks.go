@@ -25,7 +25,11 @@ var running sync.Map // task id -> context.CancelFunc; one-process cancellation
 // bearer. Bound the in-process context by the original bearer expiration.
 func taskExecutionContext(ctx context.Context, delegated bool)(context.Context,context.CancelFunc,error) {
     if !delegated {
-        run,cancel:=context.WithTimeout(context.Background(),90*time.Second)
+        base := context.Background()
+        if principal, verified := identity.FromContext(ctx); verified {
+            base = identity.WithPrincipal(base, principal)
+        }
+        run,cancel:=context.WithTimeout(base,90*time.Second)
         return run,cancel,nil
     }
     if !identity.HasLiveSubjectToken(ctx) {
@@ -167,6 +171,10 @@ func (s *Service) createTaskFor(ctx context.Context,cfg *config.Config,revision 
         RedactPII:published.OAuth!="" && !selected.AllowUnmasked,
         TTLMS:3600000,PollIntervalMS:1000,
     }
+    if run, ok := ctx.Value(observedRunKey{}).(*observedRun); ok && run.id != "" {
+        task.RunID = run.id
+        task.ToolCallObserved = true
+    }
     // Only nondelegated, unscoped, non-OAuth requests can enter an encrypted
     // waiting queue. Protected tasks still need a fresh user authorization or
     // a specifically delegated task grant and therefore apply backpressure.
@@ -194,7 +202,7 @@ func (s *Service) createTaskFor(ctx context.Context,cfg *config.Config,revision 
 		defer cancel()
 		defer running.Delete(task.TaskID)
         defer s.signalQueue()
-		out, err := s.Engine.Run(runctx, revision, cfg, surface, tool, args, false)
+		out, err := s.runTaskTool(runctx, cfg, task, args)
 		// Persist status under a per-task mutex to avoid races with cancel/update.
 		s.tasksMu.Lock()
 		defer s.tasksMu.Unlock()
@@ -215,6 +223,7 @@ func (s *Service) createTaskFor(ctx context.Context,cfg *config.Config,revision 
 			current.StatusMessage = "Execution completed"
 			current.Result = taskSafeResult(current,out,err)
 		}
+		s.finishTaskObservation(current)
 		_ = s.Store.TaskPut(current)
 	}()
 	result := task.Public()
@@ -407,6 +416,7 @@ func (s *Service) TaskUpdateWithContext(ctx context.Context,id, owner string, in
 				updated.Result = taskSafeResult(updated,out,err)
 			}
 		}
+		s.finishTaskObservation(updated)
 		_ = s.Store.TaskPut(updated)
 	}()
 	return map[string]any{}, nil
@@ -425,6 +435,8 @@ func (s *Service) TaskCancel(id, owner string) (map[string]any, error) {
         if err:=s.Store.CancelQueuedTask(context.Background(),id,t.OwnerDigest);err!=nil {
             return nil,err
         }
+        t.Status = "cancelled"
+        s.finishTaskObservation(t)
         s.signalQueue()
         return map[string]any{},nil
     }

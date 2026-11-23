@@ -51,6 +51,12 @@ func walkExecutionPipeline(cfg *config.Config, root string, inspect func(config.
 // or policy hook can dispatch an effect. A conditional dead branch is still
 // checked, avoiding authorization bypass through dynamic branching.
 func enforceDataTrust(cfg *config.Config,surfaceName string,tool config.Tool) error {
+    return checkToolTrust(cfg, surfaceName, tool, map[string]bool{})
+}
+
+func checkToolTrust(cfg *config.Config, surfaceName string, tool config.Tool, seen map[string]bool) error {
+    if seen[tool.Name] { return nil }
+    seen[tool.Name] = true
     surface:=cfg.Surfaces[surfaceName]
     if surface.OAuth=="" {return nil}
     require:=func(name,level string)error{
@@ -78,6 +84,10 @@ func enforceDataTrust(cfg *config.Config,surfaceName string,tool config.Tool) er
     }
     return walkExecutionPipeline(cfg,tool.Pipeline,func(n config.Node)error {
         switch n.Kind {
+        case "tool.call":
+            child, ok := surface.FindTool(n.Str("tool"))
+            if !ok || n.Str("surface") != surfaceName { return ErrUntrustedDestination }
+            return checkToolTrust(cfg, surfaceName, child, seen)
         case "policy.check":
             policy:=cfg.Policies[n.Str("policy")]
             if policy.DecisionHook!="" {
@@ -100,6 +110,12 @@ func enforceDataTrust(cfg *config.Config,surfaceName string,tool config.Tool) er
 // task store. Until a durable capability grant exists, reject these tasks
 // instead of silently attempting an unauthenticated replay.
 func ToolNeedsDelegation(cfg *config.Config,surfaceName string,tool config.Tool) bool {
+    return toolNeedsDelegation(cfg, surfaceName, tool, map[string]bool{})
+}
+
+func toolNeedsDelegation(cfg *config.Config, surfaceName string, tool config.Tool, seen map[string]bool) bool {
+    if seen[tool.Name] { return false }
+    seen[tool.Name] = true
     isHook:=func(h config.Hook)bool {
         if h.OAuthExchange!="" {return true}
         if h.Transport=="mcp" {return cfg.Upstreams[h.Upstream].OAuthExchange!=""}
@@ -117,6 +133,11 @@ func ToolNeedsDelegation(cfg *config.Config,surfaceName string,tool config.Tool)
     requiresDelegation:=false
     err:=walkExecutionPipeline(cfg,tool.Pipeline,func(n config.Node)error {
         switch n.Kind {
+        case "tool.call":
+            child, ok := cfg.Surfaces[surfaceName].FindTool(n.Str("tool"))
+            if !ok || n.Str("surface") != surfaceName || toolNeedsDelegation(cfg, surfaceName, child, seen) {
+                requiresDelegation = true
+            }
         case "mcp.call":
             if cfg.Upstreams[n.Str("upstream")].OAuthExchange!="" {requiresDelegation=true}
         case "hook.call":

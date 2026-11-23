@@ -1,12 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import FlowCanvas from '$lib/FlowCanvas.svelte';
-  import { api, setToken, type Catalog, type Pipeline, type Draft, type EdgeDef, type Trace } from '$lib/api';
+  import { api, setToken, type Catalog, type ChainSearch, type Pipeline, type Draft, type EdgeDef, type Trace } from '$lib/api';
   import { pipelineToHCL, createNode } from '$lib/hcl';
   import { assertGraphSnapshot, assertSavedHCL, assertNoPendingEdits, assertRunnableEditor, type GraphSourceSnapshot } from '$lib/draftGuard';
   import { editGraphEdge, removeGraphEdge } from '$lib/graphEditor';
 
-  type Tab = 'Overview' | 'Upstreams' | 'Surfaces' | 'Rules' | 'Pipelines' | 'HCL' | 'Revisions' | 'Traces' | 'Effects';
+  type Tab = 'Overview' | 'Upstreams' | 'Surfaces' | 'Chains' | 'Rules' | 'Pipelines' | 'HCL' | 'Revisions' | 'Traces' | 'Effects';
   let tab = $state<Tab>('Pipelines');
   let credentials = $state('');
   let authenticated = $state(false);
@@ -38,8 +38,16 @@
   let insight = $state('');
   let upstreamName = $state('');
   let discovered = $state<any[]>([]);
-  const tabs: Tab[] = ['Overview', 'Upstreams', 'Surfaces', 'Rules', 'Pipelines', 'HCL', 'Revisions', 'Traces', 'Effects'];
-  const kinds = ['input','output','transform','filter','validate','condition','parallel','join','map','pipeline.call','mcp.call','hook.call','http.call','policy.check','mask.pii','suspend'];
+  let chainSurface = $state('');
+  let chainSearch = $state<ChainSearch | null>(null);
+  let selectedChain = $state('');
+  let newChainTool = $state('');
+  let chainSurfaces = $derived(Object.entries(catalog?.surfaces ?? {})
+    .filter(([, surface]) => surface.derive_rules)
+    .map(([name]) => name));
+  let chain = $derived(chainSearch?.chains.find(({ id }) => id === selectedChain));
+  const tabs: Tab[] = ['Overview', 'Upstreams', 'Surfaces', 'Chains', 'Rules', 'Pipelines', 'HCL', 'Revisions', 'Traces', 'Effects'];
+  const kinds = ['input','output','transform','filter','validate','condition','parallel','join','map','pipeline.call','tool.call','mcp.call','hook.call','http.call','policy.check','mask.pii','suspend'];
 
   async function task(fn: () => Promise<void>) {
     error = ''; busy = true;
@@ -72,6 +80,11 @@
     [catalog, status, revisions, traces, effects] = await Promise.all([api('catalog'),api('status'),api('revisions'),api<Trace[]>(tracesEndpoint()),api('effects')]);
     if (catalog && (!selected || !catalog.pipelines[selected])) selected = Object.keys(catalog.pipelines)[0] ?? '';
     await selectPipeline(selected, true);
+    if (chainSearch?.revision !== status?.revision) {
+      chainSearch = null;
+      selectedChain = '';
+    }
+    if (!chainSurfaces.includes(chainSurface)) chainSurface = chainSurfaces[0] ?? '';
   }
   async function selectPipeline(name: string, discardChanges = false) {
     if (dirty && !discardChanges) {
@@ -309,6 +322,28 @@
       activePipeline = {...activePipeline,edges};dirty = true; selectedEdgeIndex = null;
     }
   }
+  async function searchChains(cursor?: string) {
+    if (!chainSurface) return;
+    chainSearch = await api<ChainSearch>('derive-rules', 'POST', {surface: chainSurface, cursor});
+    selectedChain = '';
+    newChainTool = '';
+  }
+  async function draftChain() {
+    if (!chainSearch || !chain || chain.draft_unavailable) return;
+    assertNoPendingEdits(dirty, draft, editorText, graphSnapshot, hclTouched);
+    const created = await api<Draft>('derive-draft', 'POST', {
+      surface: chainSearch.surface,
+      expected_revision: chainSearch.revision,
+      chain_id: chain.id,
+      tool_name: newChainTool.trim()
+    });
+    draft = created;
+    editorText = created.source;
+    hclTouched = false;
+    insight = '';
+    tab = 'HCL';
+    message = `Draft ${created.id.slice(0,8)} created`;
+  }
   async function inspectUpstream(name:string) {
     upstreamName = name;
     const d = await api<{items:any[]}>('discover','POST',{name});
@@ -372,6 +407,68 @@
               </section>
             {/each}
           </div>
+        {:else if tab==='Chains'}
+          <div class="page-title">
+            <h1>Chains</h1>
+            {#if chainSurfaces.length}
+              <div class="actions">
+                <select aria-label="Surface" bind:value={chainSurface} disabled={busy}
+                  onchange={() => { chainSearch = null; selectedChain = ''; }}>
+                  {#each chainSurfaces as name}<option value={name}>{name}</option>{/each}
+                </select>
+                <button class="secondary" disabled={busy || !chainSurface} onclick={() => task(searchChains)}>Find chains</button>
+              </div>
+            {/if}
+          </div>
+          {#if !chainSurfaces.length}
+            <p>Enable <code>derive_rules</code> on a curated surface to collect tool chains.</p>
+          {:else if chainSearch}
+            <p>Revision <code>{chainSearch.revision}</code></p>
+            {#if !chainSearch.chains.length}
+              <p>No sequences observed in at least three sessions.</p>
+            {:else}
+              <div class="split-pane">
+                <section class="pane" aria-label="Observed chains">
+                  {#each chainSearch.chains as item (item.id)}
+                    <button class="list-row" class:selected={selectedChain === item.id}
+                      onclick={() => { selectedChain = item.id; newChainTool = ''; }}>
+                      <strong>{item.steps.map(({ tool }) => tool).join(' → ')}</strong>
+                      <span>{item.sessions} sessions</span>
+                    </button>
+                  {/each}
+                  {#if chainSearch.next_cursor}
+                    <button class="secondary" disabled={busy} onclick={() => task(() => searchChains(chainSearch?.next_cursor))}>Next page</button>
+                  {/if}
+                </section>
+                {#if chain}
+                  <section class="pane">
+                    <h2>Selected chain</h2>
+                    <p>{chain.explicit_sessions} sessions by configured ID · {chain.heuristic_sessions} by OAuth identity and activity</p>
+                    <ol>
+                      {#each chain.steps as step}
+                        <li><code>{step.tool}</code>{step.allow_effects ? ' · Potential write' : ''}</li>
+                      {/each}
+                    </ol>
+                    <details>
+                      <summary>Example run IDs</summary>
+                      {#each chain.example_runs as runs}
+                        <p><code>{runs.join(' → ')}</code></p>
+                      {/each}
+                    </details>
+                    {#if chain.draft_unavailable}
+                      <p>{chain.draft_unavailable}</p>
+                    {:else}
+                      <form onsubmit={(event) => { event.preventDefault(); task(draftChain); }}>
+                        <label for="chain-tool-name">New tool name</label>
+                        <input id="chain-tool-name" required maxlength="128" bind:value={newChainTool} />
+                        <button class="primary" type="submit" disabled={busy || !newChainTool.trim()}>Create draft</button>
+                      </form>
+                    {/if}
+                  </section>
+                {/if}
+              </div>
+            {/if}
+          {/if}
         {:else if tab==='Rules'}
           <div class="page-title"><div><p class="eyebrow">GUARDS &amp; TRANSFORMS</p><h1>Hooks and policies</h1></div><button class="secondary" onclick={() => { tab='HCL'; task(createDraft); }}>Edit in HCL</button></div>
           <div class="split-pane"><div class="pane"><h2>Hooks ({Object.keys(catalog?.hooks??{}).length})</h2>{#each Object.entries(catalog?.hooks??{}) as [name, h]}<div class="tool"><strong>{name}</strong><p>{(h as any).transport} · {(h as any).contract}</p><code>{(h as any).url || `${(h as any).upstream}.${(h as any).tool}`}</code><p>Timeout {(h as any).timeout_ms ?? 'default'} ms · failure: {(h as any).on_error || 'deny'}</p></div>{/each}</div>

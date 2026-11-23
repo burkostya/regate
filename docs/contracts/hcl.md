@@ -45,6 +45,14 @@ pipeline "customer_summary" {
 }
 ```
 
+### Observed tool chains
+
+Set `derive_rules = true` on a curated surface to collect observations.
+`derive_session_headers` and `derive_session_meta_keys` are optional ordered
+lists of existing client session fields. A `tool.call` pipeline node invokes
+a public tool on the same surface at the pinned revision.
+[Grouping, draft generation and execution](derive-rules.md)
+
 ### Global active-task admission
 
 The optional top-level `regate { max_active_tasks = N }` setting caps the

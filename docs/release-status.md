@@ -26,6 +26,14 @@ MCP, SSE streaming and cursor isolation, OAuth token exchange, Bearer
 access and no replay after a lost write response.
 [Migration contract](contracts/mcp.md#publish-an-existing-mcp-server)
 
+## v1.2.0 tool-chain derivation
+
+Curated surfaces can opt into a bounded call journal. The console and
+management MCP expose repeated chains and generate editable, revision-bound
+drafts. Draft generation supports synchronous source tools. Deployment-owned
+surfaces can collect evidence, with changes published from deployment HCL.
+[Configuration and execution contract](contracts/derive-rules.md)
+
 ## Implementation history
 
 The following prototype status and milestone entries record progress at

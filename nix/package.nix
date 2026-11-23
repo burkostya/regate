@@ -16,7 +16,7 @@ buildGo126Module {
       ../go.sum
     ];
   };
-  vendorHash = "sha256-LuUKWmM31ycJUJrxw30WIIgB4KmAugt1qwJZTRhM9sE=";
+  vendorHash = "sha256-Idtpl/jfjUv8bt/Ogpq6kWXvEUHhaBAkVIAI4vPUbK0=";
   subPackages = [ "cmd/regate" ];
   env.CGO_ENABLED = "0";
   # The server integration suite runs separately with loopback fixtures.

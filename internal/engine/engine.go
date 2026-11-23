@@ -241,28 +241,34 @@ func (r *Runtime) finalizePublishedOutput(ctx context.Context, cfg *config.Confi
 }
 
 func (r *Runtime) Run(ctx context.Context, revision string, cfg *config.Config, surface, toolName string, args map[string]any, dry bool) (Outcome, error) {
-	out := Outcome{RunID: storage.ID(), Revision: revision, Status: "running"}
+	return r.runTool(ctx, revision, cfg, surface, toolName, args, dry, storage.ID())
+}
+
+// RunObserved uses an ID reserved by the public tool handler for its observation.
+func (r *Runtime) RunObserved(ctx context.Context, revision string, cfg *config.Config, surface, toolName string, args map[string]any, runID string) (Outcome, error) {
+	return r.runTool(ctx, revision, cfg, surface, toolName, args, false, runID)
+}
+
+func (r *Runtime) runTool(ctx context.Context, revision string, cfg *config.Config, surface, toolName string, args map[string]any, dry bool, runID string) (Outcome, error) {
+	out := Outcome{RunID: runID, Revision: revision, Status: "running"}
     if err:=r.CheckQueuedTaskExecution(ctx);err!=nil{return out,err}
     ctx=withEffectScope(ctx,out.RunID)
 	s, ok := cfg.Surfaces[surface]
 	if !ok {
 		return out, fmt.Errorf("surface not found")
 	}
-	var tool config.Tool
-	found := false
-	for _, t := range s.Tools {
-		if t.Name == toolName {
-			tool = t
-			found = true
-			break
-		}
-	}
+	tool, found := s.FindTool(toolName)
 	if !found {
 		return out, fmt.Errorf("tool not found")
 	}
     if r.Store!=nil {
         if err:=r.Store.RequireExecutionLeader(ctx);err!=nil{return out,err}
     }
+	if s.OAuth != "" && !dry {
+		if err := authorizeComposedTool(ctx, cfg, s, tool); err != nil {
+			return out, err
+		}
+	}
     if err:=enforceDataTrust(cfg,surface,tool);err!=nil {
         out.Status="denied"
         out.Error="untrusted destination"
@@ -626,7 +632,7 @@ func (r *Runtime) execute(ctx context.Context, revision string, cfg *config.Conf
 						childCheckpoint = checkpoint.Child
 					}
 				}
-				results[i] = r.evalNode(ctx, cfg, p.Nodes[name], cfg.Plans[p.Name].Nodes[name], vars, dry, runID, surface, toolName, revision, childCheckpoint)
+				results[i] = r.evalNode(ctx, cfg, p.Name, p.Nodes[name], cfg.Plans[p.Name].Nodes[name], vars, dry, runID, surface, toolName, revision, childCheckpoint)
 			}(index, name)
 		}
 		wg.Wait()
@@ -697,7 +703,7 @@ func structured(v map[string]any) any {
 	}
 	return v["structuredContent"]
 }
-func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Node, plan *config.NodeIR, vars map[string]any, dry bool, runID, surface, toolName, revision string, childCheckpoint *Checkpoint) nodeResult {
+func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, pipeline string, n config.Node, plan *config.NodeIR, vars map[string]any, dry bool, runID, surface, toolName, revision string, childCheckpoint *Checkpoint) nodeResult {
     ctx=withEffectStep(ctx,"node:"+n.Name)
 	ret := nodeResult{name: n.Name}
 	checkInput := func(value any) bool {
@@ -739,6 +745,16 @@ func (r *Runtime) evalNode(ctx context.Context, cfg *config.Config, n config.Nod
 				ret.value = out
 			}
 		}
+	case "tool.call":
+		args, err := get("arguments")
+		if err != nil {
+			ret.error = err
+			break
+		}
+		if !checkInput(args) {
+			break
+		}
+		ret.value, ret.error = r.callPublishedTool(ctx, cfg, n, pipeline, surface, revision, runID, args, dry)
 	case "pipeline.call":
 		// A resumed child must use the exact arguments durably stored at the
 		// first suspension, never reevaluate a possibly changed expression.
@@ -1752,6 +1768,11 @@ func (r *Runtime) ResumeAt(ctx context.Context, cfg *config.Config, revision str
 		if tool.Name == cp.Tool { pipelineName = tool.Pipeline; selected = tool; break }
 	}
 	if pipelineName == "" { return out, fmt.Errorf("missing original tool") }
+	if surface.OAuth != "" {
+		if err := authorizeComposedTool(ctx, cfg, surface, selected); err != nil {
+			return out, err
+		}
+	}
 	if err := enforceDataTrust(cfg, cp.Surface, selected); err != nil {
 		out.Status = "denied"
 		out.Error = "untrusted destination"

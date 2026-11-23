@@ -27,13 +27,15 @@ var AdminTools = map[string][]Arg{
 	"regate_upstreams":        {},
 	"regate_inspect":          {{"name", "Upstream name", false}},
 	"regate_config_get":       {},
+	"regate_derive_rules":      {{"surface", "Surface name", true}, {"cursor", "Next cursor from previous search", false}},
+	"regate_derive_draft":      {{"surface", "Surface name", true}, {"chain_id", "Selected chain", true}, {"tool_name", "New tool name", true}, {"expected_revision", "Reviewed active revision", true}},
 	"regate_draft_create":     {},
 	"regate_draft_get":        {{"draft_id", "Draft identifier", true}},
 	"regate_draft_patch":      {{"draft_id", "Draft identifier", true}, {"source", "Complete HCL source", true}, {"expected_source_digest", "Optional SHA-256 optimistic edit precondition", false}},
 	"regate_validate":         {{"source", "HCL to validate", false}, {"draft_id", "Existing draft identifier", false}},
 	"regate_diff":             {{"draft_id", "Draft identifier", true}},
-	"regate_test":             {{"draft_id", "Draft to test", false}, {"surface", "Surface name", true}, {"tool", "Tool name", true}, {"arguments", "Input object", false}, {"expected_source_digest", "Reviewed draft SHA-256 digest", false}, {"expected_revision", "Reviewed active revision (without draft_id)", false}},
-	"regate_simulate":         {{"draft_id", "Draft to simulate", false}, {"surface", "Surface name", true}, {"tool", "Tool name", true}, {"arguments", "Input object", false}, {"expected_source_digest", "Reviewed draft SHA-256 digest", false}, {"expected_revision", "Reviewed active revision (without draft_id)", false}},
+	"regate_test":             {{"draft_id", "Draft to test", false}, {"surface", "Surface name", true}, {"tool", "Tool name", true}, {"arguments", "Input object", false}, {"mocks", "Synthetic tool.call outputs keyed by pipeline.node", false}, {"expected_source_digest", "Reviewed draft SHA-256 digest", false}, {"expected_revision", "Reviewed active revision (without draft_id)", false}},
+	"regate_simulate":         {{"draft_id", "Draft to simulate", false}, {"surface", "Surface name", true}, {"tool", "Tool name", true}, {"arguments", "Input object", false}, {"mocks", "Synthetic tool.call outputs keyed by pipeline.node", false}, {"expected_source_digest", "Reviewed draft SHA-256 digest", false}, {"expected_revision", "Reviewed active revision (without draft_id)", false}},
 	"regate_activate":         {{"draft_id", "Validated draft", true}, {"expected_source_digest", "Optional exact reviewed source SHA-256", false}},
 	"regate_rollback":         {{"revision", "Revision to restore", true}},
 	"regate_graph_get":        {{"pipeline", "Pipeline name", true}},
@@ -86,7 +88,7 @@ func AdminDefs() []map[string]any {
 		required := []string{}
 		for _, arg := range AdminTools[name] {
 			typ := "string"
-			if arg.Name == "arguments" || arg.Name == "value" || arg.Name == "intent" {
+			if arg.Name == "arguments" || arg.Name == "value" || arg.Name == "intent" || arg.Name == "mocks" {
 				typ = "object"
 			}
 			props[arg.Name] = map[string]any{"type": typ, "description": arg.Description}
@@ -142,6 +144,7 @@ func checkExpectedExecutionRevision(args map[string]any, current string) error {
 // operation, but a failure must never be presented as a successful retry.
 var auditedManagementMutations = map[string]bool{
     "regate_draft_create":true,
+    "regate_derive_draft":true,
     "regate_draft_patch":true,
     "regate_activate":true,
     "regate_rollback":true,
@@ -186,6 +189,10 @@ func (s *Service) adminOperation(ctx context.Context, name string, args map[stri
 		return s.Inspect(str(args, "name")), nil
 	case "regate_config_get":
 		return s.configView(cfg, rev.ID), nil
+	case "regate_derive_rules":
+		return s.findCallChains(ctx, cfg, str(args, "surface"), rev.ID, str(args, "cursor"), "")
+	case "regate_derive_draft":
+		return s.createCallChainDraft(ctx, cfg, rev.ID, args)
 	case "regate_draft_create":
 		return s.Store.DraftCreate()
 	case "regate_draft_get":
@@ -362,6 +369,13 @@ func (s *Service) adminOperation(ctx context.Context, name string, args map[stri
             }
 		}
 		dry := name != "regate_run"
+		if raw, present := args["mocks"]; present {
+			mocks, ok := raw.(map[string]any)
+			if !dry || !ok || mocks == nil {
+				return nil, fmt.Errorf("mocks must be an object and are only accepted in dry runs")
+			}
+			ctx = engine.WithToolCallMocks(ctx, mocks)
+		}
 		out, e := s.Engine.Run(ctx, id, selected, str(args, "surface"), str(args, "tool"), obj(args, "arguments"), dry)
 		if e != nil {
 			return out, e
@@ -383,7 +397,11 @@ func (s *Service) adminOperation(ctx context.Context, name string, args map[stri
 		if e != nil {
 			return nil, e
 		}
-		return s.Engine.Resume(ctx, old, cp.Revision, cp.RunID, args["value"])
+		out, err := s.Engine.Resume(ctx, old, cp.Revision, cp.RunID, args["value"])
+		if err == nil && old.Surfaces[cp.Surface].DeriveRules {
+			s.finishToolObservation(cp.RunID, true)
+		}
+		return out, err
 	}
 	return nil, fmt.Errorf("unknown management tool %s", name)
 }
@@ -433,6 +451,7 @@ func impact(a, b *config.Config, base, current string) map[string]any {
 	details["changes"] = changed
 	sort.Slice(published, func(i, j int) bool { return published[i]["surface"] < published[j]["surface"] })
 	details["published_upstreams"] = published
+	details["tool_calls"] = composedToolImpact(b)
 	semantic, err := config.SemanticDiff(a, b)
 	if err == nil {
 		details["semantic_changes"] = semantic

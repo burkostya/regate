@@ -14,6 +14,7 @@ func TestQueueSchemaV3UpgradePreservesTasksAndGrants(t *testing.T) {
     if err!=nil{t.Fatal(err)}
     task:=testGrantTask(t,first)
     if _,err=first.db.Exec("DROP TABLE task_queue");err!=nil{t.Fatal(err)}
+    removeToolObservationSchema(t,first.db)
     if _,err=first.db.Exec("PRAGMA user_version=3");err!=nil{t.Fatal(err)}
     if err=first.Close();err!=nil{t.Fatal(err)}
     upgraded,err:=New(dir,initSource())

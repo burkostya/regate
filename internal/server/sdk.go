@@ -18,6 +18,7 @@ import (
     "time"
 
     "github.com/burkostya/regate/internal/config"
+    "github.com/burkostya/regate/internal/engine"
     "github.com/burkostya/regate/internal/identity"
     "github.com/burkostya/regate/internal/expr"
     sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -188,10 +189,6 @@ func (m *inboundMCP) handle(s *Service, w http.ResponseWriter, r *http.Request, 
                     http.Error(w, "invalid MCP task-start headers", http.StatusBadRequest)
                     return
                 }
-                if err:=identity.RequireScopes(r.Context(),ep.toolScopes[name]);err!=nil {
-                    rpcError(w,q.ID,-32001,"insufficient tool scope")
-                    return
-                }
                 if q.JSONRPC!="2.0" || len(q.ID)==0 || string(q.ID)=="null" {
                     rpcError(w,q.ID,-32600,"invalid task-start request")
                     return
@@ -205,8 +202,16 @@ func (m *inboundMCP) handle(s *Service, w http.ResponseWriter, r *http.Request, 
                     rpcError(w,q.ID,-32602,"invalid client capabilities")
                     return
                 }
-                result,err:=s.createTaskFor(r.Context(),ep.config,*ep.revision,surface,name,bearer(r),obj(q.Params,"arguments"))
+                observation := s.beginToolObservation(r.Context(), ep.config.Surfaces[surface], *ep.revision, name, r.Header, meta)
+                ctx := context.WithValue(r.Context(), observedRunKey{}, &observedRun{id: observation})
+                if err := identity.RequireScopes(ctx, ep.toolScopes[name]); err != nil {
+                    s.finishToolObservation(observation, false)
+                    rpcError(w,q.ID,-32001,"insufficient tool scope")
+                    return
+                }
+                result,err:=s.createTaskFor(ctx,ep.config,*ep.revision,surface,name,bearer(r),obj(q.Params,"arguments"))
                 if err!=nil {
+                    s.finishToolObservation(observation, false)
                     rpcError(w,q.ID,-32000,"task rejected")
                     return
                 }
@@ -275,6 +280,9 @@ func newInboundEndpoint(s *Service, cfg *config.Config, revision *string, surfac
         ep.toolScopes=make(map[string][]string,len(surf.Tools))
         for _,tool:=range surf.Tools {ep.toolScopes[tool.Name]=tool.RequiredScopes}
         registerVisibilityMiddleware(srv,surf)
+        if surf.DeriveRules {
+            s.observeTools(srv, surf, revision)
+        }
     }
     if admin {
         for _, def := range AdminDefs() {
@@ -318,18 +326,24 @@ func newInboundEndpoint(s *Service, cfg *config.Config, revision *string, surfac
             handler := func(ctx context.Context, req *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
                 args, err := sdkArgs(req.Params.Arguments)
                 if err != nil { return nil, err }
-                ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+                ctx, cancel := context.WithTimeout(ctx, publicToolTimeout)
                 defer cancel()
                 if err:=identity.RequireScopes(ctx,tool.RequiredScopes);err!=nil {
                     return sdkToolError(err),nil
                 }
-                out, err := s.Engine.Run(ctx, *revision, cfg, surface, name, args, false)
+                var out engine.Outcome
+                if run, ok := ctx.Value(observedRunKey{}).(*observedRun); ok {
+                    out, err = s.Engine.RunObserved(ctx, *revision, cfg, surface, name, args, run.id)
+                    run.suspended = out.Status == "suspended"
+                } else {
+                    out, err = s.Engine.Run(ctx, *revision, cfg, surface, name, args, false)
+                }
                 result := outcomeResult(out, err)
                 if ep.verifier!=nil && err!=nil {
                     result=map[string]any{"content":[]any{map[string]any{"type":"text","text":"operation failed"}},"isError":true}
                 }
-                if ep.verifier!=nil && !tool.AllowUnmasked {
-                    if scrubbed,ok:=expr.MaskPII(result).(map[string]any);ok {result=scrubbed}
+                if scrubbed, ok := engine.MaskPublishedResult(surf, tool, result).(map[string]any); ok {
+                    result = scrubbed
                 }
                 var wire sdk.CallToolResult
                 if err := remarshalSDK(result, &wire); err != nil { return nil, err }

@@ -1,4 +1,4 @@
-# Regate SQLite durability contract (schema version 8)
+# Regate SQLite durability contract (schema version 9)
 
 SQLite is the authoritative on-disk store for revisions, active selection,
 drafts, graph layouts, MCP task records, suspended run checkpoints, execution
@@ -11,6 +11,11 @@ eligible for rollback within that deployment. SQLite publishes a changed
 prefix, its effective HCL revision and the deployment audit entry in one
 transaction. Earlier revisions remain available to pinned runs and for
 inspection. [Static and dynamic configuration](../operations/nixos.md)
+
+Schema v9 adds opt-in tool call observations and a random HMAC key for
+session grouping. The live journal retains at most 30 days and 100,000
+observations. Same-state restarts and online backups preserve the grouping
+key. [Observation contract](derive-rules.md)
 
 ## Execution leadership and fencing
 

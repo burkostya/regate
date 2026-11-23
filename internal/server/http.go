@@ -18,6 +18,7 @@ import (
 	"github.com/burkostya/regate/internal/config"
 	"github.com/burkostya/regate/internal/engine"
 	"github.com/burkostya/regate/internal/mcp"
+	"github.com/burkostya/regate/internal/storage"
 )
 
 func (s *Service) Handler() http.Handler {
@@ -204,11 +205,16 @@ func (s *Service) api(w http.ResponseWriter, r *http.Request) {
 			errorJSON(w, 400, e)
 			return
 		}
-		adminName := map[string]string{"drafts": "regate_draft_create", "draft-update": "regate_draft_patch", "validate": "regate_validate", "diff": "regate_diff", "impact": "regate_impact_analyze", "activate": "regate_activate", "rollback": "regate_rollback", "test": "regate_test", "simulate": "regate_simulate", "run": "regate_run", "discover": "regate_upstream_refresh", "effect-decide": "regate_effect_decide", "effect-readback": "regate_effect_readback", "effect-compensate": "regate_effect_compensate", "task-resume-grant": "regate_task_resume_grant", "queue-rewrap": "regate_queue_rewrap", "grant-rewrap": "regate_grant_rewrap", "resume": "regate_resume", "graph-patch": "regate_graph_patch", "attribute-patch": "regate_attribute_patch", "attribute-add": "regate_attribute_add"}[p]
+		adminName := map[string]string{"derive-rules": "regate_derive_rules", "derive-draft": "regate_derive_draft", "drafts": "regate_draft_create", "draft-update": "regate_draft_patch", "validate": "regate_validate", "diff": "regate_diff", "impact": "regate_impact_analyze", "activate": "regate_activate", "rollback": "regate_rollback", "test": "regate_test", "simulate": "regate_simulate", "run": "regate_run", "discover": "regate_upstream_refresh", "effect-decide": "regate_effect_decide", "effect-readback": "regate_effect_readback", "effect-compensate": "regate_effect_compensate", "task-resume-grant": "regate_task_resume_grant", "queue-rewrap": "regate_queue_rewrap", "grant-rewrap": "regate_grant_rewrap", "resume": "regate_resume", "graph-patch": "regate_graph_patch", "attribute-patch": "regate_attribute_patch", "attribute-add": "regate_attribute_add"}[p]
 		if adminName != "" {
 			result, e := s.Admin(r.Context(), adminName, v)
 			if e != nil {
-				errorJSON(w, 400, e)
+				status := http.StatusBadRequest
+				if p == "derive-draft" && (errors.Is(e, storage.ErrDraftSourceConflict) ||
+					errors.Is(e, errDerivedToolNameConflict) || errors.Is(e, storage.ErrStaticConfigConflict)) {
+					status = http.StatusConflict
+				}
+				errorJSON(w, status, e)
 			} else {
 				reply(w, 200, result)
 			}
