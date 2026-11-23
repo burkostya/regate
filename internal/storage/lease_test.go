@@ -108,6 +108,7 @@ func TestSQLiteExecutionLeaseSchemaMigrationFromVersionOne(t *testing.T) {
     if err!=nil{t.Fatal(err)}
     if _,err=db.db.Exec("DELETE FROM execution_leases");err!=nil{t.Fatal(err)}
     if _,err=db.db.Exec("DROP TABLE execution_leases");err!=nil{t.Fatal(err)}
+    removeToolObservationSchema(t,db.db)
     if _,err=db.db.Exec("PRAGMA user_version=1");err!=nil{t.Fatal(err)}
     if err=db.Close();err!=nil{t.Fatal(err)}
     upgraded,err:=New(dir,"should not overwrite stored revisions")

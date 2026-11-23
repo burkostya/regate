@@ -31,6 +31,7 @@ type TaskRecord struct {
     Delegation *DelegationRequirement `json:"delegation,omitempty"`
     RedactPII bool `json:"redact_pii,omitempty"`
     RunID string `json:"run_id,omitempty"`
+    ToolCallObserved bool `json:"tool_call_observed,omitempty"`
     Revision string `json:"revision"`
     CreatedAt time.Time `json:"createdAt"`
     LastUpdatedAt time.Time `json:"lastUpdatedAt"`

@@ -254,7 +254,7 @@ func (c *Config) Compile() error {
 				continue
 			}
 			attr := "value"
-			if node.Kind == "mcp.call" {
+			if node.Kind == "mcp.call" || node.Kind == "tool.call" {
 				attr = "arguments"
 			}
 			if text, ok := node.Attrs[attr].(string); ok {

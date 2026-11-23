@@ -94,6 +94,7 @@ type Store struct {
     leaseDone chan struct{}
     grantKeys *GrantKeyRing
     queueKeys *TaskQueueKeyRing
+    observationKey [32]byte
     suspendedRunMu sync.Mutex
     suspendedRuns map[string]*suspendedRunLock
 }
@@ -339,6 +340,7 @@ func (s *Store) initialize(bootstrap func() (string, string, error)) error {
         if _,err=tx.Exec("INSERT OR IGNORE INTO static_config(id,prefix,since_seq) VALUES(1,'',0)");err!=nil{return err}
         if _,err=tx.Exec("PRAGMA user_version=8");err!=nil{return err}
     }
+    if err = s.initializeObservations(tx, version); err != nil { return err }
     // Refuse to open a modified or truncated historical audit chain.
     if err=verifyAuditTx(tx);err!=nil{return fmt.Errorf("audit integrity: %w",err)}
     var count int
@@ -394,6 +396,17 @@ func (s *Store) Source(id string)(string,error) {
     return source,err
 }
 func (s *Store) DraftCreate()(Draft,error) {
+    return s.createDraft("", "")
+}
+
+// DraftCreateFromRevision saves a generated source only if its reviewed
+// revision is still active. The draft is inserted with its complete source.
+func (s *Store) DraftCreateFromRevision(base, source string) (Draft, error) {
+    if base == "" || source == "" { return Draft{}, ErrDraftSourceConflict }
+    return s.createDraft(base, source)
+}
+
+func (s *Store) createDraft(expected, proposed string) (Draft,error) {
     // Read revision and insert draft within one transaction so activation
     // cannot change the base between these operations in another process.
     tx,err:=s.db.BeginTx(context.Background(),nil)
@@ -402,6 +415,11 @@ func (s *Store) DraftCreate()(Draft,error) {
     var base,source string
     err=tx.QueryRow("SELECT id,source FROM revisions ORDER BY seq DESC LIMIT 1").Scan(&base,&source)
     if err!=nil{return Draft{},err}
+    if expected != "" {
+        if base != expected { return Draft{}, ErrDraftSourceConflict }
+        if err := checkStaticSource(tx, proposed); err != nil { return Draft{}, err }
+        source = proposed
+    }
     draft:=Draft{ID:ID(),Base:base,Source:source,SourceDigest:SourceDigest(source),Created:time.Now().UTC()}
     if _,err=tx.Exec("INSERT INTO drafts(id,base,source,created) VALUES(?,?,?,?)",
         draft.ID,draft.Base,draft.Source,draft.Created.Format(time.RFC3339Nano));err!=nil{return Draft{},err}

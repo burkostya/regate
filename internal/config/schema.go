@@ -19,7 +19,7 @@ var blockAttributes = map[string]map[string]string{
     "readback":    {"write_operation":"string","upstream":"string","read_tool":"string","intent_pointer":"string","read_argument":"string","result_pointer":"string","match_intent_pointer":"string","match_result_pointer":"string","write_token_argument":"string","result_token_pointer":"string","safe_read":"bool"},
     "compensation":{"for_operation":"string","upstream":"string","tool":"string","intent_pointer":"string","argument":"string","enabled":"bool"},
 	"pipeline":    {"entry": "string", "timeout_ms": "positive-int", "concurrency": "positive-int"},
-	"surface":     {"path": "string", "oauth": "string", "required_scopes": "string-list", "upstream": "string", "auth": "string", "bearer_token_env": "string"},
+	"surface":     {"path": "string", "oauth": "string", "required_scopes": "string-list", "upstream": "string", "auth": "string", "bearer_token_env": "string", "derive_rules": "bool", "derive_session_headers": "string-list", "derive_session_meta_keys": "string-list"},
 	"tool":        {"description": "string", "pipeline": "string", "source": "string", "input_schema": "object", "output_schema": "object", "read_only": "bool", "required_scopes": "string-list", "data_classification": "string", "allow_unmasked": "bool"},
 	"resource":    {"uri": "string", "source": "string", "text": "string", "mime_type": "string", "required_scopes": "string-list"},
 	"prompt":      {"description": "string", "text": "string", "required_scopes": "string-list"},
@@ -37,6 +37,7 @@ var nodeAttributes = map[string]map[string]string{
 	"join":         {"kind": "string", "mode": "string", "quorum": "positive-int", "value": "expression", "mapping": "expression"},
 	"map":          {"kind": "string", "items": "expression", "mapping": "expression", "pipeline": "string", "allow_effects": "bool", "allow_suspend": "bool", "max_items": "positive-int", "parallelism": "positive-int"},
 	"pipeline.call": {"kind": "string", "pipeline": "string", "arguments": "object-or-expression", "allow_effects": "bool", "allow_suspend": "bool"},
+	"tool.call":    {"kind": "string", "surface": "string", "tool": "string", "arguments": "object-or-expression", "allow_effects": "bool"},
 	"mcp.call":     {"kind": "string", "upstream": "string", "tool": "string", "effect": "string", "arguments": "object-or-expression", "mock": "any", "mock_structured": "any", "mock_content": "any", "retry": "object"},
 	"hook.call":    {"kind": "string", "hook": "string", "value": "expression"},
 	"http.call":    {"kind": "string", "url": "string", "auth_env": "string", "timeout_ms": "positive-int", "value": "expression", "trust_level": "string"},
@@ -118,7 +119,7 @@ func validateBlock(b *Block, parent string, top bool) error {
 	}
 	if b.Type == "node" {
 		k := b.String("kind")
-		for _, name := range map[string][]string{"condition": {"test"}, "map": {"items", "max_items"}, "pipeline.call": {"pipeline", "arguments"}, "mcp.call": {"upstream", "tool"}, "hook.call": {"hook"}, "policy.check": {"policy"}, "http.call": {"url"}}[k] {
+		for _, name := range map[string][]string{"condition": {"test"}, "map": {"items", "max_items"}, "pipeline.call": {"pipeline", "arguments"}, "tool.call": {"surface", "tool", "arguments"}, "mcp.call": {"upstream", "tool"}, "hook.call": {"hook"}, "policy.check": {"policy"}, "http.call": {"url"}}[k] {
 			if _, ok := b.Attrs[name]; !ok {
 				return fmt.Errorf("%s: %s requires %q", where, k, name)
 			}

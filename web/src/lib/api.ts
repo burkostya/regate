@@ -9,6 +9,16 @@ export type Catalog = {
   policies: Record<string, unknown>;
   interceptors: unknown[];
 };
+export type CallChain = {
+  id: string;
+  steps: { tool: string; allow_effects: boolean }[];
+  sessions: number;
+  explicit_sessions: number;
+  heuristic_sessions: number;
+  example_runs: string[][];
+  draft_unavailable?: string;
+};
+export type ChainSearch = { surface: string; revision: string; chains: CallChain[]; next_cursor?: string };
 export type Draft = { id: string; base: string; source: string; source_digest: string; created: string };
 export type Trace = { run_id: string; revision: string; surface: string; tool: string; node?: string; status: string; message?: string; at: string; duration_ms?: number };
 

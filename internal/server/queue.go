@@ -129,6 +129,7 @@ func (s *Service) failClaimedQueuedTask(id string) {
         "code":-32000,
         "message":"Queued execution not available",
     }
+    s.finishTaskObservation(task)
     _=s.Store.TaskPut(task)
     s.signalQueue()
 }
@@ -146,7 +147,7 @@ func (s *Service) executeClaimedQueuedTask(task storage.TaskRecord,
         defer cancel()
         defer running.Delete(task.TaskID)
         defer s.signalQueue()
-        out,err:=s.Engine.Run(ctx,task.Revision,cfg,task.Surface,task.Tool,args,false)
+        out,err:=s.runTaskTool(ctx,cfg,task,args)
         s.tasksMu.Lock()
         defer s.tasksMu.Unlock()
         current,e:=s.Store.TaskGet(task.TaskID)
@@ -172,6 +173,7 @@ func (s *Service) executeClaimedQueuedTask(task storage.TaskRecord,
             current.StatusMessage="Execution completed"
             current.Result=taskSafeResult(current,out,err)
         }
+        s.finishTaskObservation(current)
         _=s.Store.TaskPut(current)
     }()
 }

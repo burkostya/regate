@@ -87,6 +87,7 @@ func (s *Store) renewExecutionLease(owner string,epoch int64,stop <-chan struct{
     defer close(done)
     ticker:=time.NewTicker(leaseHeartbeat)
     defer ticker.Stop()
+    lastPrune := time.Now()
     for {
         select {
         case <-stop:
@@ -104,6 +105,12 @@ func (s *Store) renewExecutionLease(owner string,epoch int64,stop <-chan struct{
             if err!=nil || affected!=1 {
                 s.markLeaseLost(owner,epoch)
                 return
+            }
+            if time.Since(lastPrune) >= time.Hour {
+                ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+                _, _ = s.db.ExecContext(ctx, pruneToolCallsSQL, toolCallCutoff(time.Now()))
+                cancel()
+                lastPrune = time.Now()
             }
         }
     }
