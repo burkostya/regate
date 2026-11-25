@@ -108,6 +108,17 @@ func TestBoundedMappedSubrunsHaveSeparateDurableWriteIdentities(t *testing.T) {
         records[1].Status!="confirmed" {
         t.Fatalf("mapped writes lack unique durable subruns: %#v",records)
     }
+	traces := store.TracesFiltered(storage.TraceQuery{RunID: out.RunID, Status: "subrun"})
+	if len(traces) != len(records) {
+		t.Fatalf("expected one trace per mapped iteration: %#v", traces)
+	}
+	for i, trace := range traces {
+		index := len(traces) - 1 - i // traces are newest first
+		childID := mappedIterationRunID(out.RunID, "iterate", "writer", index)
+		if trace.Node != fmt.Sprintf("iterate[%d]", index) || trace.Message != "nested run "+childID {
+			t.Fatalf("trace does not identify the mapped iteration: %#v", trace)
+		}
+	}
     _,err=New(store).execute(withEffectScope(context.Background(),out.RunID),"rev",cfg,
         cfg.Pipelines["batch"],out.RunID,"mapped","write",args,false,nil)
     if !errors.Is(err,storage.ErrEffectAlreadyAttempted) || calls.Load()!=2 {

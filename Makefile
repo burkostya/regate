@@ -31,9 +31,9 @@ vet:
 	go vet ./...
 
 web-dev:
-	cd web && npm install && npm run dev
+	cd web && npm ci --include=dev && npm run dev
 
 web-build:
-	cd web && npm install && npm run build
+	cd web && npm ci --include=dev && npm run build
 
 check: fmt vet test

@@ -98,7 +98,7 @@ From the repository root, while Regate is running:
 
 ```sh
 cd web
-npm install
+npm ci --include=dev
 npm run dev
 ```
 
@@ -194,7 +194,7 @@ three processes using the local demonstration commands above, then:
 
 ```sh
 cd web
-npm install
+npm ci --include=dev
 npx playwright install chromium
 REGATE_E2E_ADMIN_TOKEN="$REGATE_ADMIN_TOKEN" npm run test:e2e
 ```

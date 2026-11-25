@@ -102,6 +102,62 @@ func TestRejectedContinuationLeavesAsyncTaskCorrectable(t *testing.T) {
     }
 }
 
+func TestSequentialTaskRequestsRejectStaleAnswers(t *testing.T) {
+	source := strings.Replace(taskContinuationRecoverySource, `  node "done" {`, `  node "wait_again" {
+    kind = "suspend"
+    output_schema = {type = "string"}
+  }
+  node "done" {`, 1)
+	source = strings.Replace(source, `value = "nodes.wait.value"`, `value = "nodes.wait_again.value"`, 1)
+	source = strings.Replace(source, `    from = "wait"
+    to = "done"`, `    from = "wait"
+    to = "wait_again"
+  }
+  edge {
+    from = "wait_again"
+    to = "done"`, 1)
+	svc, id, first := startRecoverableTask(t, source)
+	if _, ok := first.InputRequests["resume"]; !ok {
+		t.Fatalf("missing initial resume request: %#v", first.InputRequests)
+	}
+	submit := func(key string, value any) {
+		t.Helper()
+		if _, err := svc.TaskUpdate(id, "owner", map[string]any{
+			key: map[string]any{"action": "accept", "content": value},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	submit("resume", "first")
+	second := waitTaskRecoveryState(t, svc, id, "input_required", "Additional input needed to resume pipeline")
+	if len(second.InputRequests) != 1 {
+		t.Fatalf("unexpected requests for second pause: %#v", second.InputRequests)
+	}
+	var secondKey string
+	for key := range second.InputRequests {
+		secondKey = key
+	}
+	if !strings.HasPrefix(secondKey, "resume-") {
+		t.Fatalf("second pause reused initial resume key: %q", secondKey)
+	}
+	submit("resume", "stale")
+	afterStale, err := svc.Store.TaskGet(id)
+	if err != nil || afterStale.Status != "input_required" || afterStale.InputRequests[secondKey] == nil {
+		t.Fatalf("stale reply advanced the task: %#v %v", afterStale, err)
+	}
+	submit(secondKey, 42)
+	rejected := waitTaskRecoveryState(t, svc, id, "input_required",
+		"Continuation rejected; checkpoint retained. Check external effects before retrying.")
+	if rejected.InputRequests[secondKey] == nil {
+		t.Fatalf("rejection changed the outstanding request: %#v", rejected.InputRequests)
+	}
+	submit(secondKey, "second")
+	finished := waitTaskRecoveryState(t, svc, id, "completed", "Execution completed")
+	if finished.Result["structuredContent"] != "second" || finished.Result["isError"] != false {
+		t.Fatalf("corrected current reply did not complete task: %#v", finished.Result)
+	}
+}
+
 func TestFailedFinalResponseConsumesAsyncCheckpoint(t *testing.T) {
     // Differentiate an operator-correctable leaf schema rejection from
     // completed graph failure at the *published* tool output boundary.

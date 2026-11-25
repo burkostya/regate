@@ -123,7 +123,9 @@ func (t credentialTransport) RoundTrip(req *http.Request) (*http.Response, error
 		response.ContentLength = 0
 		return response, nil
 	}
-	response.Body = &limitedBody{ReadCloser: response.Body}
+	if err := boundAndValidateMCPResponse(response); err != nil {
+		return nil, err
+	}
 	return response, nil
 }
 

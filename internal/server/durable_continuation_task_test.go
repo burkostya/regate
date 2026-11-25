@@ -56,9 +56,16 @@ func TestAsyncDownstreamFailureRequestsRecoveryNotDuplicateInput(t *testing.T) {
     });err!=nil { t.Fatal(err) }
     retained:=waitTaskRecoveryState(t,svc,id,"input_required",
         "Accepted answer retained; verify external effects before recovery.")
-    request,ok:=retained.InputRequests["resume"].(map[string]any)
-    if !ok || request["recovery"]!=true {
-        t.Fatalf("task solicits replacement answer instead of recovery: %#v",retained.InputRequests)
+    if len(retained.InputRequests) != 1 {
+        t.Fatalf("expected one recovery request: %#v", retained.InputRequests)
+    }
+    var recoveryKey string
+    for key, entry := range retained.InputRequests {
+        request, ok := entry.(map[string]any)
+        if !ok || request["recovery"] != true || !strings.HasPrefix(key, "resume-") {
+            t.Fatalf("task solicits replacement answer instead of recovery: %#v", retained.InputRequests)
+        }
+        recoveryKey = key
     }
     var cp engine.Checkpoint
     if err:=svc.Store.GetSuspended(initial.RunID,&cp);err!=nil {t.Fatal(err)}
@@ -66,7 +73,7 @@ func TestAsyncDownstreamFailureRequestsRecoveryNotDuplicateInput(t *testing.T) {
         t.Fatalf("accepted final continuation was not stored: %#v",cp)
     }
     if _,err:=svc.TaskUpdate(id,"owner",map[string]any{
-        "resume":map[string]any{"action":"accept","content":"replace"},
+        recoveryKey:map[string]any{"action":"accept","content":"replace"},
     });err==nil || !strings.Contains(err.Error(),"recovery requires") {
         t.Fatalf("replacement answer unexpectedly accepted: %v",err)
     }

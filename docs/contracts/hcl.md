@@ -808,7 +808,8 @@ retains its own checkpoint subtree. A single suspended path keeps the older
 
 `tasks/get` exposes only the pending nested node-name `paths`, not their
 checkpoint inputs or values. With more than one pending path, callers must
-select a specific leaf in `tasks/update`:
+select a specific leaf in `tasks/update`. Use the key advertised in
+`inputRequests` as the corresponding `inputResponses` key:
 
 ```json
 {
@@ -825,9 +826,12 @@ select a specific leaf in `tasks/update`:
 Each leaf answer is independently checked against its immutable output
 schema and written durably. While **any** leaf is unanswered, downstream
 nodes and their side effects do not execute. An already answered path
-cannot be submitted again. Once only one leaf is pending, the previous
-pathless `resume` contract remains supported. Caller identity, original
-revision, delegation, leader lease and journal fencing remain enforced.
+cannot be submitted again. The first request keeps the key `resume`, including
+for already persisted requests. Progress to another suspension publishes a new
+`resume-…` key. Replies under an older key do not advance the task. Correct an
+invalid value under the current key. With one pending leaf, callers may omit
+`path`. Caller identity, revision, delegation, leader lease and journal fencing
+remain enforced.
 
 The **last** accepted suspension answer is also persisted to SQLite **before**
 any newly eligible downstream node runs. If the worker crashes or the graph
@@ -835,12 +839,13 @@ fails after accepting it, the fully answered checkpoint can be recovered
 without another answer. Recovery requires the original revision and owner /
 grant checks; the previously accepted value cannot be replaced. Management
 `regate_resume` may omit `value` for such a checkpoint. An async task
-recovery uses a separate explicit `tasks/update` input:
+recovery uses a separate explicit `tasks/update` input with the advertised
+recovery key:
 
 ```json
 {
   "inputResponses": {
-    "resume": {
+    "resume-example": {
       "action": "accept",
       "recover": true
     }

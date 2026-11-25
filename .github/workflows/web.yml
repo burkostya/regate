@@ -13,7 +13,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm install --no-audit --no-fund
+      - run: npm ci --include=dev --no-audit --no-fund
       - run: npm run check
       - run: npm run test:edges
       - run: npm run build
@@ -28,7 +28,7 @@ jobs:
         with:
           node-version: '22'
       - name: Install browser test dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --include=dev --no-audit --no-fund
         working-directory: web
       - name: Install Chromium
         run: npx playwright install --with-deps chromium

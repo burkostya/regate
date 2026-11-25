@@ -113,6 +113,12 @@ and prompts are requested only when the upstream advertises the relevant
 capability; tools/list is also attempted for older, incompletely advertising
 servers. Each SDK session is closed after use.
 
+For upstream calls handled by the SDK, Regate validates complete HTTP JSON
+responses before decoding. The 8 MiB limit applies to the full body. Duplicate
+member names, invalid UTF-8, excessive nesting and trailing data fail closed
+without including the response payload in diagnostics. Empty HTTP 202 and 204
+responses remain valid. SSE remains streamed under its existing byte limit.
+
 HTTP 404 on an upstream request carrying `Mcp-Session-Id` signals a lost
 legacy session, regardless of whether the body is plain text or JSON-RPC.
 Regate reports `upstream MCP session expired` without including the ID or
