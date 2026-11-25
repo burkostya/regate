@@ -3,6 +3,25 @@ import { test, expect } from '@playwright/test';
 const token = process.env.REGATE_E2E_ADMIN_TOKEN || 'regate-e2e-test-token';
 const auth = { Authorization: `Bearer ${token}` };
 
+test('console rejects an invalid token and keeps valid credentials in tab memory', async ({ page, request }) => {
+  expect((await request.get('/api/catalog')).status()).toBe(401);
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveAttribute('data-regate-hydrated', 'true');
+  const connect = page.getByRole('button', { name: 'Connect', exact: true });
+  const credentials = page.getByLabel('Admin bearer token');
+  await credentials.fill('invalid-e2e-token');
+  const denied = page.waitForResponse(response => response.url().endsWith('/api/status'));
+  await connect.click();
+  expect((await denied).status()).toBe(401);
+  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Connect to Regate' })).toBeVisible();
+
+  await credentials.fill(token);
+  await connect.click();
+  await expect(page.getByRole('heading', { name: 'Execution graph' })).toBeVisible();
+  expect(await page.evaluate(() => [localStorage.length, sessionStorage.length])).toEqual([0, 0]);
+});
+
 test('real console edits typed port graph, validates HCL and rejects stale draft writes', async ({ page, request }) => {
   const beforeResponse = await request.get('/api/status', { headers: auth });
   expect(beforeResponse.ok()).toBeTruthy();

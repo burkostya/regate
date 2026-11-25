@@ -1,8 +1,8 @@
 # Formal model checking
 
 GitHub CI runs the pinned TLA+ TLC 1.8.0 model checker (SHA-256
-`7e53aa636dac8a3cb0533f343115c0548e03fc0ce5edc7739becf58d3d0fb84f`)
-against three **finite** safety models (with two- and three-branch configurations):
+`fdffef247f563ef6edbfd44958d2a82db79e7564e07cb673262d896353fa6713`)
+against **finite** safety models (with two- and three-branch configurations):
 
 - `EffectLifecycle.tla` with `EffectLifecycle.cfg`: effect admission,
   uncertain outcomes, and the no-blind-write-retry invariant.
@@ -18,7 +18,8 @@ against three **finite** safety models (with two- and three-branch configuration
   `internal/engine/readback_test.go` and
   `internal/server/two_process_mcp_stand_test.go`.
 - `JoinSafety.tla` with five `JoinSafety*.cfg` configurations: explicit
-  two/three-predecessor all/any/quorum settlement barriers, independent
+  two/three-predecessor all/any/quorum settlement barriers across suspension and
+  resumption, one final vote per settled predecessor, independent
   authorization, no ambiguous write retry, and the static guaranteed-source
   threshold rule. Go runtime truth tables in
   `internal/engine/join_model_test.go` exercise matching branch outcomes.

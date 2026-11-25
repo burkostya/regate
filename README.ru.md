@@ -51,7 +51,7 @@ curl -sS http://127.0.0.1:8080/mcp/admin \
 
 ```bash
 cd web
-npm install
+npm ci --include=dev
 npm run dev
 ```
 

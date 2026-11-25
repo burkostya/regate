@@ -79,14 +79,13 @@ func outcomeResult(out engine.Outcome, err error) map[string]any {
 	return map[string]any{"resultType": "complete", "content": []any{map[string]any{"type": "text", "text": fmt.Sprint(out.Value)}}, "structuredContent": out.Value, "isError": false}
 }
 
-// continuationRequest keeps the existing resume key and content contract.
-// For multiple independent suspensions the client supplies a path of node
-// names as a sibling of action/content in inputResponses.resume.
-func continuationRequest(paths [][]string, first bool) map[string]any {
+// continuationRequest publishes the key the client must echo. Multiple
+// independent suspensions also require a path alongside action and content.
+func continuationRequest(paths [][]string, key string, first bool) map[string]any {
 	message:="Additional continuation data"
 	if first { message="Provide the data required to resume the Regate pipeline" }
 	if len(paths)>1 { message="Select one of the pending suspension paths and provide its data" }
-	return map[string]any{"resume":map[string]any{
+	return map[string]any{key:map[string]any{
 		"method":"elicitation/create",
 		"params":map[string]any{"mode":"form","message":message,
 			"requestedSchema":map[string]any{"type":"object","additionalProperties":true}},
@@ -97,8 +96,8 @@ func continuationRequest(paths [][]string, first bool) map[string]any {
 // continuationRecoveryRequest is not an elicitation for another answer:
  // the final reply has already been committed, and recovering must use that
  // immutable value. The caller must explicitly request recovery.
-func continuationRecoveryRequest() map[string]any {
-	return map[string]any{"resume":map[string]any{
+func continuationRecoveryRequest(key string) map[string]any {
+	return map[string]any{key:map[string]any{
 		"method":"elicitation/create",
 		"params":map[string]any{"mode":"form",
 			"message":"The final answer was already durably accepted. Verify external effect outcomes, then request recovery without sending another answer.",
@@ -217,7 +216,7 @@ func (s *Service) createTaskFor(ctx context.Context,cfg *config.Config,revision 
 		if out.Status == "suspended" {
 			current.Status = "input_required"
 			current.StatusMessage = "Agent or user input needed to resume pipeline"
-			current.InputRequests = continuationRequest(out.SuspensionPaths,true)
+			current.InputRequests = continuationRequest(out.SuspensionPaths, "resume", true)
 		} else {
 			current.Status = "completed"
 			current.StatusMessage = "Execution completed"
@@ -276,7 +275,16 @@ func (s *Service) TaskUpdateWithContext(ctx context.Context,id, owner string, in
     if usingGrant {
         if err:=s.Engine.CheckGrantExecution(ctx);err!=nil{return nil,err}
     }
-	response, ok := inputResponses["resume"].(map[string]any)
+	responseKey := "resume" // Server-initiated grant recovery retains its internal key.
+	if !usingGrant {
+		if len(t.InputRequests) != 1 {
+			return map[string]any{}, nil
+		}
+		for key := range t.InputRequests {
+			responseKey = key
+		}
+	}
+	response, ok := inputResponses[responseKey].(map[string]any)
 	if !ok {
 		return map[string]any{}, nil
 	}
@@ -383,7 +391,7 @@ func (s *Service) TaskUpdateWithContext(ctx context.Context,id, owner string, in
 			updated.StatusMessage = "Additional input needed to resume pipeline"
 			updated.Result = nil
 			updated.Error = nil
-			updated.InputRequests = continuationRequest(out.SuspensionPaths,false)
+			updated.InputRequests = continuationRequest(out.SuspensionPaths, "resume-"+storage.ID(), false)
 		} else {
 			// A rejected leaf value, grant/lease failure, or an incomplete
 			// graph failure can leave the *original* checkpoint intact. Do not
@@ -402,12 +410,20 @@ func (s *Service) TaskUpdateWithContext(ctx context.Context,id, owner string, in
 				paths := engine.PendingSuspensionPaths(&pending)
 				if len(paths) > 0 {
 					updated.StatusMessage = "Continuation rejected; checkpoint retained. Check external effects before retrying."
-					updated.InputRequests = continuationRequest(paths,false)
+					key := responseKey
+					if usingGrant || !slices.EqualFunc(waiting, paths, slices.Equal[[]string]) {
+						key = "resume-" + storage.ID()
+					}
+					updated.InputRequests = continuationRequest(paths, key, false)
 				} else {
 					// A final answer was durably stored before downstream work
 					// failed. Never solicit or accept a replacement answer.
 					updated.StatusMessage = "Accepted answer retained; verify external effects before recovery."
-					updated.InputRequests = continuationRecoveryRequest()
+					key := responseKey
+					if usingGrant || len(waiting) != 0 {
+						key = "resume-" + storage.ID()
+					}
+					updated.InputRequests = continuationRecoveryRequest(key)
 				}
 			} else {
 				updated.Status = "completed"
